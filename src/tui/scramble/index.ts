@@ -33,7 +33,10 @@ export {
 	computeGlitchFrame,
 	isGlitchComplete,
 	applyScramble,
+	detectDirection,
 } from './algorithm.js';
+
+export type { TransitionDirection } from './algorithm.js';
 
 export {
 	hashNoise,

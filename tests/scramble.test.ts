@@ -20,6 +20,7 @@ import {
 	DEEP_GLITCH,
 	MID_GLITCH,
 	SHALLOW_GLITCH,
+	detectDirection,
 } from '../src/tui/scramble/index.js';
 
 // ---------------------------------------------------------------------------
@@ -95,6 +96,172 @@ describe('buildMsgGlitchQueue', () => {
 				expect(item.settleEnd).toBeDefined();
 			}
 		}
+	});
+});
+
+describe('detectDirection', () => {
+	it('returns expand when new text is significantly longer', () => {
+		expect(detectDirection('abc', 'abcdefg')).toBe('expand');
+	});
+
+	it('returns shrink when new text is significantly shorter', () => {
+		expect(detectDirection('abcdefg', 'abc')).toBe('shrink');
+	});
+
+	it('returns neutral for small length differences', () => {
+		expect(detectDirection('abc', 'abcd')).toBe('neutral');
+		expect(detectDirection('abc', 'ab')).toBe('neutral');
+	});
+
+	it('ignores decorative icons when comparing lengths', () => {
+		expect(detectDirection('✔abc', 'abcdef')).toBe('expand');
+	});
+});
+
+describe('buildGlitchQueue directional profiles', () => {
+	it('shrink direction skips animation for identical overlap chars', () => {
+		const queue = buildGlitchQueue('hello world', 'hi', 40, 40, 'shrink');
+		expect(queue[0].from).toBe('h');
+		expect(queue[0].to).toBe('h');
+		expect(queue[0].start).toBe(0);
+		expect(queue[0].end).toBe(0);
+	});
+
+	it('shrink direction uses short constants for changed overlap chars', () => {
+		const queue = buildGlitchQueue('hello world', 'hi', 40, 40, 'shrink');
+		// Position 1: 'e' -> 'i'
+		expect(queue[1].from).toBe('e');
+		expect(queue[1].to).toBe('i');
+		expect(queue[1].start).toBeLessThan(10);
+		expect(queue[1].end - queue[1].start).toBeLessThan(10);
+	});
+
+	it('shrink direction keeps fadeOutEnd for tail positions', () => {
+		const queue = buildGlitchQueue('hello world', 'hi', 40, 40, 'shrink');
+		// Positions 2+ are tail (to === '')
+		for (let i = 2; i < queue.length; i++) {
+			expect(queue[i].fadeOutEnd).toBeDefined();
+			expect(queue[i].fadeOutEnd).toBeGreaterThan(queue[i].end);
+		}
+	});
+
+	it('expand direction skips animation for identical overlap chars', () => {
+		const queue = buildGlitchQueue('hi', 'hello world', 40, 40, 'expand');
+		expect(queue[0].from).toBe('h');
+		expect(queue[0].to).toBe('h');
+		expect(queue[0].start).toBe(0);
+		expect(queue[0].end).toBe(0);
+	});
+
+	it('expand direction uses short constants for changed overlap chars', () => {
+		const queue = buildGlitchQueue('hi', 'hello world', 40, 40, 'expand');
+		// Position 1: 'i' -> 'e'
+		expect(queue[1].from).toBe('i');
+		expect(queue[1].to).toBe('e');
+		expect(queue[1].start).toBeLessThan(10);
+		expect(queue[1].end - queue[1].start).toBeLessThan(10);
+	});
+
+	it('expand direction does not set fadeOutEnd for new tail chars', () => {
+		const queue = buildGlitchQueue('hi', 'hello world', 40, 40, 'expand');
+		// Positions 2+ are new chars (from === '')
+		for (let i = 2; i < queue.length; i++) {
+			expect(queue[i].fadeOutEnd).toBeUndefined();
+		}
+	});
+
+	it('neutral direction keeps current behavior with full maxStart/maxLength', () => {
+		const queue = buildGlitchQueue('hello world', 'hi', 40, 40, 'neutral');
+		for (const item of queue) {
+			expect(item.start).toBeGreaterThanOrEqual(0);
+			expect(item.end - item.start).toBeGreaterThanOrEqual(0);
+			// With mocked random, start should use full range
+			expect(item.start).toBeLessThan(40);
+			expect(item.end - item.start).toBeLessThan(40);
+		}
+	});
+
+	it('buildMsgGlitchQueue passes direction to buildGlitchQueue', () => {
+		const queue = buildMsgGlitchQueue('hello world', 'hi', 'shrink');
+		expect(queue[0].from).toBe('h');
+		expect(queue[0].to).toBe('h');
+		expect(queue[0].start).toBe(0);
+		expect(queue[0].end).toBe(0);
+		expect(queue[1].start).toBeLessThan(10);
+	});
+
+	it('buildMsgGlitchQueue shrink tail positions use short timing', () => {
+		const queue = buildMsgGlitchQueue('hello world', 'hi', 'shrink');
+		const tailItems = queue.filter((q) => q.to === '' && q.from !== '');
+		expect(tailItems.length).toBeGreaterThan(0);
+		for (const item of tailItems) {
+			expect(item.start).toBeLessThan(10);
+			expect(item.fadeOutEnd).toBeDefined();
+		}
+	});
+});
+
+describe('ScrambleStateManager directional transitions', () => {
+	let manager: ScrambleStateManager;
+
+	beforeEach(() => {
+		manager = new ScrambleStateManager();
+	});
+
+	it('shrink transition resolves quickly for overlap chars', () => {
+		const base = 5_000_000;
+		manager.updateAct(TEST_ID, 'shorter text here', base);
+		// Wait for init animation to complete (~900ms) before triggering shrink
+		const result = manager.updateAct(TEST_ID, 'short', base + 1000);
+		expect(result.isAnimating).toBe(true);
+
+		const state = (manager as any).cache.get(TEST_ID)?.act;
+		const queue = state?.glitchQueue as any[];
+		expect(queue).toBeDefined();
+		// Overlap positions 0..4 ('s'->'s', 'h'->'h', 'o'->'o', 'r'->'r', 't'->'t') should be skipped
+		expect(queue[0].start).toBe(0);
+		expect(queue[0].end).toBe(0);
+		expect(queue[1].start).toBe(0);
+		expect(queue[1].end).toBe(0);
+		expect(queue[2].start).toBe(0);
+		expect(queue[2].end).toBe(0);
+		expect(queue[3].start).toBe(0);
+		expect(queue[3].end).toBe(0);
+		expect(queue[4].start).toBe(0);
+		expect(queue[4].end).toBe(0);
+		// Tail positions (newLen..oldLen) still have fadeOutEnd
+		expect(queue[queue.length - 1].fadeOutEnd).toBeDefined();
+	});
+
+	it('expand transition uses short constants for overlap positions', () => {
+		const base = 6_000_000;
+		manager.updateAct(TEST_ID, 'hi', base);
+		// Wait for init animation to complete (~550ms) before triggering expand
+		const result = manager.updateAct(TEST_ID, 'hello there', base + 1000);
+		expect(result.isAnimating).toBe(true);
+
+		const state = (manager as any).cache.get(TEST_ID)?.act;
+		const queue = state?.glitchQueue as any[];
+
+		expect(queue).toBeDefined();
+		// Overlap position 0 ('h' -> 'h') should be skipped
+		expect(queue[0].start).toBe(0);
+		expect(queue[0].end).toBe(0);
+		// Overlap position 1 ('i' -> 'e') should have short animation
+		expect(queue[1].start).toBeLessThan(10);
+		expect(queue[1].end - queue[1].start).toBeLessThan(10);
+	});
+
+	it('init animation uses expand direction', () => {
+		const base = 7_000_000;
+		const result = manager.updateAct(TEST_ID, 'initial text', base);
+		expect(result.isAnimating).toBe(true);
+
+		const state = (manager as any).cache.get(TEST_ID)?.act;
+		const queue = state?.glitchQueue as any[];
+		expect(queue).toBeDefined();
+		// All positions are new chars from empty string — no overlap, so normal behavior
+		expect(queue.length).toBeGreaterThan(0);
 	});
 });
 
@@ -424,7 +591,7 @@ describe('ScrambleStateManager', () => {
 		const deletedItems = queue.filter((q: any) => q.to === '' && q.from !== '');
 		const bonus = Math.min(8, Math.floor(deletedItems.length / 2));
 		for (const item of deletedItems) {
-			expect(item.fadeOutEnd).toBe(item.end + 18 + bonus);
+			expect(item.fadeOutEnd).toBe(item.end + 8 + bonus);
 		}
 	});
 

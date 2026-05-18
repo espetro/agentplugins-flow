@@ -37,6 +37,8 @@ import {
 	computeGlitchFrame,
 	applyScramble,
 	isGlitchComplete,
+	detectDirection,
+	TransitionDirection,
 } from './algorithm.js';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ function processLine(state: LineState, newText: string, now: number, lineKey?: L
 	}
 
 	const oldDisplayed = state.displayedText || oldText;
+	const direction = detectDirection(oldDisplayed, newText);
 	if (lineKey === 'msg') {
 		state.targetText = newText;
 	} else {
@@ -88,8 +91,8 @@ function processLine(state: LineState, newText: string, now: number, lineKey?: L
 			const frame = Math.floor((now - state.startTime) / GLITCH_FRAME_MS);
 			if (!isGlitchComplete(state.glitchQueue, frame)) {
 				state.pendingGlitch = lineKey === 'msg'
-					? buildMsgGlitchQueue(oldDisplayed, newText)
-					: buildGlitchQueue(oldDisplayed, newText);
+					? buildMsgGlitchQueue(oldDisplayed, newText, direction)
+					: buildGlitchQueue(oldDisplayed, newText, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 				state.pendingOldDisplayed = oldDisplayed;
 				state.pendingNewDisplayed = newText;
 				state.pendingStartTime = now;
@@ -97,8 +100,8 @@ function processLine(state: LineState, newText: string, now: number, lineKey?: L
 			}
 		}
 		state.glitchQueue = lineKey === 'msg'
-			? buildMsgGlitchQueue(oldDisplayed, newText)
-			: buildGlitchQueue(oldDisplayed, newText);
+			? buildMsgGlitchQueue(oldDisplayed, newText, direction)
+			: buildGlitchQueue(oldDisplayed, newText, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 		state.targetText = newText;
 		state.startTime = now;
 		state.glitchFrame = 0;
@@ -243,7 +246,7 @@ export class ScrambleStateManager {
 			state.initialized = true;
 			state.lastAnimTime = now;
 			if (this.animationConfig.glitch) {
-				state.glitchQueue = buildGlitchQueue('', text);
+				state.glitchQueue = buildGlitchQueue('', text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, 'expand');
 				state.startTime = now;
 				state.lastGlitchTime = now;
 				state.glitchFrame = 0;
@@ -262,13 +265,14 @@ export class ScrambleStateManager {
 					if (this.animationConfig.glitch) {
 						const frame = Math.floor((now - state.startTime) / GLITCH_FRAME_MS);
 						const glitchComplete = isGlitchComplete(state.glitchQueue, frame);
+						const direction = detectDirection(oldDisplayed, text);
 						if (glitchComplete) {
-							state.glitchQueue = buildGlitchQueue(oldDisplayed, text);
+							state.glitchQueue = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.startTime = now;
 							state.lastGlitchTime = now;
 							state.glitchFrame = 0;
 						} else if (state.glitchQueue.length > 0) {
-							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text);
+							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.pendingOldDisplayed = oldDisplayed;
 							state.pendingNewDisplayed = text;
 							state.pendingStartTime = now;
@@ -341,7 +345,7 @@ export class ScrambleStateManager {
 			state.initialized = true;
 			state.lastAnimTime = now;
 			if (this.animationConfig.glitch) {
-				state.glitchQueue = buildGlitchQueue('', text);
+				state.glitchQueue = buildGlitchQueue('', text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, 'expand');
 				state.startTime = now;
 				state.lastGlitchTime = now;
 				state.glitchFrame = 0;
@@ -360,13 +364,14 @@ export class ScrambleStateManager {
 					if (this.animationConfig.glitch) {
 						const frame = Math.floor((now - state.startTime) / GLITCH_FRAME_MS);
 						const glitchComplete = isGlitchComplete(state.glitchQueue, frame);
+						const direction = detectDirection(oldDisplayed, text);
 						if (glitchComplete) {
-							state.glitchQueue = buildGlitchQueue(oldDisplayed, text);
+							state.glitchQueue = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.startTime = now;
 							state.lastGlitchTime = now;
 							state.glitchFrame = 0;
 						} else if (state.glitchQueue.length > 0) {
-							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text);
+							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.pendingOldDisplayed = oldDisplayed;
 							state.pendingNewDisplayed = text;
 							state.pendingStartTime = now;
@@ -439,7 +444,7 @@ export class ScrambleStateManager {
 			state.initialized = true;
 			state.lastAnimTime = now;
 			if (this.animationConfig.glitch) {
-				state.glitchQueue = buildGlitchQueue('', text);
+				state.glitchQueue = buildGlitchQueue('', text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, 'expand');
 				state.startTime = now;
 				state.lastGlitchTime = now;
 				state.glitchFrame = 0;
@@ -458,13 +463,14 @@ export class ScrambleStateManager {
 					if (this.animationConfig.glitch) {
 						const frame = Math.floor((now - state.startTime) / GLITCH_FRAME_MS);
 						const glitchComplete = isGlitchComplete(state.glitchQueue, frame);
+						const direction = detectDirection(oldDisplayed, text);
 						if (glitchComplete) {
-							state.glitchQueue = buildGlitchQueue(oldDisplayed, text);
+							state.glitchQueue = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.startTime = now;
 							state.lastGlitchTime = now;
 							state.glitchFrame = 0;
 						} else if (state.glitchQueue.length > 0) {
-							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text);
+							state.pendingGlitch = buildGlitchQueue(oldDisplayed, text, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 							state.pendingOldDisplayed = oldDisplayed;
 							state.pendingNewDisplayed = text;
 							state.pendingStartTime = now;
@@ -540,7 +546,7 @@ export class ScrambleStateManager {
 			state.displayedText = visibleText;
 			state.lastAnimTime = now;
 			if (this.animationConfig.glitch) {
-				state.glitchQueue = buildMsgGlitchQueue('', visibleText);
+				state.glitchQueue = buildMsgGlitchQueue('', visibleText, 'expand');
 				state.targetText = visibleText;
 				state.startTime = now;
 				state.lastGlitchTime = now;
@@ -560,15 +566,16 @@ export class ScrambleStateManager {
 					if (this.animationConfig.glitch) {
 						const frame = Math.floor((now - state.startTime) / GLITCH_FRAME_MS);
 						const glitchComplete = isGlitchComplete(state.glitchQueue, frame);
+						const direction = detectDirection(oldDisplayed, visibleText);
 						if (glitchComplete) {
-							state.glitchQueue = buildMsgGlitchQueue(oldDisplayed, visibleText);
+							state.glitchQueue = buildMsgGlitchQueue(oldDisplayed, visibleText, direction);
 							state.targetText = visibleText;
 							state.startTime = now;
 							state.lastGlitchTime = now;
 							state.glitchFrame = 0;
 							willAnimate = true;
 						} else if (state.glitchQueue.length > 0) {
-							state.pendingGlitch = buildMsgGlitchQueue(oldDisplayed, visibleText);
+							state.pendingGlitch = buildMsgGlitchQueue(oldDisplayed, visibleText, direction);
 							state.pendingOldDisplayed = oldDisplayed;
 							state.pendingNewDisplayed = visibleText;
 							state.pendingStartTime = now;

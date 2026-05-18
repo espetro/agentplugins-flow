@@ -5,10 +5,13 @@ import {
 	LineKey,
 	GLITCH_FRAME_MS,
 	GLITCH_FADE_OUT_FRAMES,
+	GLITCH_SHRINK_FADE_OUT_FRAMES,
 	GLITCH_MAX_START,
 	GLITCH_MAX_LENGTH,
 	GLITCH_SHORT_MAX_START,
 	GLITCH_SHORT_MAX_LENGTH,
+	GLITCH_OVERLAP_MAX_START,
+	GLITCH_OVERLAP_MAX_LENGTH,
 	GLITCH_RERANDOMIZE,
 	MSG_GLITCH_MIN_FRAMES,
 	poolRandomChar,
@@ -26,17 +29,52 @@ import {
 // Pure algorithm: GLITCH (TextScramble faithful port with Unicode braille)
 // ---------------------------------------------------------------------------
 
-export function buildGlitchQueue(oldText: string, newText: string, maxStart: number = GLITCH_MAX_START, maxLength: number = GLITCH_MAX_LENGTH): GlitchQueueItem[] {
+export type TransitionDirection = 'expand' | 'shrink' | 'neutral';
+
+export function detectDirection(oldText: string, newText: string): TransitionDirection {
+	const cleanOld = stripDecorativeIcons(oldText);
+	const cleanNew = stripDecorativeIcons(newText);
+	const oldLen = cleanOld.length;
+	const newLen = cleanNew.length;
+	if (newLen > oldLen + 2) return 'expand';
+	if (newLen < oldLen - 2) return 'shrink';
+	return 'neutral';
+}
+
+export function buildGlitchQueue(
+	oldText: string,
+	newText: string,
+	maxStart: number = GLITCH_MAX_START,
+	maxLength: number = GLITCH_MAX_LENGTH,
+	direction: TransitionDirection = 'neutral',
+): GlitchQueueItem[] {
 	const queue: GlitchQueueItem[] = [];
 	const cleanOld = stripDecorativeIcons(oldText);
 	const cleanNew = stripDecorativeIcons(newText);
-	const length = Math.max(cleanOld.length, cleanNew.length);
+	const oldLen = cleanOld.length;
+	const newLen = cleanNew.length;
+	const length = Math.max(oldLen, newLen);
+	const overlapLen = Math.min(oldLen, newLen);
 	for (let i = 0; i < length; i++) {
 		const from = cleanOld[i] || '';
 		const to = cleanNew[i] || '';
-		const start = Math.floor(Math.random() * maxStart);
-		const end = start + Math.floor(Math.random() * maxLength);
-		const fadeOutEnd = to === '' ? end + GLITCH_FADE_OUT_FRAMES : undefined;
+
+		if (direction !== 'neutral' && i < overlapLen) {
+			if (from === to) {
+				queue.push({ from, to, start: 0, end: 0, fadeOutEnd: undefined, char: null });
+				continue;
+			}
+			const start = Math.floor(Math.random() * GLITCH_OVERLAP_MAX_START);
+			const end = start + Math.floor(Math.random() * GLITCH_OVERLAP_MAX_LENGTH);
+			const fadeOutEnd = to === '' ? end + GLITCH_FADE_OUT_FRAMES : undefined;
+			queue.push({ from, to, start, end, fadeOutEnd, char: null });
+			continue;
+		}
+
+		const isShrinkTail = direction === 'shrink' && i >= overlapLen;
+		const start = Math.floor(Math.random() * (isShrinkTail ? GLITCH_SHORT_MAX_START : maxStart));
+		const end = start + Math.floor(Math.random() * (isShrinkTail ? GLITCH_SHORT_MAX_LENGTH : maxLength));
+		const fadeOutEnd = to === '' ? end + (isShrinkTail ? GLITCH_SHRINK_FADE_OUT_FRAMES : GLITCH_FADE_OUT_FRAMES) : undefined;
 		queue.push({ from, to, start, end, fadeOutEnd, char: null });
 	}
 	let deletedCount = 0;
@@ -56,8 +94,8 @@ export function buildGlitchQueue(oldText: string, newText: string, maxStart: num
 	return queue;
 }
 
-export function buildMsgGlitchQueue(oldText: string, newText: string): GlitchQueueItem[] {
-	const queue = buildGlitchQueue(oldText, newText);
+export function buildMsgGlitchQueue(oldText: string, newText: string, direction: TransitionDirection = 'neutral'): GlitchQueueItem[] {
+	const queue = buildGlitchQueue(oldText, newText, GLITCH_MAX_START, GLITCH_MAX_LENGTH, direction);
 	if (queue.length === 0) return queue;
 	const maxEnd = queue.reduce((max, item) => Math.max(max, item.fadeOutEnd ?? item.end), 0);
 	const scaledMinFrames = Math.min(MSG_GLITCH_MIN_FRAMES, Math.max(55, Math.ceil(queue.length * 3.5)));
@@ -71,6 +109,15 @@ export function buildMsgGlitchQueue(oldText: string, newText: string): GlitchQue
 		return queue;
 	}
 	for (const item of queue) {
+		// Already-resolved identical chars should not have their scramble window
+		// extended — that would force them back into the scramble branch.
+		// Give them a brief sparkle window instead.
+		if (item.start === 0 && item.end === 0) {
+			if (item.to !== '') {
+				item.settleEnd = item.end + 14 + Math.floor(Math.random() * 10);
+			}
+			continue;
+		}
 		item.end += extension;
 		if (item.fadeOutEnd !== undefined) {
 			item.fadeOutEnd += extension;
@@ -210,7 +257,7 @@ export function applyScramble(text: string, state: LineState, now: number, lineK
 				const pendingText = lineKey === 'msg' ? state.targetText : text;
 				return computeGlitchFrame(state.glitchQueue, 0, rng ?? poolRandomChar, pendingText);
 			}
-			const resolvedTarget = state.targetText || text;
+			const resolvedTarget = lineKey === 'msg' ? text : (state.targetText || text);
 			state.displayedText = resolvedTarget;
 			state.targetText = '';
 			return resolvedTarget;
