@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as childProcess from "node:child_process";
-import { FLOW_DEPTH_ENV } from "../src/core/depth.js";
+import { FLOW_DEPTH_ENV } from "../src/flow/depth.js";
 import { resetNotifyState, setPendingDecision, setFlowComplete } from "../src/notify/notify-state.js";
 
 vi.mock("node:child_process", async (importOriginal) => {

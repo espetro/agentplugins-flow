@@ -1,5 +1,5 @@
 /**
- * Structured output and compression types.
+ * Structured output types.
  */
 
 /** Structured file entry in a flow's output. */
@@ -78,39 +78,3 @@ export interface FlowStructuredOutput {
 	extensions?: Record<string, unknown>;
 }
 
-/** Compressed representation of a flow result for child context inheritance. */
-export interface CompressedFlowResult {
-	/** Flow type (scout, build, debug, etc.). */
-	type: string;
-	/** Execution outcome. */
-	status: "accomplished" | "failed" | "aborted";
-	/** Original mission intent. */
-	intent?: string;
-	/** Short headline of what the flow aimed to do. */
-	aim?: string;
-	/** 1–3 sentence summary of what was accomplished. */
-	summary?: string;
-	/** Files touched, read, or referenced. */
-	files?: FileEntry[];
-	/** Actions performed or attempted. */
-	actions?: Action[];
-	/** Commands or tool calls executed. */
-	commands?: CommandEntry[];
-	/** Incomplete, skipped, blocked, or deferred work. */
-	notDone?: NotDoneItem[];
-	/** Recommended next steps or follow-up flows. */
-	nextSteps?: string[];
-	/** Key hypotheses or inferences made during the flow. */
-	reasoning?: string[];
-	/** Observations, warnings, caveats, side notes. */
-	notes?: string[];
-	/** Error message for failed/aborted flows. */
-	error?: string;
-}
-
-export interface DepthPolicy {
-	showPreviews: boolean;
-	showBytes: boolean;
-	showSupersededBreadcrumbs: boolean;
-	showEditBlocks: boolean;
-}

@@ -12,11 +12,10 @@ import type {
 	FlowDetails,
 	FlowMetrics,
 } from "../types/flow.js";
-import type { CompressedFlowResult } from "../types/output.js";
 import { isFlowSuccess, isFlowError, isFlowComplete, getFlowOutput, emptyFlowUsage } from "../types/flow.js";
 import { extractStructuredOutput } from "../snapshot/structured-output.js";
 import { getTransitionAdvice } from "./transitions.js";
-import { mapFlowConcurrent, runFlow } from "./flow.js";
+import { mapFlowConcurrent, runFlow } from "./runner.js";
 import { getFlowSummaryText } from "../snapshot/runner-events.js";
 import { normalizeFlowModeName, resolveFlowModelCandidates, resolveModelContextWindow, selectFlowModelStrategy, type LoadedFlowModelConfigs, type FlowModelStrategy } from "../config/config.js";
 import { getAgentSessionTimeoutMs, resolveAgentSessionMode, type AgentSessionMode } from "./session-mode.js";
@@ -68,10 +67,6 @@ export interface FlowExecutorDeps {
 	fallbackModel?: string;
 	/** Fork session snapshot JSONL. */
 	forkSessionSnapshotJsonl: string | null;
-	/** Compression statistics from sanitizeForkSnapshot for dump header generation. */
-	forkSessionSnapshotStats?: { preBytes: number; postBytes: number; reductionPercent: number; passesApplied: string[] } | null;
-	/** Flow result cache for compression. */
-	flowResultCache: Map<string, CompressedFlowResult[]>;
 	/** Project flows directory. */
 	projectFlowsDir: string | null;
 	/** Session manager for fork snapshot and session identification. */
@@ -153,37 +148,6 @@ async function confirmProjectFlowsIfNeeded(
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Cache limits
-// ---------------------------------------------------------------------------
-
-function resolveCacheMaxEntries(): number {
-	if (typeof process === "undefined") return 100;
-	const env = process.env.PI_FLOW_CACHE_MAX_ENTRIES;
-	if (!env) return 100;
-	const parsed = parseInt(env, 10);
-	if (Number.isNaN(parsed) || parsed < 1) return 100;
-	return parsed;
-}
-
-const FLOW_RESULT_CACHE_MAX_ENTRIES = resolveCacheMaxEntries();
-
-/** Evict oldest entries from the cache when it exceeds the cap. */
-export function evictCacheOverflow(cache: Map<string, unknown>): void {
-	if (cache.size <= FLOW_RESULT_CACHE_MAX_ENTRIES) return;
-	const excess = cache.size - FLOW_RESULT_CACHE_MAX_ENTRIES;
-	logWarn(
-		`[pi-agent-flow] Flow result cache overflow: evicting ${excess} oldest entries. ` +
-		`Raising PI_FLOW_CACHE_MAX_ENTRIES (currently ${FLOW_RESULT_CACHE_MAX_ENTRIES}) may help for long sessions.`,
-	);
-	const keys = cache.keys();
-	for (let i = 0; i < excess; i++) {
-		const next = keys.next();
-		if (next.done) break;
-		cache.delete(next.value);
-	}
-}
-
 function shouldFailover(result: SingleResult): boolean {
 	if (result.stopReason === "aborted") return false;
 	const text = `${result.errorMessage ?? ""}\n${result.stderr ?? ""}`.toLowerCase();
@@ -218,7 +182,7 @@ export async function executeFlows(
 		toolOptimize, structuredOutput, cwd, loadedFlowModelConfigs,
 		maxConcurrency, defaultSessionMode, signal, onUpdate, makeDetails,
 		getFlag, tierOverrideResolver, fallbackModel, forkSessionSnapshotJsonl,
-		flowResultCache, projectFlowsDir, hasUI, uiConfirm, onFlowMetrics,
+		projectFlowsDir, hasUI, uiConfirm, onFlowMetrics,
 		confirmProjectFlows,
 		goalContext,
 	} = deps;
@@ -385,7 +349,7 @@ export async function executeFlows(
 				acceptance: item.acceptance,
 				taskCwd: item.cwd,
 				forkSessionSnapshotJsonl: shouldInheritContext ? forkSessionSnapshotJsonl : null,
-				compressionStats: shouldInheritContext ? deps.forkSessionSnapshotStats : null,
+
 				parentDepth: currentDepth,
 				parentFlowStack: ancestorFlowStack,
 				maxDepth: effectiveMaxDepth,
@@ -466,34 +430,6 @@ export async function executeFlows(
 	if (deps.goalContinuationCallback) {
 		await deps.goalContinuationCallback(results);
 	}
-
-	// Cache flow results
-	for (const result of results) {
-		const so = result.structuredOutput;
-		if (!so) {
-			logWarn(`[pi-agent-flow] Flow result for toolCallId=${toolCallId} type=${result.type} has no structuredOutput — cache entry skipped. This means child flows will see placeholder text instead of compressed results.`);
-			continue;
-		}
-		const compressed: CompressedFlowResult = {
-			type: result.type,
-			status: isFlowError(result) ? "failed" : "accomplished",
-		};
-		if (result.intent) compressed.intent = result.intent;
-		if (result.aim) compressed.aim = result.aim;
-		if (so.summary) compressed.summary = so.summary;
-		if (so.files.length > 0) compressed.files = so.files;
-		if (so.actions.length > 0) compressed.actions = so.actions;
-		if (so.commands.length > 0) compressed.commands = so.commands;
-		if (so.notDone.length > 0) compressed.notDone = so.notDone;
-		if (so.nextSteps.length > 0) compressed.nextSteps = so.nextSteps;
-		if (so.reasoning.length > 0) compressed.reasoning = so.reasoning;
-		if (so.notes.length > 0) compressed.notes = so.notes;
-		if (result.errorMessage) compressed.error = result.errorMessage;
-		const existing = flowResultCache.get(toolCallId) ?? [];
-		existing.push(compressed);
-		flowResultCache.set(toolCallId, existing);
-	}
-	evictCacheOverflow(flowResultCache);
 
 	// Build tool result
 	const successCount = results.filter((r) => isFlowSuccess(r)).length;

@@ -2,13 +2,12 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import registerExtension, { compressToolResults, stripBatchReadToolCalls } from "../src/index.js";
-import { sanitizeForkSnapshot } from "../src/snapshot/snapshot.js";
-import { runFlow, mapFlowConcurrent } from "../src/core/flow.js";
+import registerExtension from "../src/index.js";
+import { runFlow, mapFlowConcurrent } from "../src/flow/runner.js";
 import { emptyFlowUsage, type SingleResult } from "../src/types/flow.js";
 
-vi.mock("../src/core/flow.js", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../src/core/flow.js")>();
+vi.mock("../src/flow/runner.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/flow/runner.js")>();
 	return {
 		...actual,
 		runFlow: vi.fn(),
@@ -187,17 +186,16 @@ describe("flow tool execute", () => {
 		expect(snapshot).toContain("Implementation summary after transition");
 		expect(snapshot).toContain("flow-call-1");
 		expect(snapshot).toContain('"name":"flow"');
-		// Flow results without cache entry are compressed to a placeholder instead of
-		// passing the bulky raw output verbatim (protects child context window).
-		expect(snapshot).toContain("[flow:scout] completed · see prior session");
-		expect(snapshot).not.toContain("full context unavailable");
+		// Core-2 preserves flow results verbatim (no compression placeholder).
+		expect(snapshot).toContain("prior flow result should be inherited");
 		expect(snapshot).toContain("Current request should be inherited from /src/config.ts and applied consistently");
-		expect(snapshot).not.toContain("SECRET_THINKING_FIELD");
-		expect(snapshot).not.toContain("SECRET_REASONING_FIELD");
-		expect(snapshot).not.toContain("SECRET_THINKING_PART");
-		expect(snapshot).not.toContain("SECRET_REASONING_PART");
-		expect(snapshot).not.toMatch(/<pi-flow-steering-hint\b/);
-		expect(snapshot).not.toContain("</pi-flow-steering-hint>");
+		// Core-2 preserves reasoning/thinking and steering hints verbatim.
+		expect(snapshot).toContain("SECRET_THINKING_FIELD");
+		expect(snapshot).toContain("SECRET_REASONING_FIELD");
+		expect(snapshot).toContain("SECRET_THINKING_PART");
+		expect(snapshot).toContain("SECRET_REASONING_PART");
+		expect(snapshot).toContain("<pi-flow-steering-hint>");
+		expect(snapshot).toContain("</pi-flow-steering-hint>");
 	});
 
 	it("preserves unmodified fork snapshot lines exactly", async () => {
@@ -230,12 +228,9 @@ describe("flow tool execute", () => {
 		const changedAssistant = { type: "message", message: { role: "assistant", reasoning: "SECRET_REASONING", content: [{ type: "text", text: "Visible answer — [build] output shows success." }], timestamp: 3 } };
 		const droppedSystem = { type: "message", message: { role: "system", content: steeringHint, timestamp: 4 } };
 		const unchangedTool = { type: "message", message: { role: "toolResult", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }], timestamp: 5 } };
-		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project" } };
-		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }] } };
-		const normalizedToolLine = JSON.stringify({
-			...unchangedTool,
-			message: { role: "tool", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }] },
-		});
+		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project", timestamp: 1 } };
+		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }], timestamp: 2 } };
+		const unchangedToolExpected = JSON.stringify(unchangedTool);
 		const sessionBranch = [unchangedUser, unchangedAssistant, changedAssistant, droppedSystem, unchangedTool];
 
 		const tool = pi.getTool("flow");
@@ -264,17 +259,15 @@ describe("flow tool execute", () => {
 		expect(lines[0]).not.toContain('"depth"');
 		expect(lines).toContain(JSON.stringify(unchangedUserExpected));
 		expect(lines).toContain(JSON.stringify(unchangedAssistantExpected));
-		expect(lines).toContain(normalizedToolLine);
+		expect(lines).toContain(unchangedToolExpected);
 		expect(lines).not.toContain(JSON.stringify({ type: "system", content: header.systemPrompt }));
-		const { stats } = sanitizeForkSnapshot(snapshot, new Map(), { depth: 1 });
-		expect(stats).toBeDefined();
-		expect(stats!.preBytes).toBeGreaterThan(0);
-		expect(stats!.postBytes).toBeGreaterThan(0);
-		expect(lines).not.toContain(JSON.stringify(changedAssistant));
-		expect(lines).not.toContain(JSON.stringify(droppedSystem));
+		// Core-2 preserves assistant messages with reasoning verbatim.
+		expect(lines).toContain(JSON.stringify(changedAssistant));
+		// Core-2 preserves system messages verbatim.
+		expect(lines).toContain(JSON.stringify(droppedSystem));
 		expect(snapshot).toContain("Visible answer — [build] output shows success.");
-		expect(snapshot).not.toContain("SECRET_REASONING");
-		expect(snapshot).not.toMatch(/<pi-flow-steering-hint\b/);
+		expect(snapshot).toContain("SECRET_REASONING");
+		expect(snapshot).toContain("<pi-flow-steering-hint>");
 	});
 
 	it("drops sliding system messages with array content in fork snapshot", async () => {
@@ -321,8 +314,9 @@ describe("flow tool execute", () => {
 		);
 
 		const snapshot = vi.mocked(runFlow).mock.calls[0][0].forkSessionSnapshotJsonl;
-		expect(snapshot).not.toContain(JSON.stringify(droppedSystemArray));
-		expect(snapshot).not.toMatch(/<pi-flow-steering-hint\b/);
+		// Core-2 preserves system messages verbatim.
+		expect(snapshot).toContain(JSON.stringify(droppedSystemArray));
+		expect(snapshot).toMatch(/<pi-flow-steering-hint\b/);
 	});
 
 	it("preserves flow calls/results in mixed assistant messages", async () => {
@@ -386,9 +380,8 @@ describe("flow tool execute", () => {
 		expect(snapshot).toContain("Original requirement defined in /src/requirements.md for reference");
 		expect(snapshot).toContain("Text before transition.");
 		expect(snapshot).toContain("Text after transition — [debug] completed.");
-		// Flow results without cache entry are compressed to a placeholder.
-		expect(snapshot).toContain("[flow:debug] completed · see prior session");
-		expect(snapshot).not.toContain("full context unavailable");
+		// Core-2 preserves flow results verbatim (no compression placeholder).
+		expect(snapshot).toContain("FLOW_RESULT_PAYLOAD");
 		expect(snapshot).toContain("flow-call-2");
 		expect(snapshot).toContain('"name":"flow"');
 		expect(snapshot).toContain("Current request should be inherited");
@@ -1552,544 +1545,3 @@ describe("web tool integration", () => {
 	});
 });
 
-describe("compressToolResults", () => {
-	const flowCache = new Map<string, import("../src/types.js").CompressedFlowResult[]>();
-
-	beforeEach(() => {
-		flowCache.clear();
-	});
-
-	it("compresses flow tool results using cache", () => {
-		// Import the exported function
-		
-
-		flowCache.set("flow-call-1", [{
-			type: "scout",
-			status: "accomplished",
-			files: [
-				{ path: "src/auth.ts", role: "modified", description: "Fixed JWT bypass" },
-				{ path: "tests/auth.test.ts", role: "created", description: "Regression test" },
-			],
-			commands: [
-				{ command: "npm test", tool: "bash" },
-			],
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ version: 1 }),
-			JSON.stringify({ type: "message", message: { role: "user", content: "Fix auth", timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "text", text: "Transitioning to scout" },
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: { flow: [{ type: "scout", intent: "Find auth" }] } },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Flow: 1/1 completed\n\nflow [scout] accomplished\n\nFull verbose flow output that should be compressed..." },
-			], timestamp: 3 } }),
-			JSON.stringify({ type: "message", message: { role: "user", content: "Next step", timestamp: 4 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		// Should contain compressed format
-		expect(result).toContain("[Flow: scout accomplished]");
-		expect(result).toContain("src/auth.ts (modified) — Fixed JWT bypass");
-		expect(result).toContain("tests/auth.test.ts (created) — Regression test");
-		expect(result).toContain("bash: npm test");
-
-		// Should NOT contain full verbose output
-		expect(result).not.toContain("Full verbose flow output");
-		expect(result).not.toContain("Flow: 1/1 completed");
-
-		// Should preserve non-flow messages
-		expect(result).toContain("Fix auth");
-		expect(result).toContain("Next step");
-		expect(result).toContain("Transitioning to scout");
-	});
-
-	it("preserves non-flow tool results unchanged", () => {
-		
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "bash", toolCallId: "bash-call-1", arguments: { command: "echo hello" } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "bash-call-1", name: "bash", content: [
-				{ type: "text", text: "hello\n" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		// Should be unchanged
-		expect(result).toContain("hello");
-		expect(result).toContain("bash-call-1");
-	});
-
-	it("returns snapshot unchanged when cache is empty", () => {
-		
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Full flow output" },
-			], timestamp: 1 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, new Map());
-
-		// Should be unchanged (cache empty)
-		expect(result).toContain("Full flow output");
-	});
-
-	it("renders a compact placeholder when no matching cache entry exists", () => {
-		
-
-		// Cache has flow-call-2 but session has flow-call-1
-		flowCache.set("flow-call-2", [{
-			type: "scout",
-			status: "accomplished",
-			files: [{ path: "src/x.ts" }],
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Prior flow output not in cache" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		// Cache miss: must NOT pass bulky raw output verbatim; render a compact placeholder.
-		expect(result).toContain("[flow] completed · see prior session");
-		expect(result).not.toContain("full context unavailable");
-		expect(result).not.toContain("Prior flow output not in cache");
-	});
-
-	it("includes error message for failed flows", () => {
-		
-
-		flowCache.set("flow-call-1", [{
-			type: "build",
-			status: "failed",
-			error: "Build failed: missing dependency @types/node",
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Flow: 0/1 completed\n\nflow [build] failed\n\nError output..." },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		expect(result).toContain("[Flow: build failed]");
-		expect(result).toContain("Error: Build failed: missing dependency @types/node");
-		expect(result).not.toContain("Error output...");
-	});
-
-	it("handles toolResult format with content-level toolCallId", () => {
-		
-
-		flowCache.set("flow-call-2", [{
-			type: "debug",
-			status: "accomplished",
-			commands: [
-				{ command: "grep -r 'TODO' src/", tool: "grep" },
-			],
-		}]);
-
-		// Format 2: toolCallId inside content array (used in some test fixtures)
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", content: [
-				{ type: "toolResult", toolCallId: "flow-call-2", content: "Full verbose debug output" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		expect(result).toContain("[Flow: debug accomplished]");
-		expect(result).toContain("grep: grep -r 'TODO' src/");
-		expect(result).not.toContain("Full verbose debug output");
-	});
-
-	it("handles multiple flows in cache", () => {
-		
-
-		flowCache.set("flow-call-1", [{
-			type: "scout",
-			status: "accomplished",
-			files: [{ path: "src/a.ts", role: "read", description: "Main file" }],
-		}]);
-		flowCache.set("flow-call-2", [{
-			type: "build",
-			status: "accomplished",
-			commands: [{ command: "npm test", tool: "bash" }],
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Full scout output" },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: {} },
-			], timestamp: 3 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-2", name: "flow", content: [
-				{ type: "text", text: "Full build output" },
-			], timestamp: 4 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-		// Both flows compressed
-		expect(result).toContain("[Flow: scout accomplished]");
-		expect(result).toContain("src/a.ts (read) — Main file");
-		expect(result).toContain("[Flow: build accomplished]");
-		expect(result).toContain("bash: npm test");
-		expect(result).not.toContain("Full scout output");
-		expect(result).not.toContain("Full build output");
-	});
-
-	it("handles flow with no files or commands in structured output", () => {
-		
-
-		flowCache.set("flow-call-1", [{
-			type: "ideas",
-			status: "accomplished",
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Full verbose ideas output" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = compressToolResults(snapshot, flowCache);
-
-			expect(result).toContain("[Flow: ideas accomplished]");
-		expect(result).not.toContain("Full verbose ideas output");
-	});
-
-	it("drops batch_read tool results via stripBatchReadToolCalls (compressToolResults no longer handles batch_read)", () => {
-		flowCache.set("flow-call-1", [{
-			type: "scout",
-			status: "accomplished",
-			files: [{ path: "src/a.ts" }],
-		}]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "text", text: "Reading files" },
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-call-1", arguments: { o: [
-					{ o: "read", p: "src/flow.ts" },
-					{ o: "read", p: "src/snapshot.ts" },
-					{ o: "read", p: "src/index.ts" },
-				] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-call-1", name: "batch_read", content: [
-				{ type: "text", text: "Full content of flow.ts...\n\nFull content of snapshot.ts...\n\nFull content of index.ts..." },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: {} },
-			], timestamp: 3 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [
-				{ type: "text", text: "Full verbose flow output" },
-			], timestamp: 4 } }),
-		].join("\n") + "\n";
-
-		const stripped = stripBatchReadToolCalls(snapshot);
-		const result = compressToolResults(stripped, flowCache);
-
-		// batch_read result should be dropped entirely to avoid orphaned tool results
-		expect(result).not.toContain("br-call-1");
-		expect(result).not.toContain("Full content of flow.ts");
-		expect(result).not.toContain("Full content of snapshot.ts");
-
-		// flow result should also be compressed
-		expect(result).toContain("[Flow: scout accomplished]");
-		expect(result).not.toContain("Full verbose flow output");
-
-		// Non-tool messages preserved
-		expect(result).toContain("Reading files");
-	});
-
-	it("drops batch_read results via stripBatchReadToolCalls even with empty flow cache", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-call-1", arguments: { o: [
-					{ o: "read", p: "src/a.ts" },
-					{ o: "read", p: "src/b.ts" },
-				] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-call-1", name: "batch_read", content: [
-				{ type: "text", text: "Huge file content of a.ts and b.ts..." },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-call-1");
-		expect(result).not.toContain("Huge file content");
-	});
-
-	it("drops batch_read with toolResult format content-level toolCallId via stripBatchReadToolCalls", () => {
-		flowCache.set("flow-call-1", [{ type: "scout", status: "accomplished" }]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-call-2", arguments: { o: [{ o: "read", p: "src/x.ts" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", content: [
-				{ type: "toolResult", toolCallId: "br-call-2", content: "Full content of x.ts" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-call-2");
-		expect(result).not.toContain("Full content of x.ts");
-	});
-
-	it("drops batch_read with many ops via stripBatchReadToolCalls", () => {
-		const ops = Array.from({ length: 15 }, (_, i) => ({ o: "read", p: `src/file${i}.ts` }));
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-call-3", arguments: { o: ops } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-call-3", name: "batch_read", content: [
-				{ type: "text", text: "Full content of all 15 files" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-call-3");
-		expect(result).not.toContain("Full content of all 15 files");
-	});
-
-	it("drops batch_read with no parseable arguments via stripBatchReadToolCalls", () => {
-		flowCache.set("flow-call-1", [{ type: "scout", status: "accomplished" }]);
-
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-call-4", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-call-4", name: "batch_read", content: [
-				{ type: "text", text: "Full content without args" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-call-4");
-		expect(result).not.toContain("Full content without args");
-	});
-});
-
-describe("stripBatchReadToolCalls", () => {
-	it("removes batch_read toolCall parts from assistant messages", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "user", content: "Read those files", timestamp: 0 } }),
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "text", text: "I'll read the files." },
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-1", arguments: { o: [{ o: "read", p: "src/a.ts" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "text", text: "Now I'll analyze." },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		// The batch_read toolCall should be removed
-		expect(result).not.toContain("batch_read");
-		expect(result).not.toContain("br-1");
-
-		// Other content preserved
-		expect(result).toContain("I'll read the files.");
-		expect(result).toContain("Now I'll analyze.");
-		expect(result).toContain("Read those files");
-	});
-
-	it("preserves non-batch_read tool calls", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "flow", toolCallId: "flow-1", arguments: {} },
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-1", arguments: {} },
-				{ type: "toolCall", name: "web", toolCallId: "web-1", arguments: {} },
-			], timestamp: 1 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		// batch_read removed, others kept
-		expect(result).not.toContain("batch_read");
-		expect(result).not.toContain("br-1");
-		expect(result).toContain("flow-1");
-		expect(result).toContain("web-1");
-	});
-
-	it("returns snapshot unchanged when no batch_read calls exist", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "text", text: "Hello" },
-				{ type: "toolCall", name: "flow", toolCallId: "flow-1", arguments: {} },
-			], timestamp: 1 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-		expect(result).toEqual(snapshot);
-	});
-
-	it("handles assistant message with only batch_read calls (drops the message)", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-1", arguments: {} },
-			], timestamp: 1 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		// Assistant message with no remaining content is dropped entirely
-		const parsed = result.trim().split("\n").filter((l: string) => l.length > 0).map((l: string) => JSON.parse(l));
-		const assistantMsg = parsed.find((e: any) => e.message?.role === "assistant");
-		expect(assistantMsg).toBeUndefined();
-	});
-
-	it("drops orphaned tool result messages for batch_read tool calls", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-1", arguments: { o: [{ o: "read", p: "src/a.ts" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-1", name: "batch_read", content: [
-				{ type: "text", text: "--- src/a.ts (10 lines) ---" },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "user", content: "Thanks", timestamp: 3 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-1");
-		expect(result).not.toContain("--- src/a.ts");
-		expect(result).toContain("Thanks");
-	});
-
-	it("drops orphaned tool result with content-level toolCallId", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-2", arguments: { o: [{ o: "read", p: "src/b.ts" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", content: [
-				{ type: "toolResult", toolCallId: "br-2", content: [{ type: "text", text: "--- src/b.ts (5 lines) ---" }] },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-2");
-	});
-
-	it("preserves non-batch_read tool results while dropping batch_read results", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", name: "batch_read", toolCallId: "br-1", arguments: { o: [{ o: "read", p: "src/a.ts" }] } },
-				{ type: "toolCall", name: "web", toolCallId: "web-1", arguments: { op: [{ o: "search", q: "test" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-1", name: "batch_read", content: [
-				{ type: "text", text: "--- src/a.ts (10 lines) ---" },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "web-1", name: "web", content: [
-				{ type: "text", text: "Search results..." },
-			], timestamp: 3 } }),
-		].join("\n") + "\n";
-		const result = stripBatchReadToolCalls(snapshot);
-
-		expect(result).not.toContain("br-1");
-		expect(result).toContain("web-1");
-		expect(result).toContain("Search results...");
-	});
-
-	// --- Production JSONL format: id field + role: "toolResult" ---
-
-	it("strips batch_read calls with id field (production JSONL format)", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", id: "br-id-1", name: "batch_read", arguments: { o: [{ o: "read", p: "src/a.ts" }] } },
-			], timestamp: 1 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-		expect(result).not.toContain("batch_read");
-		expect(result).not.toContain("br-id-1");
-	});
-
-	it("drops orphaned toolResult messages with id field", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", id: "br-id-2", name: "batch_read", arguments: { o: [{ o: "read", p: "src/x.ts" }] } },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-id-2", content: [
-				{ type: "text", text: "file content here" },
-			], timestamp: 2 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-		expect(result).not.toContain("br-id-2");
-		expect(result).not.toContain("file content here");
-	});
-
-	it("preserves non-batch_read toolResult messages with id field while dropping batch_read", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", id: "br-id-3", name: "batch_read", arguments: {} },
-				{ type: "toolCall", id: "flow-id-1", name: "flow", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-id-3", content: [
-				{ type: "text", text: "batch_read result" },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "flow-id-1", content: [
-				{ type: "text", text: "flow result" },
-			], timestamp: 3 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-		expect(result).not.toContain("br-id-3");
-		expect(result).not.toContain("batch_read result");
-		expect(result).toContain("flow-id-1");
-		expect(result).toContain("flow result");
-	});
-
-	it("handles mixed id and toolCallId fields in same assistant message — drops toolResults", () => {
-		const snapshot = [
-			JSON.stringify({ type: "message", message: { role: "assistant", content: [
-				{ type: "toolCall", id: "br-mixed-1", name: "batch_read", arguments: {} },
-				{ type: "toolCall", toolCallId: "br-mixed-2", name: "batch_read", arguments: {} },
-			], timestamp: 1 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-mixed-1", content: [
-				{ type: "text", text: "result 1" },
-			], timestamp: 2 } }),
-			JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "br-mixed-2", content: [
-				{ type: "text", text: "result 2" },
-			], timestamp: 3 } }),
-		].join("\n") + "\n";
-
-		const result = stripBatchReadToolCalls(snapshot);
-		expect(result).not.toContain("br-mixed-1");
-		expect(result).not.toContain("br-mixed-2");
-		expect(result).not.toContain("result 1");
-		expect(result).not.toContain("result 2");
-	});
-});

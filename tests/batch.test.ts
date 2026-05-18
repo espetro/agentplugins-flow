@@ -293,7 +293,7 @@ describe("batch tool", () => {
 	});
 
 	describe("rg operations", () => {
-		it("searches with rg and returns matching files", async () => {
+		it("searches with rg and returns matching lines by default", async () => {
 			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
 			fs.writeFileSync(path.join(tmpDir, "bar.ts"), "export const bar = 2;\n", "utf-8");
 			fs.mkdirSync(path.join(tmpDir, "sub"), { recursive: true });
@@ -313,6 +313,7 @@ describe("batch tool", () => {
 			expect(result.content[0].text).toContain("foo.ts");
 			expect(result.content[0].text).toContain("bar.ts");
 			expect(result.content[0].text).toContain("baz.ts");
+			expect(result.content[0].text).toContain("export const");
 		});
 
 		it("returns empty results when no matches", async () => {
@@ -363,13 +364,13 @@ describe("batch tool", () => {
 			expect(result.content[0].text).toContain("foo.ts");
 		});
 
-		it("disables files-with-matches when l is false", async () => {
+		it("returns matching lines with content by default", async () => {
 			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\nexport const foo2 = 2;\n", "utf-8");
 
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const", l: false }] },
+				{ o: [{ o: "rg", p: ".", q: "export const" }] },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -377,6 +378,7 @@ describe("batch tool", () => {
 
 			expect(result.details.results[0].status).toBe("ok");
 			expect(result.content[0].text).toContain("foo.ts");
+			expect(result.content[0].text).toContain("export const");
 		});
 
 		it("rejects empty pattern", async () => {
@@ -493,14 +495,14 @@ describe("batch tool", () => {
 	});
 
 
-	it("attaches enclosing signatures when l is false", async () => {
+	it("attaches enclosing signatures by default", async () => {
 		const ts = `export class Foo {\n  bar(): number {\n    return 1;\n  }\n}\n`;
 		fs.writeFileSync(path.join(tmpDir, "sig.ts"), ts, "utf-8");
 
 		const tool = createTool();
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "rg", p: ".", q: "return 1", l: false }] },
+			{ o: [{ o: "rg", p: ".", q: "return 1" }] },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),

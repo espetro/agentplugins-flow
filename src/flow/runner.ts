@@ -24,7 +24,7 @@ import { extractStructuredOutput, generateCommandsFromHistory } from "../snapsho
 import { setLiveText } from '../tui/scramble/index.js';
 import { logWarn, logError } from '../config/log.js';
 import { DEFAULT_AGENT_SESSION_MODE, getAgentSessionTimeoutMs, type AgentSessionMode } from "./session-mode.js";
-import type { GoalContext } from "../flow/types.js";
+import type { GoalContext } from "./types.js";
 
 function getEnvInt(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -493,8 +493,6 @@ export interface RunFlowOptions {
 	sessionMode?: AgentSessionMode;
 	/** Optional flow goal context to inject into the child prompt. */
 	goalContext?: GoalContext;
-	/** Compression statistics from sanitizeForkSnapshot for dump header generation. */
-	compressionStats?: { preBytes: number; postBytes: number; reductionPercent: number; passesApplied: string[] } | null;
 	/** Optional max context token budget to record in the result. */
 	maxContextTokens?: number;
 }
@@ -660,21 +658,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			const promptIndex = piArgs.indexOf("-p");
 			const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
 
-			// Use out-of-band compression stats provided via RunFlowOptions.
-			let compressionStats = "";
-			let passesApplied: string[] = [];
-			if (opts.compressionStats) {
-				compressionStats = `\n\n## Compression Stats\n\n- Pre-sanitization: ${opts.compressionStats.preBytes} bytes\n- Post-sanitization: ${opts.compressionStats.postBytes} bytes\n- Reduction: ${opts.compressionStats.reductionPercent}%`;
-			}
-
 			const effectiveTier = flow.tier ?? getFlowTier(flow.name);
-			passesApplied = Array.isArray(opts.compressionStats?.passesApplied) ? opts.compressionStats.passesApplied : [];
-			const passesList = passesApplied.length > 0 
-			  ? passesApplied.join(", ") 
-			  : opts.compressionStats || forkSessionSnapshotJsonl 
-			    ? "sanitizeForkSnapshot (no passes applied)" 
-			    : "(none — cold start)";
-			const sanitizationHeader = `<!-- pi-agent-flow dump | State: post-sanitization | Passes: ${passesList} | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
+			const sanitizationHeader = `<!-- pi-agent-flow dump | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
 
 			const markdownParts: string[] = [
 				sanitizationHeader,
@@ -692,7 +677,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				`## Activation Prompt (-p)`,
 				``,
 				prompt,
-				compressionStats,
 			);
 			const markdown = markdownParts.join("\n");
 			const uniqueDumpPath = makeUniqueDumpPath(dumpPath, flow.name);

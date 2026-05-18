@@ -5,7 +5,7 @@ import { getLoop } from "./loop.js";
 import { buildAutoWarpPrompt } from "./auto-warp.js";
 import { loopContinuationPromptTemplate, loopWakeupTemplate } from "./loop-templates.js";
 import { logWarn } from '../config/log.js';
-import * as sessionRegistry from '../core/session-registry.js';
+import * as sessionRegistry from './session-registry.js';
 
 const SPAWN_COOLDOWN_MS = 5000;
 const _lastSpawnAt = new Map<string, number>();

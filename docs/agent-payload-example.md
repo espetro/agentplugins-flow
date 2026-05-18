@@ -1,8 +1,11 @@
 # Agent Payload — What a Child Flow Actually Receives
 
+> ⚠️ **Historical document.** This describes the core-1 compression pipeline (23-pass sanitizer) that was replaced by core-2 in v2.1+. The core-2 pipeline (`src/core2/snapshot.ts`) is a simple verbatim-preserving system that only strips batch read/write/edit file bodies. All compression passes, the old `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), and `src/snapshot/reasoning-strip.ts` (deleted) have been deleted. The old `src/core/` directory has been moved to `src/flow/` (`flow.ts` → `runner.ts`, etc.). Path references within this document point to the old codebase structure and are preserved for historical accuracy.
+
+
 This document shows the **exact payload** passed to a child flow when the root state transitions. Every byte, every tag, every compression artifact is reproduced from the actual code.
 
-> Generated from: `src/core/flow.ts` (`buildFlowArgs`, `runFlow`), `src/snapshot/snapshot.ts` (`buildForkSessionSnapshotJsonl`, `sanitizeForkSnapshot`), `agents/scout.md`
+> Generated from: `src/flow/runner.ts` (`buildFlowArgs`, `runFlow`), `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) (`buildForkSessionSnapshotJsonl` (deleted — replaced by `buildCore2Snapshot`), `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer)), `agents/scout.md`
 
 ---
 
@@ -30,7 +33,7 @@ Key flags:
 
 ## 2. The `-p` Prompt (Activation Prompt)
 
-This is built by `buildFlowArgs()` in `src/core/flow.ts:281-401`. It is **not** the system prompt — it is a special message that appears **after** all session history, sealed off by `<context-seal>`.
+This is built by `buildFlowArgs()` in `src/flow/runner.ts:281-401`. It is **not** the system prompt — it is a special message that appears **after** all session history, sealed off by `<context-seal>`.
 
 ```
 <context-seal>
@@ -84,7 +87,7 @@ Follow the output format specified in your directive.
 
 This is the **forked parent conversation history**. It lives at `/tmp/pi-agent-flow-abc123/flow-scout.jsonl` (temp dir, `0o600` perms, deleted on child exit).
 
-The file is built by `buildForkSessionSnapshotJsonl()` then run through `sanitizeForkSnapshot()`. Below is a **realistic before/after** showing every sanitization pass.
+The file is built by `buildForkSessionSnapshotJsonl()` (deleted — replaced by `buildCore2Snapshot`) then run through `sanitizeForkSnapshot()` (deleted — core-2 has no sanitizer). Below is a **realistic before/after** showing every sanitization pass.
 
 ### 3a. Raw Snapshot (before sanitization)
 
@@ -100,12 +103,12 @@ This is what `sessionManager.getHeader()` + `sessionManager.getBranch()` produce
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"how do we handle sessions of multiple flows?"}]}}
 {"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"<thinking>\\nThe user is asking about sequential flows...\\n</thinking>\\nWhen scout runs first, then build runs in a separate turn, the build sees the scout's compressed result via the flow result cache."}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"for edge case do we need to fix anything"}]}}
-{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Let me audit the edge cases."},{"type":"toolCall","type":"toolCall","name":"batch_read","id":"call_003","arguments":{"o":[{"p":"src/snapshot/snapshot.ts","s":1,"l":100},{"p":"src/core/executor.ts","s":150,"l":50}]}}]}}
-{"type":"message","message":{"role":"tool","toolCallId":"call_003","content":[{"type":"text","text":"--- src/snapshot/snapshot.ts (100 lines) ---\\nexport function buildForkSession...\\n--- src/core/executor.ts (50 lines) ---\\nconst FLOW_RESULT_CACHE_MAX_ENTRIES = 100;\\n"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Let me audit the edge cases."},{"type":"toolCall","type":"toolCall","name":"batch_read","id":"call_003","arguments":{"o":[{"p":"src/snapshot/snapshot.ts","s":1,"l":100},{"p":"src/flow/executor.ts","s":150,"l":50}]}}]}}
+{"type":"message","message":{"role":"tool","toolCallId":"call_003","content":[{"type":"text","text":"--- src/snapshot/snapshot.ts (100 lines) ---\\nexport function buildForkSession...\\n--- src/flow/executor.ts (50 lines) ---\\nconst FLOW_RESULT_CACHE_MAX_ENTRIES = 100;\\n"}]}}
 {"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"The edge cases look manageable. The cache overflow at 100 entries is handled with a placeholder."}]}}
 ```
 
-### 3b. Sanitized Snapshot (after `sanitizeForkSnapshot`)
+### 3b. Sanitized Snapshot (after `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer))
 
 This is what actually gets written to the temp file and loaded by the child.
 
@@ -238,4 +241,4 @@ The cache is keyed by `toolCallId` (e.g. `call_001`). It is a **module-level sin
 
 ---
 
-*End of document. This matches the actual implementation in `src/core/flow.ts`, `src/snapshot/snapshot.ts`, and `src/core/executor.ts` as of the current codebase.*
+*End of document. This matches the actual implementation in `src/flow/runner.ts`, `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), and `src/flow/executor.ts` as of the current codebase.*

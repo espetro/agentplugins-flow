@@ -1,7 +1,10 @@
 # Shared Context Pipeline — Formal Synthesis
 
+> ⚠️ **Historical document.** This describes the core-1 compression pipeline (23-pass sanitizer) that was replaced by core-2 in v2.1+. The core-2 pipeline (`src/core2/snapshot.ts`) is a simple verbatim-preserving system that only strips batch read/write/edit file bodies. All compression passes, the old `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), and `src/snapshot/reasoning-strip.ts` (deleted) have been deleted. The old `src/core/` directory has been moved to `src/flow/` (`flow.ts` → `runner.ts`, etc.). Path references within this document point to the old codebase structure and are preserved for historical accuracy.
+
+
 > **Document type:** Conservative architectural specification  
-> **Scope:** What IS, not what could be. Based on source-code evidence (`src/core/flow.ts`, `src/snapshot/snapshot.ts`, `src/steering/flow-prompt.ts`, `src/core/depth.ts`) and actual dump artifacts (`dump-artifacts/`).  
+> **Scope:** What IS, not what could be. Based on source-code evidence (`src/flow/runner.ts`, `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), `src/steering/flow-prompt.ts`, `src/flow/depth.ts`) and actual dump artifacts (`dump-artifacts/`).  
 > **Date:** 2026-05-16  
 > **Pipeline version:** 1.8.40
 
@@ -11,7 +14,7 @@
 
 ### 1.1 The Four-Part Activation Prompt (`-p`)
 
-When the root state spawns a child flow, it constructs a single prompt string passed via `pi -p`. This prompt has **four sequential phases**, hard-coded in `src/core/flow.ts` (`buildFlowArgs`, lines ~321–495):
+When the root state spawns a child flow, it constructs a single prompt string passed via `pi -p`. This prompt has **four sequential phases**, hard-coded in `src/flow/runner.ts` (`buildFlowArgs`, lines ~321–495):
 
 | Phase | XML Tag | Purpose | Source |
 |-------|---------|---------|--------|
@@ -26,7 +29,7 @@ When the root state spawns a child flow, it constructs a single prompt string pa
 
 ### 1.2 The Sanitized JSONL Fork Snapshot (`--session`)
 
-The child process receives a `--session <tmpfile>.jsonl` argument containing a **replayable transcript** of the parent session. This is built by `buildForkSessionSnapshotJsonl` (`src/snapshot/snapshot.ts`, lines ~44–81) and then sanitized by `sanitizeForkSnapshot` (lines ~731–977).
+The child process receives a `--session <tmpfile>.jsonl` argument containing a **replayable transcript** of the parent session. This is built by `buildForkSessionSnapshotJsonl` (deleted — replaced by `buildCore2Snapshot`) (`src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), lines ~44–81) and then sanitized by `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (lines ~731–977).
 
 **What the snapshot contains (post-sanitization):**
 - A `session` header with `forkedFrom`, `forkedAt`, `parentFlow`, `depth` metadata injected.
@@ -58,7 +61,7 @@ Before the snapshot reaches the child, three global passes mutate the JSONL **af
    - `ask_user` results → `[ask_user] "question" → "answer"`
    - `batch_read` results → `[batch_read] N ops → paths: file1.ts, file2.ts, …`
 
-**Evidence:** `src/snapshot/snapshot.ts` lines 366–595 define `compressToolResults`; lines 597–675 define `stripBatchReadToolCalls`; lines 677–729 define `reparentOrphans`.
+**Evidence:** `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) lines 366–595 define `compressToolResults`; lines 597–675 define `stripBatchReadToolCalls`; lines 677–729 define `reparentOrphans`.
 
 ### 1.4 Depth / Tier / Guard Propagation
 
@@ -69,7 +72,7 @@ Transition state travels via **two channels**:
 | **Env vars** | `process.env` propagated to child | `PI_FLOW_DEPTH`, `PI_FLOW_MAX_DEPTH`, `PI_FLOW_STACK`, `PI_FLOW_PREVENT_CYCLES`, `PI_FLOW_TOOL_OPTIMIZE`, `PI_FLOW_DEADLINE_MS`, `PI_FLOW_TOOL_SUMMARY_GRACE_MS`, `PI_OFFLINE=1` |
 | **Activation prompt** | Inline in `-p` | `depth="current/max"`, `cycles: blocked/off`, `stack: (root)` or `a -> b -> c` |
 
-**Key constants** (`src/core/depth.ts`):
+**Key constants** (`src/flow/depth.ts`):
 - `DEFAULT_MAX_TRANSITION_DEPTH = 3`
 - `DEFAULT_PREVENT_CYCLE_TRANSITION = true`
 
@@ -77,7 +80,7 @@ Transition state travels via **two channels**:
 
 ### 1.5 Env-Var Propagation as Control Plane
 
-The root state spawns the child with a **fresh environment** that inherits the parent process env but overrides specific flow-control variables (`src/core/flow.ts`, lines ~700–720):
+The root state spawns the child with a **fresh environment** that inherits the parent process env but overrides specific flow-control variables (`src/flow/runner.ts`, lines ~700–720):
 
 ```
 PI_FLOW_DEPTH       = nextDepth          (parentDepth + 1)
@@ -97,31 +100,31 @@ PI_FLOW_REMINDER_FILE_ENV = reminderFilePath
 
 ## 2. ACTUAL DUMPS — What They Confirm vs. What Could Drift
 
-### 2.1 Confirmed Behaviors (verified against `src/core/flow.ts` and artifacts)
+### 2.1 Confirmed Behaviors (verified against `src/flow/runner.ts` and artifacts)
 
 | Behavior | Evidence | Location in Code |
 |----------|----------|-------------------|
-| Dump writes **before** child spawns | `atomicWriteFileSync` called before `spawn()` | `src/core/flow.ts` ~670 |
-| Two files per dump: `.md` + `.txt` | `makeUniqueDumpPath` + `makeUniqueDumpTxtPath` | `src/core/flow.ts` ~230–240 |
-| HTML comment header with metadata | `<!-- pi-agent-flow dump \| State: post-sanitization \| Passes: … \| Pipeline: 1.8.40 -->` | `src/core/flow.ts` ~642 |
-| Compression stats included | `## Compression Stats` section with pre/post bytes | `src/core/flow.ts` ~630 |
-| TTL cleanup of stale dumps | `cleanupStaleDumps` runs before each write | `src/core/flow.ts` ~210 |
-| `pipelineVersion` from `package.json` | `const { version: pipelineVersion } = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"))` | `src/core/flow.ts` ~36 |
-| Source-vs-dist stale warning | `checkStale("snapshot.ts", "snapshot.js")` | `src/core/flow.ts` ~685 |
+| Dump writes **before** child spawns | `atomicWriteFileSync` called before `spawn()` | `src/flow/runner.ts` ~670 |
+| Two files per dump: `.md` + `.txt` | `makeUniqueDumpPath` + `makeUniqueDumpTxtPath` | `src/flow/runner.ts` ~230–240 |
+| HTML comment header with metadata | `<!-- pi-agent-flow dump \| State: post-sanitization \| Passes: … \| Pipeline: 1.8.40 -->` | `src/flow/runner.ts` ~642 |
+| Compression stats included | `## Compression Stats` section with pre/post bytes | `src/flow/runner.ts` ~630 |
+| TTL cleanup of stale dumps | `cleanupStaleDumps` runs before each write | `src/flow/runner.ts` ~210 |
+| `pipelineVersion` from `package.json` | `const { version: pipelineVersion } = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"))` | `src/flow/runner.ts` ~36 |
+| Source-vs-dist stale warning | `checkStale("snapshot.ts", "snapshot.js")` | `src/flow/runner.ts` ~685 |
 
 ### 2.2 Fixed Misalignments (verified in actual artifacts)
 
 | Issue | Severity | Root Cause | Fix Applied |
 |-------|----------|------------|-------------|
-| `custom_message` entries leaked into child snapshots | **P0** | `sanitizeForkSnapshot` had no branch for `type === "custom_message"` | Added `dropCustomMessages` pass (`src/snapshot/snapshot.ts` ~791) |
-| `model_change` / `thinking_level_change` leaked | **P1** | No branch for config events | Added `dropConfigEvents` pass (`src/snapshot/snapshot.ts` ~798) |
-| `pipelineVersion: null` in compression-stats | **P1** | `sanitizeForkSnapshot` doesn't know package version | Removed from stats entry (already in dump header) |
+| `custom_message` entries leaked into child snapshots | **P0** | `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) had no branch for `type === "custom_message"` | Added `dropCustomMessages` pass (`src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) ~791) |
+| `model_change` / `thinking_level_change` leaked | **P1** | No branch for config events | Added `dropConfigEvents` pass (`src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) ~798) |
+| `pipelineVersion: null` in compression-stats | **P1** | `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) doesn't know package version | Removed from stats entry (already in dump header) |
 
 ### 2.3 What Could Still Drift (conservative watchlist)
 
 | Drift Risk | Detection Method | Mitigation |
 |------------|------------------|------------|
-| New JSONL entry type added to core but not handled in sanitization | `grep 'type.*=.*"' src/*.ts` — any new type must have a branch in `sanitizeForkSnapshot` | See §3.3 |
+| New JSONL entry type added to core but not handled in sanitization | `grep 'type.*=.*"' src/*.ts` — any new type must have a branch in `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) | See §3.3 |
 | `VALID_PASS_NAMES` set in tests desyncs from actual passes | `npm test` will fail with "unknown pass name found" | See §3.3 |
 | Dump format changes without doc update | Manual review of `.md` artifacts | Regenerate fixtures after any pipeline change |
 | Source newer than dist | Console warning `[pi-agent-flow] ⚠️ Source newer than dist` | Always run `npm run build` before analyzing dumps |
@@ -142,7 +145,7 @@ The shared context pipeline is a **hot path** — every flow invocation depends 
 | New feature wants to pass data to children | Prefer env var or `-p` injection over snapshot mutation |
 | Dump format readability issue | Cosmetic-only changes are acceptable if they don't alter JSONL protocol |
 | New tool result type needs compression | Add compressor in `compressToolResults` with regression test |
-| New JSONL entry type from upstream core | Must add handling branch in `sanitizeForkSnapshot` and update `VALID_PASS_NAMES` |
+| New JSONL entry type from upstream core | Must add handling branch in `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) and update `VALID_PASS_NAMES` |
 
 ### 3.2 Backward Compatibility Rules
 
@@ -182,7 +185,7 @@ const VALID_PASS_NAMES = new Set([
 ```
 
 **Procedure for adding a pass:**
-1. Add pass logic to `src/snapshot/snapshot.ts`.
+1. Add pass logic to `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`).
 2. Add name to `VALID_PASS_NAMES` in `tests/snapshot-pipeline.test.ts`.
 3. Add regression test covering the new branch.
 4. Run `npm test` — the "unknown pass name found" assertion will catch desyncs.
@@ -192,7 +195,7 @@ const VALID_PASS_NAMES = new Set([
 
 > **Rule 4: Always regenerate fixtures after pipeline changes.**
 
-If `sanitizeForkSnapshot` logic changes, existing dump artifacts in `tests/fixtures/dumps/` or `dump-artifacts/` become **stale evidence**. The `preBytes`/`postBytes` values will not match, and `passesApplied` arrays will differ.
+If `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) logic changes, existing dump artifacts in `tests/fixtures/dumps/` or `dump-artifacts/` become **stale evidence**. The `preBytes`/`postBytes` values will not match, and `passesApplied` arrays will differ.
 
 **Procedure:**
 1. Make code change.
@@ -206,7 +209,7 @@ If `sanitizeForkSnapshot` logic changes, existing dump artifacts in `tests/fixtu
 > **Rule 5: If a redesign is warranted, cut fully rather than leaving half-measures.**
 
 The current architecture (JSONL snapshot + reconstructed `-p` prompt) has served through 1.8.x. If a future version moves to a different serialization (e.g., protobuf, delta-compression), the migration must:
-- Replace both `buildForkSessionSnapshotJsonl` and `sanitizeForkSnapshot` entirely.
+- Replace both `buildForkSessionSnapshotJsonl` (deleted — replaced by `buildCore2Snapshot`) and `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) entirely.
 - Update dump format version in the HTML header comment.
 - Maintain a backward-compat reader for at least one minor version.
 - Never leave dual-protocol code paths in production.
@@ -219,7 +222,7 @@ The current architecture (JSONL snapshot + reconstructed `-p` prompt) has served
 
 | Guarantee | Mechanism | Fallback if Broken |
 |-----------|-----------|--------------------|
-| Child receives sanitized history | `sanitizeForkSnapshot` + `--session` arg | Child starts with clean slate if `--session` is null |
+| Child receives sanitized history | `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) + `--session` arg | Child starts with clean slate if `--session` is null |
 | Child receives its own directive | `<activation>` + `<directive>` in `-p` | Child would inherit parent system prompt (security issue) |
 | Child knows its depth and limits | `depth="current/max"` in activation + env vars | Depth defaults to 0 if env unreadable |
 | Child cannot use tools outside its set | `--tools` CLI arg restricts available tools | Tool call fails at API level |
@@ -230,11 +233,11 @@ The current architecture (JSONL snapshot + reconstructed `-p` prompt) has served
 
 | Feature | Condition | Evidence |
 |---------|-----------|----------|
-| Flow-goal context injection | Only when `goalContext?.objective` is set | `src/core/flow.ts` ~490 |
-| Structured output appendix | Only when `structuredOutput === true` and not opted out via `PI_FLOW_SKIP_STRUCTURED_DIRECTIVE` | `src/core/flow.ts` ~460 |
+| Flow-goal context injection | Only when `goalContext?.objective` is set | `src/flow/runner.ts` ~490 |
+| Structured output appendix | Only when `structuredOutput === true` and not opted out via `PI_FLOW_SKIP_STRUCTURED_DIRECTIVE` | `src/flow/runner.ts` ~460 |
 | Web steering hints in directive | Only when `toolOptimize === false` and prompt looks like URL/search | `src/steering/flow-prompt.ts` ~56 |
-| Reminder file for timeout warnings | Only when `effectiveTimeout > 0` | `src/core/flow.ts` ~535 |
-| Compression stats in dump | Always emitted in JSONL, but `## Compression Stats` section only when `lastEntry.type === "compression-stats"` | `src/core/flow.ts` ~625 |
+| Reminder file for timeout warnings | Only when `effectiveTimeout > 0` | `src/flow/runner.ts` ~535 |
+| Compression stats in dump | Always emitted in JSONL, but `## Compression Stats` section only when `lastEntry.type === "compression-stats"` | `src/flow/runner.ts` ~625 |
 
 ### 4.3 Compressed (Not Guaranteed to Survive)
 
@@ -254,10 +257,10 @@ The current architecture (JSONL snapshot + reconstructed `-p` prompt) has served
 
 | File | Role | Lines of Interest |
 |------|------|-------------------|
-| `src/core/flow.ts` | Spawn logic, dump writing, env propagation, `-p` construction | ~30–40 (pipelineVersion), ~210–240 (dump helpers), ~321–495 (buildFlowArgs), ~625–670 (dump write block), ~700–720 (env propagation) |
-| `src/snapshot/snapshot.ts` | JSONL building, sanitization passes, compression | ~44–81 (buildForkSessionSnapshotJsonl), ~366–595 (compressToolResults), ~597–675 (stripBatchRead), ~677–729 (reparentOrphans), ~731–977 (sanitizeForkSnapshot) |
+| `src/flow/runner.ts` | Spawn logic, dump writing, env propagation, `-p` construction | ~30–40 (pipelineVersion), ~210–240 (dump helpers), ~321–495 (buildFlowArgs), ~625–670 (dump write block), ~700–720 (env propagation) |
+| `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) | JSONL building, sanitization passes, compression | ~44–81 (buildForkSessionSnapshotJsonl), ~366–595 (compressToolResults), ~597–675 (stripBatchRead), ~677–729 (reparentOrphans), ~731–977 (sanitizeForkSnapshot) |
 | `src/steering/flow-prompt.ts` | Before-agent-start prompt augmentation, web steering | ~34–143 (buildBeforeAgentStartPrompt) |
-| `src/core/depth.ts` | Depth config parsing, env var constants | ~1–210 |
+| `src/flow/depth.ts` | Depth config parsing, env var constants | ~1–210 |
 | `tests/snapshot-pipeline.test.ts` | Regression tests, `VALID_PASS_NAMES` canonical set | ~1–380 |
 
 ---
@@ -268,7 +271,7 @@ The current architecture (JSONL snapshot + reconstructed `-p` prompt) has served
 |------|---------|
 | **Fork snapshot** | Serialized session state passed to child via `--session` |
 | **Sanitization** | The process of stripping/redacting parent-only data before forking |
-| **Pass** | A named transformation step in `sanitizeForkSnapshot` (tracked in `passesApplied`) |
+| **Pass** | A named transformation step in `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (tracked in `passesApplied`) |
 | **Dump** | The `.md` + `.txt` files written to disk when `PI_FLOW_DUMP_SNAPSHOT` is set |
 | **Activation prompt** | The reconstructed `-p` string a child receives (phases 1–4) |
 | **Compression stats** | Trailing JSONL entry measuring sanitization delta |

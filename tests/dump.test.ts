@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runFlow, type RunFlowOptions } from "../src/core/flow.js";
-import type { FlowConfig } from "../src/core/agents.js";
+import { runFlow, type RunFlowOptions } from "../src/flow/runner.js";
+import type { FlowConfig } from "../src/flow/agents.js";
 import type { FlowDetails } from "../src/types/flow.js";
 import * as childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -123,13 +123,10 @@ describe("dump mechanism — end-to-end", () => {
 		// Verify .md content sections.
 		const mdContent = fs.readFileSync(actualMd, "utf-8");
 		expect(mdContent).toContain("<!-- pi-agent-flow dump");
-		expect(mdContent).toContain("State: post-sanitization");
+		expect(mdContent).toContain("Flow: scout");
 		expect(mdContent).toContain("## Session Snapshot (JSONL)");
 		expect(mdContent).toContain("## Activation Prompt (-p)");
-		expect(mdContent).toContain("## Compression Stats");
-		expect(mdContent).toContain("- Pre-sanitization: 1000 bytes");
-		expect(mdContent).toContain("- Post-sanitization: 500 bytes");
-		expect(mdContent).toContain("- Reduction: 50%");
+
 		expect(mdContent).toContain('"type":"session"');
 		expect(mdContent).toContain("<activation flow=\"scout\"");
 

@@ -77,7 +77,7 @@ const FileOp = Type.Object({
 			}),
 			Type.Boolean({
 				description:
-					"Files-with-matches flag for o: 'rg'. Default true.",
+					"Files-with-matches flag for o: 'rg'. Default false — returns matching lines with content. Set true to get filenames only.",
 			}),
 		]),
 	),

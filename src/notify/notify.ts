@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { FLOW_DEPTH_ENV, parseNonNegativeInt } from "../core/depth.js";
+import { FLOW_DEPTH_ENV, parseNonNegativeInt } from "../flow/depth.js";
 import { getNotifyState, resetNotifyState } from "./notify-state.js";
 import { logError } from "../config/log.js";
 

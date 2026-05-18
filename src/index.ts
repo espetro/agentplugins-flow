@@ -8,18 +8,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
-import { discoverFlows, getFlowTier } from "./core/agents.js";
+import { discoverFlows, getFlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
-import { terminateAllChildGroups } from "./core/flow.js";
-import { executeFlows, evictCacheOverflow } from "./core/executor.js";
+import { terminateAllChildGroups } from "./flow/runner.js";
+import { executeFlows } from "./flow/executor.js";
 import { appendDirectiveOnce, resetDirectiveTracker, configureDirective, stripDirectivesFromMessages, type FlowHintContext } from "./steering/tool-utils.js";
 import type {
 	SingleResult,
 	FlowDetails,
 	PiAgentFlowAPI,
 } from "./types/flow.js";
-import type { CompressedFlowResult } from "./types/output.js";
+
 import {
 	createBatchTool,
 	createBatchReadTool,
@@ -35,17 +35,14 @@ import {
 	configureSteering,
 } from "./steering/sliding-prompt.js";
 import { registerFlow, getGoal, getGoalForSession, getLoop, recordFlowCompletion, addTokens, shutdownWakeup } from "./flow/index.js";
-import * as sessionRegistry from "./core/session-registry.js";
+import * as sessionRegistry from "./flow/session-registry.js";
 
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
-} from "./core/depth.js";
-import {
-	buildForkSessionSnapshotJsonl,
-	sanitizeForkSnapshot,
-} from "./snapshot/snapshot.js";
+} from "./flow/depth.js";
+import { buildCore2Snapshot } from "./core2/snapshot.js";
 import {
 	resolveSettings,
 	type ResolvedSettings,
@@ -55,102 +52,7 @@ import { scrambleManager, setAnimationConfig } from "./tui/scramble/index.js";
 import { logWarn, logError } from "./config/log.js";
 export { logWarn, logError };
 
-// ---------------------------------------------------------------------------
-// Persistent flow result cache — shared across execute() calls so historical
-// flow results are compressed properly in fork snapshots.
-// ---------------------------------------------------------------------------
-const flowResultCache = new Map<string, CompressedFlowResult[]>();
 
-/**
- * Reconstruct flowResultCache from an existing session branch after restart.
- * Scans tool results for the "flow" tool and rebuilds CompressedFlowResult
- * entries so child-fork compression works immediately without waiting for
- * new flows to complete.
- */
-function reconstructFlowResultCache(
-	sessionManager: { getBranch: () => unknown[] },
-	cache: Map<string, CompressedFlowResult[]>,
-): void {
-	const branch = sessionManager.getBranch();
-	if (!Array.isArray(branch) || branch.length === 0) return;
-
-	// Pass 1: map toolCallId -> "flow" from assistant messages
-	const toolCallIdToName = new Map<string, string>();
-	for (const entry of branch) {
-		if (!entry || typeof entry !== "object") continue;
-		const e = entry as Record<string, unknown>;
-		if (e.type !== "message") continue;
-		const msg = e.message as Record<string, unknown> | undefined;
-		if (!msg || msg.role !== "assistant") continue;
-		const content = msg.content;
-		if (!Array.isArray(content)) continue;
-		for (const part of content) {
-			if (!part || typeof part !== "object") continue;
-			const p = part as Record<string, unknown>;
-			if (p.type === "toolCall" && p.name === "flow") {
-				const tcId = (p.id ?? p.toolCallId) as string | undefined;
-				if (tcId) toolCallIdToName.set(tcId, "flow");
-			}
-		}
-	}
-
-	// Pass 2: scan tool/toolResult messages and rebuild cache
-	for (const entry of branch) {
-		if (!entry || typeof entry !== "object") continue;
-		const e = entry as Record<string, unknown>;
-		if (e.type !== "message") continue;
-		const msg = e.message as Record<string, unknown> | undefined;
-		if (!msg || (msg.role !== "tool" && msg.role !== "toolResult")) continue;
-
-		let toolCallId: string | undefined;
-		if (typeof msg.toolCallId === "string" && msg.toolCallId.trim()) {
-			toolCallId = msg.toolCallId;
-		} else if (Array.isArray(msg.content)) {
-			for (const part of msg.content) {
-				if (!part || typeof part !== "object") continue;
-				const p = part as Record<string, unknown>;
-				if (p.type === "toolResult" && typeof p.toolCallId === "string" && p.toolCallId.trim()) {
-					toolCallId = p.toolCallId;
-					break;
-				}
-			}
-		}
-		if (!toolCallId || toolCallIdToName.get(toolCallId) !== "flow") continue;
-
-		const details = msg.details as Record<string, unknown> | undefined;
-		if (!details || !Array.isArray(details.results)) continue;
-
-		const results = details.results as Array<Record<string, unknown>>;
-		const compressed: CompressedFlowResult[] = [];
-		for (const r of results) {
-			const so = r.structuredOutput as Record<string, unknown> | undefined;
-			if (!so) continue;
-			const c: CompressedFlowResult = {
-				type: typeof r.type === "string" ? r.type : "unknown",
-				status: typeof r.exitCode === "number" && r.exitCode === 0 ? "accomplished" : "failed",
-			};
-			if (typeof r.intent === "string") c.intent = r.intent;
-			if (typeof r.aim === "string") c.aim = r.aim;
-			if (typeof so.summary === "string") c.summary = so.summary;
-			if (Array.isArray(so.files)) c.files = so.files as CompressedFlowResult["files"];
-			if (Array.isArray(so.actions)) c.actions = so.actions as CompressedFlowResult["actions"];
-			if (Array.isArray(so.commands)) c.commands = so.commands as CompressedFlowResult["commands"];
-			if (Array.isArray(so.notDone)) c.notDone = so.notDone as CompressedFlowResult["notDone"];
-			if (Array.isArray(so.nextSteps)) c.nextSteps = so.nextSteps as CompressedFlowResult["nextSteps"];
-			if (Array.isArray(so.reasoning)) c.reasoning = so.reasoning as CompressedFlowResult["reasoning"];
-			if (Array.isArray(so.notes)) c.notes = so.notes as CompressedFlowResult["notes"];
-			if (typeof r.errorMessage === "string") c.error = r.errorMessage;
-			compressed.push(c);
-		}
-		if (compressed.length > 0) {
-			const existing = cache.get(toolCallId) ?? [];
-			existing.push(...compressed);
-			cache.set(toolCallId, existing);
-		}
-	}
-
-	evictCacheOverflow(cache);
-}
 
 import {
 	computeActiveTools,
@@ -227,8 +129,7 @@ function makeFlowDetailsFactory(projectFlowsDir: string | null) {
 	});
 }
 
-// Re-export compressToolResults and stripBatchReadToolCalls for tests
-export { compressToolResults, stripBatchReadToolCalls } from "./snapshot/snapshot.js";
+
 export { type FlowColorConfig } from "./tui/flow-colors.js";
 
 // ---------------------------------------------------------------------------
@@ -319,12 +220,6 @@ export default function (pi: ExtensionAPI) {
 		_sessionCtx = ctx;
 		resolved = resolveSettings(pi, ctx.cwd);
 
-		// Reconstruct historical flow result cache so fork snapshots can compress
-		// past flow results immediately (instead of showing placeholder text until
-		// new flows complete). bashTracker is created fresh below — pending OS
-		// processes are inherently lost across restarts, which is expected.
-		reconstructFlowResultCache(ctx.sessionManager, flowResultCache);
-
 		// Wire resolved settings to modules
 		configureSteering({ enabled: resolved.steeringEnabled, customPrompt: resolved.steeringCustomPrompt });
 		configureDirective(resolved.steeringStrategicHint);
@@ -366,7 +261,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Clean up global mutable state on session shutdown
 	pi.on("session_shutdown", () => {
-		flowResultCache.clear();
+
 		_sessionCtx = undefined;
 		// bashTracker and its pending OS processes are discarded on restart.
 		// This is expected — child process state is not serializable.
@@ -509,20 +404,10 @@ export default function (pi: ExtensionAPI) {
 				const { flows } = discovery;
 				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir);
 
-				// Build the full fork session snapshot and sanitize only non-inheritable
-				// artifacts before passing it to child flows.
-				// Uses the persistent module-level cache so historical flow results
-				// are properly compressed (not passed through verbatim).
-				const { result: forkSessionSnapshotJsonl, stats: forkSessionSnapshotStats } = sanitizeForkSnapshot(
-					buildForkSessionSnapshotJsonl(ctx.sessionManager),
-					flowResultCache,
-					{
-						forkedFrom: ctx.sessionManager.getSessionId(),
-						forkedAt: new Date().toISOString(),
-						depth: currentDepth + 1,
-						...(ancestorFlowStack.length > 0 ? { parentFlow: ancestorFlowStack[ancestorFlowStack.length - 1] } : {}),
-					},
-				);
+				// Build the fork session snapshot. Core-2 preserves all conversation
+				// verbatim in chronological order, stripping only batch read/write/edit
+				// bodies (keeping first 3 + last 3 lines as orientation).
+				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager);
 
 				const getTierOverride = (tier: "lite" | "flash" | "full"): string | undefined => {
 					const flagName =
@@ -573,8 +458,6 @@ export default function (pi: ExtensionAPI) {
 						tierOverrideResolver: getTierOverride,
 						fallbackModel: inheritedCliArgs.fallbackModel,
 						forkSessionSnapshotJsonl,
-						forkSessionSnapshotStats,
-						flowResultCache,
 						projectFlowsDir: discovery.projectFlowsDir,
 						sessionManager: ctx.sessionManager,
 						hasUI: ctx.hasUI,

@@ -9,7 +9,10 @@ author: craft flow
 
 # Overview
 
-The shared context passed from parent to child flows is a sanitized JSONL snapshot. The sanitization pipeline in `src/snapshot/snapshot.ts` already achieves ~99% compression for many artifacts (reasoning stripping, API metadata removal, flow result truncation, read content stripping). [V] Verified against `tests/snapshot-compress.test.ts` and `docs/dump-artifacts/ANALYSIS.md`.
+> ⚠️ **Historical document.** This describes the core-1 compression pipeline (23-pass sanitizer) that was replaced by core-2 in v2.1+. The core-2 pipeline (`src/core2/snapshot.ts`) is a simple verbatim-preserving system that only strips batch read/write/edit file bodies. All compression passes, the old `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), and `src/snapshot/reasoning-strip.ts` (deleted) have been deleted. The old `src/core/` directory has been moved to `src/flow/` (`flow.ts` → `runner.ts`, etc.). Path references within this document point to the old codebase structure and are preserved for historical accuracy.
+
+
+The shared context passed from parent to child flows is a sanitized JSONL snapshot. The sanitization pipeline in `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) already achieves ~99% compression for many artifacts (reasoning stripping, API metadata removal, flow result truncation, read content stripping). [V] Verified against `tests/snapshot-compress.test.ts` (deleted) and `docs/dump-artifacts/ANALYSIS.md`.
 
 The following protocols are implemented in `compressBatchResult` and `compressToolResults`:
 
@@ -22,7 +25,7 @@ The following protocols are implemented in `compressBatchResult` and `compressTo
 - **F1** — Flow tool call argument compression.
 - **C1** — Low-signal assistant message collapsing.
 
-[V] The archived dump artifacts in `docs/dump-artifacts/` consist primarily of `flow` tool results; batch tool results are not present in those files. The before/after examples below are drawn from the test suite (`tests/snapshot-compress.test.ts`) and the verified output formats in `src/batch/execute.ts` and `src/batch/index.ts`.
+[V] The archived dump artifacts in `docs/dump-artifacts/` consist primarily of `flow` tool results; batch tool results are not present in those files. The before/after examples below are drawn from the test suite (`tests/snapshot-compress.test.ts` (deleted)) and the verified output formats in `src/batch/execute.ts` and `src/batch/index.ts`.
 
 ---
 
@@ -30,7 +33,7 @@ The following protocols are implemented in `compressBatchResult` and `compressTo
 
 1. **Composability** — A child flow must understand what happened without re-reading files. The compressed log is a lossy but semantically sufficient transcript.
 2. **Depth-awareness** — At depth 1, slightly more detail is preserved. At depth 2+, maximum compression is applied because the signal-to-noise ratio degrades with depth.
-3. **Conservative migration** — The new protocols are additive passes in `sanitizeForkSnapshot`. If pattern matching fails, the system falls back to the current verbatim or truncated behavior.
+3. **Conservative migration** — The new protocols are additive passes in `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer). If pattern matching fails, the system falls back to the current verbatim or truncated behavior.
 4. **No orphaned consumers** — Existing agent flows that parse batch result delimiters (`--- bash [id] exit N ---`) will still see structurally similar output; the format changes from multi-line verbose to a compact single-line token, but the semantic tokens (`bash`, `exit`, `id`) are preserved.
 
 ---
@@ -105,7 +108,7 @@ Compress edit headers and deduplicate edits to the same file across turns. The c
 
 --- edit: src/index.ts (2 blocks) ---
 ```
-[V] Verified in `tests/snapshot-compress.test.ts:91`.
+[V] Verified in `tests/snapshot-compress.test.ts:91` (deleted).
 
 ### Proposed Format (after)
 
@@ -147,7 +150,7 @@ Compress edit headers and deduplicate edits to the same file across turns. The c
 ## X1 — Terminal Execution Compression Protocol
 
 ### Purpose
-Replace verbose bash stdout/stderr with a compact status line. Bash output is the single largest source of batch result bloat. [V] Verified by `tests/snapshot-compress.test.ts:114` where a 1000-line bash output is currently kept verbatim, and by `src/snapshot/snapshot.ts:176–265` where `compressBatchResult` passes bash sections through unchanged.
+Replace verbose bash stdout/stderr with a compact status line. Bash output is the single largest source of batch result bloat. [V] Verified by `tests/snapshot-compress.test.ts:114` (deleted) where a 1000-line bash output is currently kept verbatim, and by `src/snapshot/snapshot.ts:176–265` (deleted — replaced by `src/core2/snapshot.ts`) where `compressBatchResult` passes bash sections through unchanged.
 
 ### Verified Source Formats
 The exact text that currently flows into child context is produced by `src/batch/index.ts:535–552` and `src/batch/execute.ts:510`.
@@ -163,7 +166,7 @@ The exact text that currently flows into child context is produced by `src/batch
 | Error stderr label | `[stderr]\n${stderr}` | `src/batch/index.ts:551` |
 | Summary line | `N operations: N bash` | `src/batch/execute.ts:510` (`buildSummary`) |
 
-[V] Current snapshot compression (`compressBatchResult`, `snapshot.ts:176–265`) **keeps bash sections verbatim** — no truncation is applied. [V] Verified in `tests/snapshot-compress.test.ts:114–140`.
+[V] Current snapshot compression (`compressBatchResult`, `snapshot.ts:176–265`) **keeps bash sections verbatim** — no truncation is applied. [V] Verified in `tests/snapshot-compress.test.ts:114–140` (deleted).
 
 ### Scenario 1: Successful bash with output
 
@@ -174,7 +177,7 @@ The exact text that currently flows into child context is produced by `src/batch
 --- bash [npm-test-abc] exit 0 ---
 [Execution time: 2.3s (avg)]
 PASS src/utils/parse.test.ts
-PASS src/core/flow.test.ts
+PASS src/flow/flow.test.ts
 Tests: 15 passed, 15 total
 ```
 
@@ -183,7 +186,7 @@ Tests: 15 passed, 15 total
 [bash:ok] npm-test-abc · exit 0 · 2.3s (avg) · 3 lines
 > head:
 PASS src/utils/parse.test.ts
-PASS src/core/flow.test.ts
+PASS src/flow/flow.test.ts
 Tests: 15 passed, 15 total
 ```
 
@@ -201,13 +204,13 @@ Tests: 15 passed, 15 total
 --- bash [build-def] exit 0 ---
 [Execution time: 8.1s (long)]
 src/index.ts    → dist/index.js     12.34 kB │ gzip: 3.21 kB
-src/core/flow.ts → dist/core/flow.js  45.67 kB │ gzip: 8.90 kB
+src/flow/runner.ts → dist/flow/runner.js  45.67 kB │ gzip: 8.90 kB
 src/snapshot/snapshot.ts → dist/snapshot/snapshot.js  23.45 kB │ gzip: 5.67 kB
 src/batch/index.ts → dist/batch/index.js  34.56 kB │ gzip: 7.89 kB
 ... (992 more lines of build output) ...
 ✓ 245 modules transformed.
 dist/index.js                  12.34 kB │ gzip: 3.21 kB
-dist/core/flow.js              45.67 kB │ gzip: 8.90 kB
+dist/flow/runner.js              45.67 kB │ gzip: 8.90 kB
 dist/snapshot/snapshot.js      23.45 kB │ gzip: 5.67 kB
 dist/batch/index.js            34.56 kB │ gzip: 7.89 kB
 ```
@@ -217,7 +220,7 @@ dist/batch/index.js            34.56 kB │ gzip: 7.89 kB
 [bash:ok] build-def · exit 0 · 8.1s (long) · 1000 lines
 > head:
 src/index.ts    → dist/index.js     12.34 kB │ gzip: 3.21 kB
-src/core/flow.ts → dist/core/flow.js  45.67 kB │ gzip: 8.90 kB
+src/flow/runner.ts → dist/flow/runner.js  45.67 kB │ gzip: 8.90 kB
 src/snapshot/snapshot.ts → dist/snapshot/snapshot.js  23.45 kB │ gzip: 5.67 kB
 ```
 
@@ -234,8 +237,8 @@ src/snapshot/snapshot.ts → dist/snapshot/snapshot.js  23.45 kB │ gzip: 5.67 
 
 --- bash [long-grep-ghi] pending ---
 [partial output]
-src/core/flow.ts:234
-src/core/agents.ts:89
+src/flow/runner.ts:234
+src/flow/agents.ts:89
 src/snapshot/snapshot.ts:176
 [Use batch_bash_poll with i: ["long-grep-ghi"] to check results]
 ```
@@ -244,8 +247,8 @@ src/snapshot/snapshot.ts:176
 ```
 [bash:pending] long-grep-ghi · still running · 3 lines partial
 > head:
-src/core/flow.ts:234
-src/core/agents.ts:89
+src/flow/runner.ts:234
+src/flow/agents.ts:89
 src/snapshot/snapshot.ts:176
 ```
 
@@ -263,7 +266,7 @@ src/snapshot/snapshot.ts:176
 --- bash [lint-jkl] error ---
 [Execution time: 1.2s (avg)]
 [stderr]
-src/core/flow.ts:45:3: Error: Unexpected token. (eslint)
+src/flow/runner.ts:45:3: Error: Unexpected token. (eslint)
 src/index.ts:12:1: Warning: Missing return type.
 ```
 
@@ -271,7 +274,7 @@ src/index.ts:12:1: Warning: Missing return type.
 ```
 [bash:err] lint-jkl · 1.2s (avg) · 2 lines stderr
 > stderr:
-src/core/flow.ts:45:3: Error: Unexpected token. (eslint)
+src/flow/runner.ts:45:3: Error: Unexpected token. (eslint)
 src/index.ts:12:1: Warning: Missing return type.
 ```
 
@@ -347,7 +350,7 @@ export function init() { ... }
 // 43 more lines ...
 export default init;
 
---- src/core/flow.ts (128 lines) ---
+--- src/flow/runner.ts (128 lines) ---
 import { run } from './runner';
 // 126 more lines ...
 export type FlowConfig = { ... };
@@ -357,7 +360,7 @@ export type FlowConfig = { ... };
 --- bash [npm-test-xyz] exit 0 ---
 [Execution time: 3.4s (avg)]
 PASS src/config.test.ts
-PASS src/core/flow.test.ts
+PASS src/flow/flow.test.ts
 Tests: 42 passed, 42 total
 ```
 
@@ -370,7 +373,7 @@ export function init() { ... }
 [...43 lines truncated...]
 export default init;
 
---- src/core/flow.ts (128 lines, preview) ---
+--- src/flow/runner.ts (128 lines, preview) ---
 import { run } from './runner';
 [...126 lines truncated...]
 export type FlowConfig = { ... };
@@ -380,7 +383,7 @@ export type FlowConfig = { ... };
 [bash:ok] npm-test-xyz · exit 0 · 3.4s (avg) · 4 lines
 > head:
 PASS src/config.test.ts
-PASS src/core/flow.test.ts
+PASS src/flow/flow.test.ts
 Tests: 42 passed, 42 total
 ```
 
@@ -390,7 +393,7 @@ Tests: 42 passed, 42 total
 
 --- src/config.ts (45 lines, content truncated) ---
 
---- src/core/flow.ts (128 lines, content truncated) ---
+--- src/flow/runner.ts (128 lines, content truncated) ---
 
 [batch:write] src/config.ts
 
@@ -421,7 +424,7 @@ Tests: 42 passed, 42 total
 ### Purpose
 Eliminate redundant bash execution history for the same command across turns. A child flow only needs to know the final result of a command, not every prior execution. B1 extends X1 by tracking which bash commands have been re-run and collapsing or dropping earlier results.
 
-[V] Verified in `tests/snapshot-compress.test.ts` under the `compressToolResults — B1 cross-turn bash dedup` suite.
+[V] Verified in `tests/snapshot-compress.test.ts` (deleted) under the `compressToolResults — B1 cross-turn bash dedup` suite.
 
 ### How It Works
 1. **Pre-scan (`buildDedupIndex`):** For every `batch` tool call, extract bash operations from the arguments (`o`/`op` array). Normalize each command string (`trim` + collapse whitespace) and build two maps:
@@ -526,7 +529,7 @@ Deduplicate web search and fetch results across turns. The current `compressWebR
 ```
 [web:search] "node.js streams" · 2 results · first: Node.js Streams
 ```
-[V] Verified in `tests/snapshot-compress.test.ts:173` and `src/snapshot/snapshot.ts:283`.
+[V] Verified in `tests/snapshot-compress.test.ts:173` (deleted) and `src/snapshot/snapshot.ts:283` (deleted — replaced by `src/core2/snapshot.ts`).
 
 If the same query appears in turn 2, turn 4, and turn 6, the child sees three lines.
 
@@ -570,9 +573,9 @@ If the same query appears in turn 2, turn 4, and turn 6, the child sees three li
 
 ## Where the Protocols Live
 
-The protocols are implemented as **enhancements to `compressToolResults`** (`snapshot.ts:~350`) and **new internal helpers** in `src/snapshot/snapshot.ts`.
+The protocols are implemented as **enhancements to `compressToolResults`** (`snapshot.ts:~350`) and **new internal helpers** in `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`).
 
-[V] Current pipeline order in `sanitizeForkSnapshot` (`snapshot.ts:681–975`):
+[V] Current pipeline order in `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (`snapshot.ts:681–975`):
 1. `forkMetadataInjection`
 2. `dropConfigEvents`
 3. `dropCustomMessages`
@@ -594,7 +597,7 @@ The protocols are implemented as **enhancements to `compressToolResults`** (`sna
 **Option A (recommended):** Extend `compressToolResults` with a two-pass internal structure:
 - **Pass 1 (pre-scan):** Build `DedupIndex` maps (write, edit, delete, bash, web) across all tool result messages in the snapshot.
 - **Pass 2 (emit):** Call `compressBatchResult` and `compressWebResult` with the index. Superseded sections are skipped or collapsed.
-- **Depth parameter:** Thread `options.depth` from `sanitizeForkSnapshot` into `compressToolResults` so depth-aware formatting is applied.
+- **Depth parameter:** Thread `options.depth` from `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) into `compressToolResults` so depth-aware formatting is applied.
 
 **Option B (alternative):** Add a new dedicated pass `deduplicateToolResults` that runs **after** `compressToolResults`. It operates on the already-compressed text and removes or marks superseded lines. This is simpler to implement but less powerful (it works on text, not structured sections).
 
@@ -772,7 +775,7 @@ If `totalTokens` is unknown:
 
 # Migration Path
 
-1. **Phase 1 (complete):** X1 bash compression — implemented and tested in `tests/snapshot-compress.test.ts`.
+1. **Phase 1 (complete):** X1 bash compression — implemented and tested in `tests/snapshot-compress.test.ts` (deleted).
 2. **Phase 2 (complete):** W1 write dedup and E1 edit dedup — implemented and tested.
 3. **Phase 3 (complete):** Q1 web query deduplication — implemented and tested via `checkWebDedup` in `compressToolResults`.
 4. **Phase 4 (complete):** B1 cross-turn bash deduplication — implemented and tested. Supersedes prior bash executions (including `batch_bash_poll` results) when the same normalized command appears later in the snapshot.
@@ -794,8 +797,8 @@ If `totalTokens` is unknown:
 
 # References
 
-- `src/snapshot/snapshot.ts` — `compressBatchResult` (`:594`), `compressBatchBashPollResult` (`:1030`), `compressWebResult`, `compressToolResults` (`:1190`), `sanitizeForkSnapshot` (`:1550`)
+- `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) — `compressBatchResult` (`:594`), `compressBatchBashPollResult` (`:1030`), `compressWebResult`, `compressToolResults` (`:1190`), `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (`:1550`)
 - `src/batch/execute.ts` — `buildContentText` (`:580`), `buildSummary` (`:636`)
 - `src/batch/index.ts` — bash result formatting (`:535–543`)
-- `tests/snapshot-compress.test.ts` — compression and dedup behavior expectations (X1, W1, E1, Q1, B1)
+- `tests/snapshot-compress.test.ts` (deleted) — compression and dedup behavior expectations (X1, W1, E1, Q1, B1)
 - `docs/dump-artifacts/ANALYSIS.md` — dump artifact catalog and format evolution notes

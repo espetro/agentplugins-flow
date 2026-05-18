@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseAgentSessionMode, type AgentSessionMode } from "../core/session-mode.js";
+import { parseAgentSessionMode, type AgentSessionMode } from "../flow/session-mode.js";
 
 function looksLikeExplicitRelativePath(value: string): boolean {
 	return (
@@ -298,6 +298,25 @@ export function parseFlowCliArgs(argv: string[]): ParsedFlowCliArgs {
 				const parsed = Number(value);
 				if (Number.isFinite(parsed) && parsed > 0) maxContextTokens = parsed;
 			}
+			i += skip;
+			continue;
+		}
+
+		// Skip extension-local flags registered by pi-agent-flow.
+		// Forwarding them to children causes the child loading the same
+		// extension to see "Flag X conflicts with dist/index.js".
+		if (
+			[
+				"--flow-max-concurrency",
+				"--tool-optimize",
+				"--no-steering",
+				"--steering-prompt",
+				"--no-strategic-hint",
+				"--no-animation",
+				"--no-glitch",
+			].includes(flagName)
+		) {
+			const [, skip] = getValue();
 			i += skip;
 			continue;
 		}

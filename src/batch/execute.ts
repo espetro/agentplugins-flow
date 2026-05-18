@@ -751,7 +751,7 @@ function buildContentText(summary: string, results: OpResult[]): string {
 function buildRgArgs(op: RgOpInput): string[] {
 	const args: string[] = [];
 	args.push("-n");
-	if (op.l === true || op.l === undefined) args.push("-l");
+	if (op.l === true) args.push("-l");
 	if (op.i === true) args.push("-i");
 	if (typeof op.t === "string" && op.t) args.push("-t", op.t);
 	if (typeof op.n === "number" && Number.isFinite(op.n) && op.n >= 1) args.push("--max-count", String(Math.floor(op.n)));

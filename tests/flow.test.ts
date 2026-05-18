@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runFlow, getOptimizedTools, type RunFlowOptions } from "../src/core/flow.js";
-import type { FlowConfig } from "../src/core/agents.js";
+import { runFlow, getOptimizedTools, type RunFlowOptions } from "../src/flow/runner.js";
+import type { FlowConfig } from "../src/flow/agents.js";
 import type { FlowDetails } from "../src/types/flow.js";
 import * as childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -1350,7 +1350,7 @@ describe("acceptance field propagation", () => {
 			const actualDumpFile = path.join(os.tmpdir(), mdFiles[0]);
 			const dumped = fs.readFileSync(actualDumpFile, "utf-8");
 			expect(dumped).toContain("<!-- pi-agent-flow dump");
-			expect(dumped).toContain("State: post-sanitization");
+			expect(dumped).toContain("Flow: scout");
 			expect(dumped).toContain("## Session Snapshot (JSONL)");
 			expect(dumped).toContain("## Activation Prompt (-p)");
 			expect(dumped).toContain('"type":"session"');

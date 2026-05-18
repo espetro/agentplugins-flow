@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { setupContinuation, markFlowCompleted } from "../src/flow/continuation.js";
 import { setGoal, clearGoal, getGoal } from "../src/flow/store.js";
 import { setLoop, clearLoop, disableLoop } from "../src/flow/loop.js";
-import * as sessionRegistry from "../src/core/session-registry.js";
+import * as sessionRegistry from "../src/flow/session-registry.js";
 import type { TurnEndEvent } from "@earendil-works/pi-coding-agent";
 
 describe("continuation loop integration", () => {

@@ -4,12 +4,12 @@
  * Extracted from index.ts for single-responsibility and testability.
  */
 
-import type { FlowConfig } from "../core/agents.js";
+import type { FlowConfig } from "../flow/agents.js";
 import {
 	looksLikeUrlPrompt,
 	looksLikeWebSearchPrompt,
 } from "../tools/web-tool.js";
-import type { FlowDepthConfig } from "../core/depth.js";
+import type { FlowDepthConfig } from "../flow/depth.js";
 
 // ---------------------------------------------------------------------------
 // Types

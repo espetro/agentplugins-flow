@@ -1,7 +1,10 @@
 # Shared Context Compression Pipeline — Living Improvement Prompt
 
+> ⚠️ **Historical document.** This describes the core-1 compression pipeline (23-pass sanitizer) that was replaced by core-2 in v2.1+. The core-2 pipeline (`src/core2/snapshot.ts`) is a simple verbatim-preserving system that only strips batch read/write/edit file bodies. All compression passes, the old `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`), and `src/snapshot/reasoning-strip.ts` (deleted) have been deleted. The old `src/core/` directory has been moved to `src/flow/` (`flow.ts` → `runner.ts`, etc.). Path references within this document point to the old codebase structure and are preserved for historical accuracy.
+
+
 > **Version:** 1.1.0
-> **Scope:** `src/snapshot/snapshot.ts` sanitization pipeline
+> **Scope:** `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) sanitization pipeline
 > **Goal:** Continuously improve the shared context passed from parent → child flows while maintaining zero regression risk.
 > **Target audience:** Any future agent (craft / build / audit) tasked with compression pipeline work.
 
@@ -9,27 +12,27 @@
 
 ## Context Foundation: What This System IS
 
-When the root state transitions to a child flow (e.g. `scout`, `build`), it forks the current conversation history into a temp JSONL file (`--session <path>`). Before writing that file, the parent runs `sanitizeForkSnapshot()` which strips ~99% of bloat so the child receives only actionable signal.
+When the root state transitions to a child flow (e.g. `scout`, `build`), it forks the current conversation history into a temp JSONL file (`--session <path>`). Before writing that file, the parent runs `sanitizeForkSnapshot()` (deleted — core-2 has no sanitizer) which strips ~99% of bloat so the child receives only actionable signal.
 
 ### Key Files
 
 | File | Role | Key Symbols (line numbers) |
 |------|------|---------------------------|
-| `src/snapshot/snapshot.ts` | Pipeline core | `sanitizeForkSnapshot` (~1758), `compressToolResults` (~350), `compressBatchResult` (~420), `compressWebResult` (~267), `compressAskUserResult` (~305), `buildDedupIndex` (~380), `compressBashSection` (~200), `renderCompressedFlowResult` (~93), `stripBatchReadToolCalls` (~600) |
-| `src/snapshot/reasoning-strip.ts` | Thinking block removal | `stripReasoningFromAssistantMessage` |
+| `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) | Pipeline core | `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (~1758), `compressToolResults` (~350), `compressBatchResult` (~420), `compressWebResult` (~267), `compressAskUserResult` (~305), `buildDedupIndex` (~380), `compressBashSection` (~200), `renderCompressedFlowResult` (~93), `stripBatchReadToolCalls` (~600) |
+| `src/snapshot/reasoning-strip.ts` (deleted) | Thinking block removal | `stripReasoningFromAssistantMessage` |
 | `src/steering/sliding-prompt.ts` | Steering hint removal | `stripSteeringHintFromContent`, `contentContainsSteeringHintTag` |
 | `src/steering/tool-utils.ts` | Directive hint removal | `stripDirectivesFromContent` (legacy alias `stripStrategicHintsFromContent`) |
-| `src/core/executor.ts` | Flow result cache | `evictCacheOverflow`, `flowResultCache` (Map keyed by `toolCallId`) |
-| `tests/snapshot-compress.test.ts` | Unit tests for compression | 1435 lines — covers `compressToolResults`, `stripDirectives` (legacy `stripStrategicHints`), `compressBashSection`, `compressBatchResult` |
-| `tests/snapshot-integration.test.ts` | Integration tests for full pipeline | 530 lines — covers `sanitizeForkSnapshot` end-to-end, dump artifacts, orphan freedom, `batch_read` stripping |
+| `src/flow/executor.ts` | Flow result cache | `evictCacheOverflow`, `flowResultCache` (Map keyed by `toolCallId`) |
+| `tests/snapshot-compress.test.ts` (deleted) | Unit tests for compression | 1435 lines — covers `compressToolResults`, `stripDirectives` (legacy `stripStrategicHints`), `compressBashSection`, `compressBatchResult` |
+| `tests/snapshot-integration.test.ts` (deleted) | Integration tests for full pipeline | 530 lines — covers `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) end-to-end, dump artifacts, orphan freedom, `batch_read` stripping |
 | `docs/telemetry-compression-protocols.md` | Spec for W1/E1/X1/Q1 protocols | 575 lines |
 | `docs/CONTEXT-DIAGNOSTICS.md` | Diagnostic runbook for bloat | 116 lines |
 | `docs/agent-payload-example.md` | Exact child payload anatomy | 243 lines |
 
 ### How the Pipeline Works (High-Level)
 
-1. `buildForkSessionSnapshotJsonl()` serializes parent session → raw JSONL.
-2. `sanitizeForkSnapshot()` runs 22 unique passes (23 total applications with `reparentOrphans` twice) (see Current State below).
+1. `buildForkSessionSnapshotJsonl()` (deleted — replaced by `buildCore2Snapshot`) serializes parent session → raw JSONL.
+2. `sanitizeForkSnapshot()` (deleted — core-2 has no sanitizer) runs 22 unique passes (23 total applications with `reparentOrphans` twice) (see Current State below).
 3. `compressToolResults()` does a two-pass scan: pre-scan builds `DedupIndex`, second pass emits compact text.
 4. Result is written to `/tmp/pi-agent-flow-<id>/flow-<name>.jsonl` and passed to child via `--session`.
 5. The child also receives an activation prompt (`-p`) with `<context-seal>`, `<activation>`, `<directive>`, `<mission>`.
@@ -56,12 +59,12 @@ When the root state transitions to a child flow (e.g. `scout`, `build`), it fork
 | Item | Why It Matters | File Hint |
 |------|--------------|-----------|
 | **Cross-turn bash dedup** | If parent runs `npm test` every turn, child sees N bash results. Low ROI because bash IDs are unique per batch call. | `compressBatchResult` already handles intra-batch dedup; cross-turn would require new `DedupIndex` category. |
-| **Structured output validation** | `renderCompressedFlowResult` returns `undefined` if >50% file entries lack `path`. This safety net could be tightened. | `src/snapshot/snapshot.ts:~93-170`. |
+| **Structured output validation** | `renderCompressedFlowResult` returns `undefined` if >50% file entries lack `path`. This safety net could be tightened. | `src/snapshot/snapshot.ts:~93-170` (deleted). |
 | **Cache miss placeholder** | `[flow] prior result · N chars — full context unavailable` is conservative. Could include a one-line summary if structured output failed but raw text is short. | `compressToolResults` cache-miss branch (~line 780). |
 
 ### Sanitization Passes (Exact Order)
 
-From `sanitizeForkSnapshot` (`snapshot.ts:~2025-2100`):
+From `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) (`snapshot.ts:~2025-2100`):
 
 1. `stripSystemPrompt` — replace parent system prompt with placeholder.
 2. `stripSessionId` — rename `id` → `parentId`.
@@ -95,7 +98,7 @@ Two standalone Node scripts in `./tmp/` provide automated, reproducible validati
 
 ### `./tmp/validate-context-pipeline.js` — Synthetic Pipeline Test
 
-Builds a representative snapshot with all tool types (batch_read, flow, web, ask_user, empty assistant), runs `sanitizeForkSnapshot` end-to-end, and asserts:
+Builds a representative snapshot with all tool types (batch_read, flow, web, ask_user, empty assistant), runs `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) end-to-end, and asserts:
 
 - 12+ unique passes applied (current baseline).
 - `reparentOrphans` appears exactly twice.
@@ -138,7 +141,7 @@ node ./tmp/analyze-dump.js
 ### Step 1 — Unit Tests
 
 ```bash
-npm test -- --run tests/snapshot-compress.test.ts
+npm test -- --run tests/snapshot-compress.test.ts  # (deleted — use tests/core2-snapshot.test.ts)
 ```
 
 **Assertion:** `Tests: N passed` with **zero failures**. If any test fails, the compression pipeline is producing unexpected output.
@@ -146,7 +149,7 @@ npm test -- --run tests/snapshot-compress.test.ts
 ### Step 2 — Integration Tests
 
 ```bash
-npm test -- --run tests/snapshot-integration.test.ts
+npm test -- --run tests/snapshot-integration.test.ts  # (deleted — use tests/core2-snapshot.test.ts)
 ```
 
 **Assertion:** All of the following must pass:
@@ -218,9 +221,9 @@ cat $(ls -t /tmp/pi-dump.scout.*.md | head -1)
 ### Step 6 — Zero Tech Debt Checklist
 
 - [ ] No `console.warn()` or `console.error()` in flow code — use `logWarn`/`logError` from `src/config/log.ts`.
-- [ ] No `TODO` or `FIXME` comments in `src/snapshot/snapshot.ts` without a linked issue.
+- [ ] No `TODO` or `FIXME` comments in `src/snapshot/snapshot.ts` (deleted — replaced by `src/core2/snapshot.ts`) without a linked issue.
 - [ ] No dead code (unused functions, commented-out passes).
-- [ ] All new compression functions have corresponding test cases in `tests/snapshot-compress.test.ts`.
+- [ ] All new compression functions have corresponding test cases in `tests/snapshot-compress.test.ts` (deleted).
 - [ ] `package.json` version is referenced in dump artifacts (integration test verifies `Pipeline: ${pipelineVersion}`).
 
 ---
@@ -231,8 +234,8 @@ cat $(ls -t /tmp/pi-dump.scout.*.md | head -1)
 
 | Rank | Vector | Estimated Savings | Complexity | Test Strategy |
 |------|--------|-------------------|------------|---------------|
-| 1 | **Q1 cross-turn dedup** | 30-70% of web lines | Medium | Extend `snapshot-integration.test.ts` with repeated web queries; assert single latest result. |
-| 2 | **rg output compression** | 50-90% per rg result | Low | Add `compressRgResult()` in `snapshot.ts`, add test in `snapshot-compress.test.ts`. |
+| 1 | **Q1 cross-turn dedup** | 30-70% of web lines | Medium | Extend `snapshot-integration.test.ts` (deleted) with repeated web queries; assert single latest result. |
+| 2 | **rg output compression** | 50-90% per rg result | Low | Add `compressRgResult()` in `snapshot.ts`, add test in `snapshot-compress.test.ts` (deleted). |
 | 3 | **Read content preview tuning** | 10-20% per read | Low | In `compressBatchResult`, preserve first/last 2 lines of reads at depth 1 instead of truncating to header-only. |
 | 4 | **Cache miss summary fallback** | Improves child UX | Low | If raw flow result < 500 chars and structured output failed, include raw text in placeholder instead of hiding it. |
 | 5 | **Batch result section rollup** | 20-40% for multi-op batches | Medium | If all ops in a batch are superseded by later turns, emit `[batch] N ops (all superseded)` instead of individual lines. |
@@ -254,7 +257,7 @@ cat $(ls -t /tmp/pi-dump.scout.*.md | head -1)
 
 ### Hard Constraints (Breaking These Breaks Child Flows)
 
-1. **Never remove `usage.totalTokens` from assistant messages.** `src/core/session.ts` (or equivalent consumer) reads `message.usage.totalTokens`. Stripping `usage` entirely causes `Cannot read properties of undefined (reading 'totalTokens')`.
+1. **Never remove `usage.totalTokens` from assistant messages.** `src/flow/session.ts` (or equivalent consumer) reads `message.usage.totalTokens`. Stripping `usage` entirely causes `Cannot read properties of undefined (reading 'totalTokens')`.
    - Safe: strip `usage.cost`, `usage.inputTokens`, `usage.outputTokens` if not needed.
    - Unsafe: `delete message.usage`.
 
@@ -278,7 +281,7 @@ cat $(ls -t /tmp/pi-dump.scout.*.md | head -1)
 
 ### Soft Constraints (Changing These Requires Migration)
 
-1. **Format tokens must remain recognizable.** `[bash:ok]`, `[batch:write]`, `[batch:edit]`, `[web:search]`, `[web:fetch]`, `[ask_user]`, `[Flow: X Y]` are parsed by child flows (informally). If you change the prefix, update `docs/telemetry-compression-protocols.md` and `tests/snapshot-compress.test.ts`.
+1. **Format tokens must remain recognizable.** `[bash:ok]`, `[batch:write]`, `[batch:edit]`, `[web:search]`, `[web:fetch]`, `[ask_user]`, `[Flow: X Y]` are parsed by child flows (informally). If you change the prefix, update `docs/telemetry-compression-protocols.md` and `tests/snapshot-compress.test.ts` (deleted).
 
 2. **Depth behavior is contractual.** Depth 1 = moderate compression with previews. Depth 2+ = maximum compression, no previews. Child flows at depth 2+ expect terse context.
 
@@ -286,7 +289,7 @@ cat $(ls -t /tmp/pi-dump.scout.*.md | head -1)
    ```json
    { "preBytes": N, "postBytes": N, "reductionPercent": N, "passesApplied": ["..."] }
    ```
-   It is returned out-of-band from `sanitizeForkSnapshot`, not appended to the JSONL. Adding new fields is safe. Removing fields breaks `buildDumpArtifact` in `tests/snapshot-integration.test.ts` and any external parsers.
+   It is returned out-of-band from `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer), not appended to the JSONL. Adding new fields is safe. Removing fields breaks `buildDumpArtifact` in `tests/snapshot-integration.test.ts` (deleted) and any external parsers.
 
 4. **Dump artifact format is contractual.** The `.md` / `.txt` twin file format is consumed by developers for debugging. Changes to the markdown header must be backward-compatible.
 
@@ -306,7 +309,7 @@ START
   │           Identify the largest uncompressed artifact.
   │
   ▼
-2. ISOLATE — Write a minimal reproduction in tests/snapshot-compress.test.ts.
+2. ISOLATE — Write a minimal reproduction in tests/snapshot-compress.test.ts (deleted).
   │          Assert the current (bloated) behavior so the test passes today.
   │
   ▼
@@ -314,7 +317,7 @@ START
   │         Check Conservation Rules. If it touches hard constraints, stop and re-design.
   │
   ▼
-4. IMPLEMENT — Add the compression/dedup logic in src/snapshot/snapshot.ts.
+4. IMPLEMENT — Add the compression/dedup logic in src/snapshot/snapshot.ts (deleted — replaced by src/core2/snapshot.ts).
   │            Keep changes localized. Prefer new helper functions over inlining.
   │
   ▼
@@ -405,11 +408,11 @@ If you see any of these, the pipeline has a bug:
 # Full test suite (baseline)
 npm test -- --run
 
-# Compression tests only
-npm test -- --run tests/snapshot-compress.test.ts
+# Compression tests only (deleted — use tests/core2-snapshot.test.ts)
+npm test -- --run tests/core2-snapshot.test.ts
 
-# Integration tests only
-npm test -- --run tests/snapshot-integration.test.ts
+# Integration tests only (deleted — use tests/core2-snapshot.test.ts)
+npm test -- --run tests/core2-snapshot.test.ts
 
 # Lint check
 npm run lint
@@ -437,8 +440,8 @@ find /tmp -name 'pi-dump.*' -mtime +7 -delete
 | Date | Agent | Change | Tests Added |
 |------|-------|--------|-------------|
 | 2026-05-17 | craft | Initial prompt document created | N/A |
-| 2026-05-17 | build | Q1 web query deduplication — cross-turn dedup with depth-aware rollup | 5 new tests in `tests/snapshot-compress.test.ts` |
-| 2026-05-18 | build | Stage 1 fixes: bumped prompt to v1.1.0, fixed `sanitizeForkSnapshot` line refs to ~2025-2100, added `stripUnknownHeaderFields` pass, added `validate-context-pipeline.js` and `analyze-dump.js` instruments, updated baseline to 1292 tests, narrative pass reverted (`stripOrchestratorNarrative`, `stripUserMissionManifestos`, `stripConversationalAcks` removed) | `tmp/validate-context-pipeline.js`, `tmp/analyze-dump.js` |
+| 2026-05-17 | build | Q1 web query deduplication — cross-turn dedup with depth-aware rollup | 5 new tests in `tests/snapshot-compress.test.ts` (deleted) |
+| 2026-05-18 | build | Stage 1 fixes: bumped prompt to v1.1.0, fixed `sanitizeForkSnapshot` (deleted — core-2 has no sanitizer) line refs to ~2025-2100, added `stripUnknownHeaderFields` pass, added `validate-context-pipeline.js` and `analyze-dump.js` instruments, updated baseline to 1292 tests, narrative pass reverted (`stripOrchestratorNarrative`, `stripUserMissionManifestos`, `stripConversationalAcks` removed) | `tmp/validate-context-pipeline.js`, `tmp/analyze-dump.js` |
 
 ---
 

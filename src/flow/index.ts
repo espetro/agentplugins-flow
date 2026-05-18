@@ -10,7 +10,7 @@ import setupWarp from "./warp.js";
 import { setupLoopCommand } from "./loop-command.js";
 import { setupContinuation } from "./continuation.js";
 import { recordFlowCompletion, addTokens } from "./store.js";
-import * as sessionRegistry from "../core/session-registry.js";
+import * as sessionRegistry from "./session-registry.js";
 
 export type {
   GoalState,

@@ -11,7 +11,7 @@
  *   - thinking_start / thinking_delta: reasoning tokens
  *   - text_delta: content tokens
  *
- * See snapshot.ts for the Fork Snapshot Protocol (session state serialization).
+ * See core2/snapshot.ts for the Fork Snapshot Protocol (session state serialization).
  */
 
 import type { Message } from "@earendil-works/pi-ai";
@@ -373,8 +373,52 @@ function updateAssistantMetadata(result: { model?: string; stopReason?: string; 
 	if (message.errorMessage) result.errorMessage = message.errorMessage;
 }
 
-// Canonical reasoning stripping imported from ./reasoning-strip.js
-import { stripReasoningFromAssistantMessage as stripReasoning } from "./reasoning-strip.js";
+/** Message part types that represent reasoning/thinking content. */
+const REASONING_PART_TYPES = new Set([
+	"thinking",
+	"reasoning",
+	"reasoning_content",
+	"reasoningContent",
+]);
+
+/** Top-level fields on assistant messages that carry reasoning data. */
+const REASONING_FIELDS = [
+	"thinking",
+	"thinkingSignature",
+	"thinking_signature",
+	"reasoning",
+	"reasoningContent",
+	"reasoning_content",
+	"reasoningSignature",
+	"reasoning_signature",
+];
+
+/** Strip thinking/reasoning content from an assistant message. */
+function stripReasoning(message: any): { message: any; changed: boolean } {
+	let next = message;
+	let changed = false;
+
+	for (const field of REASONING_FIELDS) {
+		if (field in next) {
+			if (next === message) next = { ...message };
+			delete (next as any)[field];
+			changed = true;
+		}
+	}
+
+	if (Array.isArray(message.content)) {
+		const filteredContent = message.content.filter(
+			(part: any) => !REASONING_PART_TYPES.has(part?.type),
+		);
+		if (filteredContent.length !== message.content.length) {
+			if (next === message) next = { ...message };
+			next.content = filteredContent;
+			changed = true;
+		}
+	}
+
+	return { message: next, changed };
+}
 
 
 
