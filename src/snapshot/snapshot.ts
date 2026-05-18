@@ -1637,14 +1637,16 @@ export function compressFlowToolCallArgs(snapshot: string): string {
 			const firstFlow = flowArr[0];
 			const type = typeof firstFlow?.type === "string" ? firstFlow.type : undefined;
 			const aim = typeof firstFlow?.aim === "string" ? firstFlow.aim : undefined;
+			const intent = typeof firstFlow?.intent === "string" ? firstFlow.intent : undefined;
+			const acceptance = typeof firstFlow?.acceptance === "string" ? firstFlow.acceptance : undefined;
 			const steps = Array.isArray(firstFlow?.steps) ? firstFlow.steps.length : undefined;
 
-			if (!type && !aim && steps === undefined) return part;
+			if (!type && !aim && !intent && !acceptance && steps === undefined) return part;
 
 			modified = true;
 			return {
 				...part,
-				arguments: { type, aim, steps },
+				arguments: { type, aim, intent, acceptance, steps },
 			};
 		});
 
@@ -2079,6 +2081,33 @@ export function sanitizeForkSnapshot(
 	sanitized = reparentOrphans(sanitized);
 	passesApplied.push("reparentOrphans");
 	passDeltas["reparentOrphans2"] = measureBytes(sanitized);
+
+	// Serialize flowResultCache entries referenced by tool messages in this
+	// snapshot into the session header meta. This bridges the cache across
+	// process boundaries so child flows can reconstruct it on startup.
+	const cacheEntriesToSerialize: Record<string, CompressedFlowResult[]> = {};
+	const finalLines = sanitized.trimEnd().split("\n");
+	for (const line of finalLines) {
+		if (!line) continue;
+		let entry: SnapshotEntry;
+		try { entry = JSON.parse(line) as SnapshotEntry; } catch { continue; }
+		if (entry.type !== "message" || !entry.message) continue;
+		const tcId = entry.message.toolCallId;
+		if (typeof tcId !== "string" || !tcId.trim()) continue;
+		const cached = cache.get(tcId);
+		if (cached && cached.length > 0) {
+			cacheEntriesToSerialize[tcId] = cached;
+		}
+	}
+	if (Object.keys(cacheEntriesToSerialize).length > 0 && finalLines.length > 0) {
+		const header = JSON.parse(finalLines[0]) as Record<string, unknown>;
+		header.meta = {
+			...(header.meta as Record<string, unknown> || {}),
+			flowResultCache: cacheEntriesToSerialize,
+		};
+		finalLines[0] = JSON.stringify(header);
+		sanitized = `${finalLines.join("\n")}\n`;
+	}
 
 	// Telemetry: measure total delta across sanitization, stripping, and compression.
 	const postBytes = sanitized.length;

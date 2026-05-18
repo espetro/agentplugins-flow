@@ -72,7 +72,7 @@ export function buildGlitchQueue(
 		}
 
 		const isShrinkTail = direction === 'shrink' && i >= overlapLen;
-		const start = Math.floor(Math.random() * (isShrinkTail ? GLITCH_SHORT_MAX_START : maxStart));
+		const start = isShrinkTail ? 0 : Math.floor(Math.random() * maxStart);
 		const end = start + Math.floor(Math.random() * (isShrinkTail ? GLITCH_SHORT_MAX_LENGTH : maxLength));
 		const fadeOutEnd = to === '' ? end + (isShrinkTail ? GLITCH_SHRINK_FADE_OUT_FRAMES : GLITCH_FADE_OUT_FRAMES) : undefined;
 		queue.push({ from, to, start, end, fadeOutEnd, char: null });
