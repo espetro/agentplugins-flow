@@ -108,7 +108,7 @@ async function executeDispatchOps(
 				}
 			} else if (group.tool === "web") {
 				const webOutput = await runWebOps({ op: group.ops }, ctx, signal);
-				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${webOutput}`);
+				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${webOutput.content[0].text}`);
 			}
 		} catch (err) {
 			parts.push(`### ${group.tool}\n\ntool_call_id: ${toolCallId}\n\nError: ${err instanceof Error ? err.message : String(err)}`);
