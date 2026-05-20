@@ -592,7 +592,7 @@ describe("flow tool execute", () => {
 			expect((modified[1] as any).content[0].text).toBe("ok");
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("You are in the primary flow");
+			expect((modified[2] as any).content).toContain("primary_flow:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
@@ -612,7 +612,7 @@ describe("flow tool execute", () => {
 
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("You are in the primary flow");
+			expect((modified[2] as any).content).toContain("primary_flow:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
@@ -1531,7 +1531,7 @@ describe("web tool integration", () => {
 		expect(modified.systemPrompt).not.toContain("pi-web steering");
 	});
 
-	it("appends sliding prompt and flows to systemPrompt unconditionally", async () => {
+	it("returns systemPrompt unchanged when no web steering applies", async () => {
 		const pi = createMockPi();
 		registerExtension(pi as any);
 
@@ -1543,10 +1543,8 @@ describe("web tool integration", () => {
 		});
 
 		const modified = result[0];
-		// Bundled flows are always discovered, so flow instructions are injected
-		expect(modified.systemPrompt).toContain("## Flows");
-		expect(modified.systemPrompt).toContain("inherited context as background");
-		expect(modified.systemPrompt).not.toContain("Start from a clean slate with only the intent.");
+		// Flow catalog removed from before_agent_start; steering handled by sliding prompt
+		expect(modified.systemPrompt).toBe("You are a helpful assistant.");
 		expect(modified.systemPrompt).not.toContain("pi-web steering");
 	});
 

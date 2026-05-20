@@ -4,12 +4,10 @@
  * Extracted from index.ts for single-responsibility and testability.
  */
 
-import type { FlowConfig } from "../flow/agents.js";
 import {
 	looksLikeUrlPrompt,
 	looksLikeWebSearchPrompt,
 } from "../tools/web-ops.js";
-import type { FlowDepthConfig } from "../flow/depth.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,12 +45,7 @@ export function computeActiveTools(optimize: boolean): string[] {
 export function buildBeforeAgentStartPrompt(
 	event: BeforeAgentStartEvent,
 	toolOptimize: boolean,
-	canTransition: boolean,
-	discoveredFlows: FlowConfig[],
-	depthConfig: FlowDepthConfig,
 ): string | undefined {
-	const { currentDepth, maxDepth, ancestorFlowStack, preventCycles } = depthConfig;
-
 	const prompt = event.prompt;
 	const hasUrl = looksLikeUrlPrompt(prompt);
 	const likelyNeedsWeb = looksLikeWebSearchPrompt(prompt);
@@ -76,48 +69,5 @@ export function buildBeforeAgentStartPrompt(
 			webInstructions.map((line) => `- ${line}`).join("\n");
 	}
 
-	if (!canTransition || discoveredFlows.length === 0) {
-		return systemPrompt;
-	}
-
-	const flowList = discoveredFlows
-		.map((f) => {
-			const badge = f.source === "project" ? " 🔒" : f.source === "user" ? " ⚙" : "";
-			return `- [${f.name}]${badge} — ${f.description}`;
-		})
-		.join("\n");
-
-	// Root state gets the full guide; child flows get a minimal version
-	if (currentDepth > 0) {
-		return (
-			systemPrompt +
-			`\n\n## Flows\n${flowList}\n\n` +
-			`Guards: depth ${currentDepth}/${maxDepth} | cycles: ${preventCycles ? "blocked" : "off"} | stack: ${ancestorFlowStack.length > 0 ? ancestorFlowStack.join(" -> ") : "(root)"}`
-		);
-	}
-
-	return (
-		systemPrompt +
-		`\n\n## Flows
-
-Reason about whether to dive into a flow before acting:
-- [trace] Fast code verification / snap user Q&A.
-- [scout] Deep dive / architecture mapping / bash execution.
-- [build] Implementation / verification (already clear).
-
-${flowList}
-
-Batch independent flows: { "flow": [{ "type": "scout", "intent": "..." }, { "type": "audit", "intent": "..." }] }
-
-Results: summary, files, actions, commands, notDone, nextSteps, reasoning, notes.
-
-### Guards
-- Depth: ${currentDepth}/${maxDepth} | Cycles: ${preventCycles ? "blocked" : "off"} | Stack: ${ancestorFlowStack.length > 0 ? ancestorFlowStack.join(" -> ") : "(root)"}
-
-### Shared Context
-Child flows fork a sanitized snapshot (files read, commands, compressed results).
-Write 'intent' as a **forward-looking mission**.
-Set inheritContext: false for a clean slate.
-`
-	);
+	return systemPrompt;
 }

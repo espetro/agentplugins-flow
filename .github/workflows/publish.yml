@@ -1,5 +1,6 @@
-# Manual fallback — publish an already-tagged version to npm.
-# The primary release path is bump-version.yml (Release workflow).
+# Publishes tagged releases to npm.
+# Trigger via tag push (v*) — preferred for trusted publishing and auto-release.
+# workflow_dispatch works as a manual fallback.
 
 name: Publish
 
@@ -9,19 +10,29 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Print toolchain
+        run: node -v && npm -v
+
       - run: npm ci
+
       - name: Determine dist-tag
         id: dist_tag
         run: |
@@ -31,6 +42,16 @@ jobs:
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
-      - run: npm publish --access public --provenance --tag ${{ steps.dist_tag.outputs.tag }}
+
+      - name: Verify npm token
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Token publish (no --provenance flag). Provenance + token together can 404 if
+      # trusted publishing is enabled on npmjs.com. Use trusted publishing instead
+      # (remove NODE_AUTH_TOKEN from this step) once configured — see npm docs.
+      - name: Publish to npm
+        run: npm publish --access public --tag ${{ steps.dist_tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -402,9 +402,6 @@ export default function (pi: ExtensionAPI) {
 		const augmented = buildBeforeAgentStartPrompt(
 			event,
 			resolved.toolOptimize,
-			canTransition,
-			resolved.discoveredFlows,
-			depthConfig,
 		);
 
 		if (augmented === undefined) return undefined;
