@@ -21,6 +21,9 @@ type StructuredOutputRecord = {
 	nextSteps?: string[];
 	reasoning?: string[];
 	notes?: string[];
+	verdict?: "pass" | "rework";
+	feedback?: string;
+	builds?: Array<{ index: number; verdict: "pass" | "rework"; feedback?: string }>;
 	extensions?: Record<string, unknown>;
 };
 
@@ -36,10 +39,19 @@ function isOptionalArray(record: Record<string, unknown>, key: string): boolean 
 
 /** Minimum required fields to consider parsed JSON a valid structured output. */
 function isValidFileEntry(item: unknown): boolean {
+	if (typeof item === "string") return true; // string shorthand: ["./path"]
 	if (!isRecord(item)) return false;
 	if (typeof item.path !== "string") return false;
 	if (item.role !== undefined && typeof item.role !== "string") return false;
 	if (item.description !== undefined && typeof item.description !== "string") return false;
+	return true;
+}
+
+function isValidBuildVerdict(item: unknown): boolean {
+	if (!isRecord(item)) return false;
+	if (typeof item.index !== "number") return false;
+	if (item.verdict !== "pass" && item.verdict !== "rework") return false;
+	if (item.feedback !== undefined && item.feedback !== null && typeof item.feedback !== "string") return false;
 	return true;
 }
 
@@ -58,7 +70,9 @@ function isValidStructuredOutput(obj: unknown): obj is StructuredOutputRecord {
 		isOptionalArray(obj, "notDone") &&
 		isOptionalArray(obj, "nextSteps") &&
 		isOptionalArray(obj, "reasoning") &&
-		isOptionalArray(obj, "notes")
+		isOptionalArray(obj, "notes") &&
+		isOptionalArray(obj, "builds") &&
+		(Array.isArray(obj.builds) ? obj.builds.every(isValidBuildVerdict) : true)
 	);
 }
 
@@ -96,13 +110,16 @@ export function extractStructuredOutput(text: string): FlowStructuredOutput | un
 		version: parsed.version.trim(),
 		status: parsed.status,
 		summary: parsed.summary.trim(),
-		files: parsed.files ?? [],
+		files: (parsed.files ?? []).map(f => typeof f === "string" ? { path: f } : f),
 		actions: parsed.actions ?? [],
 		commands: parsed.commands ?? [],
 		notDone: parsed.notDone ?? [],
 		nextSteps: parsed.nextSteps ?? [],
 		reasoning: parsed.reasoning ?? [],
 		notes: parsed.notes ?? [],
+		...(parsed.verdict !== undefined ? { verdict: parsed.verdict } : {}),
+		...(parsed.feedback !== undefined ? { feedback: parsed.feedback } : {}),
+		...(parsed.builds !== undefined ? { builds: parsed.builds } : {}),
 		...(parsed.extensions !== undefined ? { extensions: parsed.extensions } : {}),
 	};
 }

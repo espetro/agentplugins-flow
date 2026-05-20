@@ -770,9 +770,15 @@ export function getFlowSummaryText(result?: FlowResult | null): string {
 		? "\n\n[Tool Results]\n" + toolSummaryParts.join("\n---\n")
 		: "";
 
+	// Append ping-pong cycle metadata if present
+	const pingPongMeta = (result as any)?.pingPongMeta;
+	const pingPongNote = pingPongMeta
+		? `\n\n[Audit Loop: ${pingPongMeta.cycles} cycle(s), final verdict: ${pingPongMeta.finalVerdict}]`
+		: "";
+
 	// If there's final text, include it plus tool context
 	if (finalText) {
-		return finalText + toolContext;
+		return finalText + toolContext + pingPongNote;
 	}
 
 	// No final text

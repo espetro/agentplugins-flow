@@ -70,13 +70,47 @@ export function buildCore2Snapshot(
 	}
 
 	for (const entry of branchEntries) {
-		const line = JSON.stringify(entry);
+		const processedEntry = maybeStripCompaction(entry);
+		if (!processedEntry) continue;
+
+		const line = JSON.stringify(processedEntry);
 		// Strip batch read/write/edit bodies from tool result messages
 		const processed = maybeStripBatchBodies(line);
 		lines.push(processed);
 	}
 
 	return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Filter compaction-related entries from the snapshot.
+ * - Strips compaction_trigger entirely (internal signal).
+ * - Replaces compaction/context_compaction with a lightweight readable summary.
+ */
+function maybeStripCompaction(entry: unknown): unknown | null {
+	if (!entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+
+	if (e.type === "compaction_trigger") {
+		return null;
+	}
+
+	if (e.type === "compaction" || e.type === "context_compaction") {
+		// Replace potentially large and encrypted compaction entries with a
+		// lightweight verbatim summary for child flows.
+		const summary = typeof e.summary === "string" ? e.summary : "Parent context was compacted.";
+		const tokensSaved = typeof e.tokensBefore === "number" ? e.tokensBefore : undefined;
+
+		return {
+			type: "message",
+			message: {
+				role: "system",
+				content: `[Context Compacted] ${summary}${tokensSaved ? ` (${tokensSaved} tokens summarized)` : ""}`,
+			},
+		};
+	}
+
+	return entry;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +149,7 @@ function isBatchSectionHeader(line: string): boolean {
 }
 
 /** Replace batch section bodies with first 3 + last 3 lines as orientation. */
-function stripBatchBodies(text: string): string {
+export function stripBatchBodies(text: string): string {
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
 	const out: string[] = [];
 	let i = 0;

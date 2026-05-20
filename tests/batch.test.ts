@@ -2,9 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Container } from "@earendil-works/pi-tui";
 import { createBatchTool, createBatchReadTool } from "../src/batch/index.js";
 import { suggestSimilarFiles } from "../src/batch/execute.js";
 import { isWithinDirectory } from "../src/batch/fuzzy-edit.js";
+import * as webOps from "../src/tools/web-ops.js";
+
+// Helper to extract text from Text, TruncatedText, or Container objects
+function extractText(node: any): string {
+	if ("text" in node && typeof node.text === "string") {
+		return node.text;
+	} else if (node instanceof Container || ("children" in node && Array.isArray(node.children))) {
+		return node.children.map((child: any) => extractText(child)).join("\n");
+	}
+	return String(node);
+}
 
 describe("batch tool", () => {
 	let tmpDir: string;
@@ -1519,7 +1531,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			await expect(
 				tool.execute("call-1", { o: [] }, undefined, undefined, makeCtx(tmpDir)),
-			).rejects.toThrow("o array is required");
+			).rejects.toThrow("o or w array must not be empty");
 		});
 	});
 
@@ -2335,7 +2347,7 @@ describe("edge cases", () => {
 			const tool = createTool();
 			await expect(
 				tool.execute("call-1", null as any, undefined, undefined, makeCtx(tmpDir)),
-			).rejects.toThrow("o array is required");
+			).rejects.toThrow("o or w array must not be empty");
 		});
 	});
 
@@ -2518,18 +2530,16 @@ describe("edge cases", () => {
 			};
 		}
 
-		it("renders single operation", () => {
+		it("renders invisible call frame", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{ o: [{ o: "read", p: "src/index.ts" }] },
 				makeTheme(),
 			);
-			expect(rendered.toString()).toContain("batch");
-			expect(rendered.toString()).toContain("read");
-			expect(rendered.toString()).toContain("index.ts");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("renders multiple operations", () => {
+		it("renders invisible call frame for multiple ops", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{
@@ -2540,15 +2550,10 @@ describe("edge cases", () => {
 				},
 				makeTheme(),
 			);
-			const text = rendered.toString();
-			expect(text).toContain("batch");
-			expect(text).toContain("read");
-			expect(text).toContain("a.ts");
-			expect(text).toContain("edit");
-			expect(text).toContain("b.ts");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("truncates many operations", () => {
+		it("renders invisible call frame for many ops", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{
@@ -2561,17 +2566,16 @@ describe("edge cases", () => {
 				},
 				makeTheme(),
 			);
-			const text = rendered.toString();
-			expect(text).toContain("+2 more");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("renders empty batch", () => {
+		it("renders invisible call frame for empty batch", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!({ o: [] }, makeTheme());
-			expect(rendered.toString()).toContain("batch (empty)");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("shows edit block count for multi-block edits", () => {
+		it("renders invisible call frame for multi-block edits", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{
@@ -2588,16 +2592,16 @@ describe("edge cases", () => {
 				},
 				makeTheme(),
 			);
-			expect(rendered.toString()).toContain("2 blocks");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("shortens home directory to ~", () => {
+		it("renders invisible call frame regardless of path length", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{ o: [{ o: "read", p: `${os.homedir()}/project/file.ts` }] },
 				makeTheme(),
 			);
-			expect(rendered.toString()).toContain("~/project/file.ts");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 	});
 
@@ -2640,6 +2644,193 @@ describe("edge cases", () => {
 			const result = { content: [], details: { results: [] } };
 			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
 			expect(rendered.toString()).toBe("");
+		});
+
+		it("tree rendering: collapsed shows header + op lines without content", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "✔ 2 read, 1 edit\n\n--- file.ts ---\ncontent" }],
+				details: {
+					results: [
+						{ op: "read", path: "src/a.ts", status: "ok", totalLines: 100, content: "line1\nline2" },
+						{ op: "read", path: "src/b.ts", status: "ok", totalLines: 200, content: "line3\nline4" },
+						{ op: "edit", path: "src/c.ts", status: "ok", blocksChanged: 2 },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("batch");
+			expect(text).toContain("3 ops");
+			expect(text).toContain("3 ok");
+			expect(text).toContain("├─");
+			expect(text).toContain("└─");
+			expect(text).toContain("read: src/a.ts");
+			expect(text).toContain("100 lines");
+			expect(text).toContain("edit: src/c.ts");
+			expect(text).toContain("2 blocks");
+			expect(text).not.toContain("line1");
+			expect(text).not.toContain("line3");
+		});
+
+		it("tree rendering: expanded shows header + op lines + content previews", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "✔ 2 read, 1 edit" }],
+				details: {
+					results: [
+						{ op: "read", path: "src/a.ts", status: "ok", totalLines: 100, content: "line1\nline2\nline3" },
+						{ op: "rg", path: "src", status: "ok", content: "src/a.ts:1:foo\nsrc/b.ts:2:bar" },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: true }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("batch");
+			expect(text).toContain("read: src/a.ts");
+			expect(text).toContain("rg: src");
+			expect(text).toContain("line1");
+			expect(text).toContain("src/a.ts:1:foo");
+		});
+
+		it("tree rendering: mixed statuses show correct icons", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "mixed" }],
+				details: {
+					results: [
+						{ op: "read", path: "ok.ts", status: "ok", totalLines: 10 },
+						{ op: "read", path: "err.ts", status: "error", error: "ENOENT" },
+						{ op: "read", path: "skip.ts", status: "skipped", error: "aggregate limit" },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("✓");
+			expect(text).toContain("✗");
+			expect(text).toContain("⊘");
+			expect(text).toContain("1 ok");
+			expect(text).toContain("1 err");
+			expect(text).toContain("1 skipped");
+		});
+
+		it("tree rendering: various op types format correctly", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "mixed ops" }],
+				details: {
+					results: [
+						{ op: "write", path: "new.ts", status: "ok", bytes: 1200 },
+						{ op: "delete", path: "old.ts", status: "ok" },
+						{ op: "bash", path: "bash", status: "ok", command: "npm test", exitCode: 0, duration: 1800 },
+						{ op: "patch", path: "multi.ts", status: "ok", affected: { added: ["a.ts"], modified: ["b.ts"], deleted: [] } },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("write: new.ts");
+			expect(text).toContain("1200 bytes");
+			expect(text).toContain("delete: old.ts");
+			expect(text).toContain("bash: npm test");
+			expect(text).toContain("exit 0");
+			expect(text).toContain("1.8s");
+			expect(text).toContain("patch: multi.ts");
+			expect(text).toContain("A a.ts");
+			expect(text).toContain("M b.ts");
+		});
+
+		it("tree rendering: web search op shows result count from results array", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "web ops" }],
+				details: {
+					results: [
+						{
+							op: "search",
+							q: "test query",
+							status: "ok" as const,
+							results: [
+								{ title: "Result A", url: "https://a.com", snippet: "snippet A" },
+								{ title: "Result B", url: "https://b.com", snippet: "snippet B" },
+							],
+						},
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("search: \"test query\"");
+			expect(text).toContain("2 results");
+		});
+
+		it("tree rendering: web fetch op shows saved file path in expanded view", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "web ops" }],
+				details: {
+					results: [
+						{
+							op: "fetch",
+							u: "https://example.com/page",
+							status: "ok" as const,
+							filePath: "/tmp/fetch-abc.html",
+							contentLength: 1200,
+						},
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: true }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("fetch: https://example.com/page");
+			expect(text).toContain("1200 bytes");
+			expect(text).toContain("saved: /tmp/fetch-abc.html");
+		});
+
+		it("tree rendering: patch op with undefined affected sub-arrays does not crash", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "patch ops" }],
+				details: {
+					results: [
+						{
+							op: "patch",
+							path: "safe.ts",
+							status: "ok" as const,
+							affected: { added: undefined as any, modified: ["b.ts"], deleted: undefined as any },
+						},
+					],
+				},
+			};
+			expect(() => {
+				const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+				const text = extractText(rendered);
+				expect(text).toContain("patch: safe.ts");
+				expect(text).toContain("M b.ts");
+			}).not.toThrow();
+		});
+
+		it("tree rendering: header shows per-op-type counts", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "mixed ops" }],
+				details: {
+					results: [
+						{ op: "read", path: "a.ts", status: "ok" as const, totalLines: 10 },
+						{ op: "read", path: "b.ts", status: "ok" as const, totalLines: 20 },
+						{ op: "search", q: "q1", status: "ok" as const, results: [{ title: "T", url: "U" }] },
+						{ op: "bash", command: "npm test", status: "ok" as const, exitCode: 0, duration: 1000 },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("4 ops");
+			expect(text).toContain("4 ok");
+			expect(text).toContain("2 file");
+			expect(text).toContain("1 web");
+			expect(text).toContain("1 bash");
 		});
 	});
 });
@@ -3249,18 +3440,16 @@ describe("batch_read tool", () => {
 			};
 		}
 
-		it("renders single read operation", () => {
+		it("renders invisible call frame for batch_read", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{ o: [{ o: "read", p: "src/index.ts" }] },
 				makeTheme(),
 			);
-			expect(rendered.toString()).toContain("batch_read");
-			expect(rendered.toString()).toContain("read");
-			expect(rendered.toString()).toContain("index.ts");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 
-		it("renders multiple read operations", () => {
+		it("renders invisible call frame regardless of op count", () => {
 			const tool = createTool();
 			const rendered = tool.renderCall!(
 				{
@@ -3271,10 +3460,7 @@ describe("batch_read tool", () => {
 				},
 				makeTheme(),
 			);
-			const text = rendered.toString();
-			expect(text).toContain("batch_read");
-			expect(text).toContain("a.ts");
-			expect(text).toContain("b.ts");
+			expect(rendered.toString()).toBe("[object Object]");
 		});
 	});
 
@@ -3310,5 +3496,147 @@ describe("batch_read tool", () => {
 			expect(text).toContain("✔");
 			expect(text).toContain("--- file.ts ---");
 		});
+
+		it("tree rendering: batch_read shows tree with read and rg ops", () => {
+			const tool = createTool();
+			const result = {
+				content: [{ type: "text", text: "✔ 2 read, 1 rg" }],
+				details: {
+					results: [
+						{ op: "read", path: "src/a.ts", status: "ok", totalLines: 100, content: "line1\nline2" },
+						{ op: "read", path: "src/b.ts", status: "ok", totalLines: 200, content: "line3\nline4" },
+						{ op: "rg", path: "src", status: "ok", content: "src/a.ts:1:foo\nsrc/b.ts:2:bar" },
+					],
+				},
+			};
+			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
+			const text = extractText(rendered);
+			expect(text).toContain("batch_read");
+			expect(text).toContain("3 ops");
+			expect(text).toContain("3 ok");
+			expect(text).toContain("read: src/a.ts");
+			expect(text).toContain("read: src/b.ts");
+			expect(text).toContain("rg: src");
+			expect(text).toContain("100 lines");
+			expect(text).toContain("2 matches");
+		});
+	});
+});
+
+describe("batch web operations", () => {
+	let tmpDir: string;
+	let runWebOpsSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-batch-web-test-"));
+		runWebOpsSpy = vi.spyOn(webOps, "runWebOps").mockResolvedValue({
+			content: [{ type: "text" as const, text: "mocked web output" }],
+			details: {
+				ops: [{ op: "search", q: "test", status: "ok" as const, results: [] }],
+			},
+		});
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+		runWebOpsSpy.mockRestore();
+	});
+
+	function createTool() {
+		return createBatchTool();
+	}
+
+	function makeCtx(cwd: string) {
+		return { cwd, sessionManager: { getSessionDir: () => cwd } };
+	}
+
+	it("executes web ops with w array", async () => {
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-1",
+			{ w: [{ o: "search", q: "test query" }] },
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(runWebOpsSpy).toHaveBeenCalledWith(
+			{ op: [{ o: "search", q: "test query" }] },
+			expect.any(Object),
+			undefined,
+		);
+		expect(result.content[0].text).toContain("mocked web output");
+		expect(result.details.results).toHaveLength(1);
+		expect(result.details.results[0]).toMatchObject({ op: "search", q: "test", status: "ok" });
+	});
+
+	it("executes mixed o + w in correct order", async () => {
+		fs.writeFileSync(path.join(tmpDir, "test.txt"), "file content\n", "utf-8");
+
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-1",
+			{
+				o: [{ o: "read", p: "test.txt" }],
+				w: [{ o: "search", q: "test" }],
+			},
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(result.content[0].text).toContain("file content");
+		expect(result.content[0].text).toContain("mocked web output");
+		expect(result.details.results).toHaveLength(2);
+		expect(result.details.results[0]).toMatchObject({ op: "read", status: "ok" });
+		expect(result.details.results[1]).toMatchObject({ op: "search", q: "test", status: "ok" });
+	});
+
+	it("handles web op errors without stopping batch", async () => {
+		fs.writeFileSync(path.join(tmpDir, "test.txt"), "file content\n", "utf-8");
+		runWebOpsSpy.mockResolvedValue({
+			content: [{ type: "text" as const, text: "web error output" }],
+			details: {
+				ops: [
+					{ op: "fetch", u: "bad", status: "error" as const, error: "Failed" },
+					{ op: "search", q: "test", status: "ok" as const, results: [] },
+				],
+			},
+		});
+
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-1",
+			{
+				o: [{ o: "read", p: "test.txt" }],
+				w: [
+					{ o: "fetch", u: "bad" },
+					{ o: "search", q: "test" },
+				],
+			},
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(result.content[0].text).toContain("file content");
+		expect(result.content[0].text).toContain("web error output");
+		expect(result.details.results).toHaveLength(3);
+		expect(result.details.results[0]).toMatchObject({ op: "read", status: "ok" });
+		expect(result.details.results[1]).toMatchObject({ op: "fetch", u: "bad", status: "error" });
+		expect(result.details.results[2]).toMatchObject({ op: "search", q: "test", status: "ok" });
+	});
+
+	it("rejects web operations in batch_read", async () => {
+		const tool = createBatchReadTool();
+		await expect(
+			tool.execute(
+				"call-1",
+				{ o: [{ o: "read", p: "test.txt" }], w: [{ o: "search", q: "test" }] },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			),
+		).rejects.toThrow("batch_read does not support web operations");
 	});
 });

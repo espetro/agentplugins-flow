@@ -18,3 +18,9 @@ codex/
 
 # Nested repo (external project)
 pi-autoresearch/
+
+# Antigravity CLI runtime state (contains local paths + usernames)
+.antigravitycli/
+
+# TUI scenarios doc with local file paths
+tui_scenarios.md

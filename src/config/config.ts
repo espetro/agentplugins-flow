@@ -8,7 +8,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseAgentSessionMode, type AgentSessionMode } from "../flow/session-mode.js";
+import { parseComplexity, type Complexity } from "../flow/complexity.js";
 import { type FlowTier } from "../flow/agents.js";
 import { logWarn } from "./log.js";
 import { resolveModelContextWindow as resolveModelContextWindowFromModels } from "./models.js";
@@ -35,8 +35,8 @@ export interface FlowSettings {
 	/** Maximum number of flows to execute concurrently. Default: 4. */
 	maxConcurrency?: number;
 
-	/** Default child-flow session mode. Default: "default" (600s). */
-	sessionMode?: AgentSessionMode;
+	/** Default child-flow complexity. Default: "moderate" (600s, 1x audit). */
+	complexity?: Complexity;
 
 	steering?: {
 		/** Skip entire steering system message when false. Default: true. */
@@ -60,6 +60,8 @@ export interface FlowSettings {
 		/** Auto-dismiss timeout in seconds. Default: 300 (5 min). */
 		timeout?: number;
 	};
+
+	bodyVerbosity?: "lite" | "full";
 
 	loop?: {
 		/** Enable endless loop behavior. Default: false. */
@@ -88,7 +90,12 @@ function readSettingsJson(filePath: string): Record<string, unknown> | null {
 
 export function getGlobalSettingsPath(): string {
 	const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
-	return path.join(agentDir, "settings.json");
+	const defaultPath = path.join(agentDir, "settings.json");
+	if (!process.env["PI_CODING_AGENT_DIR"] && !fs.existsSync(defaultPath)) {
+		const rootPath = path.join(os.homedir(), ".pi", "settings.json");
+		if (fs.existsSync(rootPath)) return rootPath;
+	}
+	return defaultPath;
 }
 
 function getProjectSettingsPath(cwd: string): string {
@@ -260,9 +267,9 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 		result.maxConcurrency = obj.maxConcurrency;
 	}
 
-	const sessionMode = parseAgentSessionMode(obj.sessionMode);
-	if (sessionMode !== undefined) {
-		result.sessionMode = sessionMode;
+	const complexity = parseComplexity(obj.complexity);
+	if (complexity !== undefined) {
+		result.complexity = complexity;
 	}
 
 	// Parse nested steering settings
@@ -302,6 +309,11 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 			askUser.timeout = obj.askUser.timeout;
 		}
 		result.askUser = askUser;
+	}
+
+	// Parse body verbosity setting
+	if (typeof obj.bodyVerbosity === "string" && (obj.bodyVerbosity === "lite" || obj.bodyVerbosity === "full")) {
+		result.bodyVerbosity = obj.bodyVerbosity;
 	}
 
 	// Parse nested loop settings

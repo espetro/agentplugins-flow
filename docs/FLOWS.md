@@ -6,7 +6,7 @@ Flow-style transition is designed for **context efficiency**. Instead of launchi
 
 This approach delivers four concrete benefits:
 
-1. **Avoid duplicate tool calls** — every flow state launch no longer re-runs the same `read`, `grep`, or `bash` probes that the parent already performed.
+1. **Avoid duplicate tool calls** — every flow state launch no longer re-runs the same `read`, `grep`, or `bash` commands that the parent already performed.
 2. **Prevent context bloat** — long transcripts with repeated file listings and command outputs are kept out of the main conversation thread.
 3. **Eliminate unnecessary noise** — the parent agent sees only structured results (`summary`, `notDone`, `nextSteps`, etc.) instead of pages of intermediate reasoning.
 4. **Preserve focus** — each flow stays locked on its intent because it isn't distracted by unrelated earlier messages.
@@ -50,7 +50,7 @@ The child's `<context-seal>` prompt tells it: *"The conversation above is sealed
 | `[debug]` | Investigate logs, errors, stack traces, root causes, and fix bugs | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `lite` |
 | `[build]` | Implement features, fix bugs, write tests, deploy, and ship | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `flash` |
 | `[craft]` | Plan structure, break down requirements, design solutions | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `full` |
-| `[audit]` | Audit security, quality, correctness; fix safe issues autonomously | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `flash` |
+| `[audit]` | Audit security, quality, correctness; provide feedback and verdict — no code edits | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `flash` |
 | `[ideas]` | Generate ideas, explore possibilities, and think creatively using inherited context | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `full` |
 
 > **Note:** All bundled flows have `maxDepth: 0`, meaning they do not transition further by default. Custom flows can override this via front-matter.
@@ -61,15 +61,15 @@ The child's `<context-seal>` prompt tells it: *"The conversation above is sealed
 
 ## Session Modes
 
-Each flow call may set `sessionMode` to choose the flow state time budget:
+Each flow call may set `complexity` to choose the flow state time budget:
 
-| Mode | Budget | Recommended use |
-|------|-------:|-----------------|
-| `snap` | 90s | ultra-quick checks, syntax scans, one-liner verifications |
-| `fast` | 300s | quick scouting, narrow checks, small design passes |
-| `default` | 600s | normal flow work; this is the default |
-| `long` | 900s | large builds, full test runs, broad refactors, complex debugging |
-| `extreme_long` | 1200s | very large refactors, extensive audits, or multi-step debugging sessions |
+| Complexity | Budget | Review | Recommended use |
+|------------|-------:|:------:|:----------------|
+| `snap` | 120s | no | ultra-quick checks, syntax scans, one-liner verifications |
+| `simple` | 300s | no | quick scouting, narrow checks, small design passes |
+| `moderate` | 600s | 1x | normal flow work; this is the default |
+| `complex` | 900s | 2x | large builds, full test runs, broad refactors, complex debugging |
+| `intricate` | 1200s | 3x | very large refactors, extensive audits, or multi-step debugging sessions |
 
 Example:
 
@@ -80,7 +80,7 @@ Example:
       "type": "build",
       "intent": "Run the full test suite and fix failures",
       "aim": "Fix failing tests",
-      "sessionMode": "long"
+      "complexity": "complex"
     }
   ]
 }
@@ -88,10 +88,10 @@ Example:
 
 The public interface is mode-based; arbitrary per-flow numeric timeouts are not exposed.
 
-Session mode precedence:
+Complexity precedence:
 
 ```txt
-per-flow sessionMode > --flow-session-mode > PI_FLOW_SESSION_MODE > flowSettings.sessionMode > default
+per-flow complexity > --flow-complexity > PI_FLOW_COMPLEXITY > flowSettings.complexity > moderate
 ```
 
 ## Timeout Behavior
@@ -104,26 +104,34 @@ Flows are aware of their deadline from the moment they start:
 - **Grace period** — after the hard timeout fires, the agent gets a 90-second reporting grace to finish its summary before the process is force-killed.
 - **Graceful shutdown** — when the parent receives `SIGINT` or `SIGTERM`, the signal propagates to every child process group so flow states terminate cleanly instead of becoming orphans.
 
-## Post-Flow Advisory Messages
+## Audit Loop
 
-When certain flows complete, the system injects advisory messages suggesting follow-up flows. This keeps the agent on the optimal path without requiring the user to manually chain flows.
+When a `build` flow runs with `auditLoop > 0`, the executor automatically spawns a paired `audit` flow after the build completes. The audit reviews the build's output and returns a `verdict`: `pass` or `rework`. If `rework`, the build re-runs with the audit's feedback injected into its intent.
 
-### Built-in transition matrix
+### How it works
 
-| Source | Target | Condition | Advice |
-|--------|--------|-----------|--------|
-| `scout` | `build` | success | Context mapped. Consider running a [build] flow to implement changes, or [debug] if investigating an issue. |
-| `scout` | `debug` | success | Context mapped. Consider running a [debug] flow if investigating an issue. |
-| `debug` | `build` | success | The root cause has been identified. Consider running a [build] flow to implement the fix. |
-| `debug` | `audit` | success | Root cause identified. Consider running an [audit] flow to verify the fix area for related issues. |
-| `build` | `audit` | success | Consider running an [audit] flow to audit the changes for security, correctness, and code quality. |
-| `build` | `debug` | failure | Build failed. Consider running a [debug] flow to investigate the root cause. |
-| `audit` | `scout` | success | Audit complete. Consider running a [scout] flow to trace the audit findings across the codebase. |
-| `audit` | `build` | failure | Audit found issues. Consider running a [build] flow to fix them. |
-| `craft` | `build` | success | Plan ready. Consider running a [build] flow to implement the design. |
-| `ideas` | `craft` | success | Ideas explored. Consider running a [craft] flow to design the approach, or [build] to implement directly. |
+1. **Build runs** — writes files, produces output.
+2. **Audit reviews** — checks for security, correctness, completeness.
+3. **Verdict** — `pass` (done) or `rework` (build re-runs with feedback).
+4. **Cycle repeats** — up to `auditLoop` rework cycles.
 
-Advisories are smart: if the agent already included the suggested flow in the same batch, the advisory is suppressed to avoid redundancy.
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `auditLoop` | `0` | Override audit ping-pong cycles. Effective = max(this, complexity-implied). `0` = no override. |
+
+### Visual rendering
+
+Builds and their paired audit are grouped in the TUI with a shared header showing the aggregate state (`● ● ○`). Builds render first, the audit capstone renders last. During execution, dormant flows show `[awaiting...]`; on completion, approved flows show `[approved]`.
+
+### Grouped audit
+
+When multiple `build` flows share the same `auditLoop` value, they share a single audit capstone. The audit receives all build outputs and returns per-build verdicts. Only builds flagged `rework` re-run — others stay approved.
+
+### Audit agent behavioral change
+
+The `audit` flow shifted from a **fixer** (that would apply patches directly) to a **reviewer** (that returns a structured verdict with feedback). The build flow consumes the feedback and applies fixes itself. This separation of concerns keeps the audit focused on analysis and the build focused on implementation.
 
 ## Flow Loop & Warp
 

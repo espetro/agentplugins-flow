@@ -140,8 +140,8 @@ export interface ContextMapEntry {
 }
 
 export interface OpResult {
-	op: "read" | "write" | "edit" | "delete" | "bash" | "rg" | "patch";
-	path: string;
+	op: "read" | "write" | "edit" | "delete" | "bash" | "rg" | "patch" | "search" | "fetch";
+	path?: string;
 	status: "ok" | "error" | "skipped" | "pending";
 	content?: string;
 	bytes?: number;
@@ -175,6 +175,10 @@ export interface OpResult {
 	l?: number;
 	affected?: { added: string[]; modified: string[]; deleted: string[] };
 	exact?: boolean;
+	query?: string;
+	url?: string;
+	filePath?: string;
+	contentLength?: number;
 }
 
 export interface ReadOptions {
@@ -211,7 +215,6 @@ export interface FileContextMap {
 export type BatchTheme = {
 	fg: (color: string, text: string) => string;
 	bold: (s: string) => string;
-	bg: (color: string, text: string) => string;
 };
 
 export type BatchToolResult = {

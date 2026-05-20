@@ -413,3 +413,60 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		expect(parsed[0]).toMatchObject({ version: 1, id: "session-1", type: "session" });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Compaction filtering tests
+// ---------------------------------------------------------------------------
+
+describe("buildCore2Snapshot — compaction filtering", () => {
+	it("strips compaction_trigger entries entirely", () => {
+		const entries = [
+			{ type: "compaction_trigger", trigger: "manual" },
+			{ type: "message", message: { role: "user", content: "Keep" } },
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(2); // header + 1 message
+		expect(parsed[1]).toMatchObject({ type: "message", message: { content: "Keep" } });
+		expect(snapshot).not.toContain("compaction_trigger");
+	});
+
+	it("summarizes compaction entries", () => {
+		const entries = [
+			{
+				type: "compaction",
+				summary: "Everything so far.",
+				tokensBefore: 1000,
+				encrypted_content: "HUGE_ENCRYPTED_BLOB",
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(2); // header + 1 message
+		expect(parsed[1]).toMatchObject({
+			type: "message",
+			message: {
+				role: "system",
+				content: "[Context Compacted] Everything so far. (1000 tokens summarized)",
+			},
+		});
+		expect(snapshot).not.toContain("HUGE_ENCRYPTED_BLOB");
+	});
+
+	it("summarizes context_compaction entries with fallback summary", () => {
+		const entries = [
+			{
+				type: "context_compaction",
+				tokensBefore: 500,
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed[1]).toMatchObject({
+			type: "message",
+			message: {
+				content: "[Context Compacted] Parent context was compacted. (500 tokens summarized)",
+			},
+		});
+	});
+});

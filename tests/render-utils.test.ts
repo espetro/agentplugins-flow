@@ -178,8 +178,8 @@ describe('formatCountdownRemaining', () => {
 
 describe('formatTps', () => {
   it('returns placeholder for zero or undefined', () => {
-    expect(formatTps(0)).toBe('-----');
-    expect(formatTps(undefined)).toBe('-----');
+    expect(formatTps(0)).toBe('----- t/s');
+    expect(formatTps(undefined)).toBe('----- t/s');
   });
 
   it('formats values < 100 with one decimal padded to 5', () => {

@@ -26,7 +26,7 @@ import {
 	getLastAssistantText,
 } from "../types/ui.js";
 import { formatBatchOpsSummary } from "../batch/summary.js";
-import { scrambleManager, runScrambleTimer, DynamicScrambleText, getLiveText } from "./scramble/index.js";
+import { scrambleManager, runScrambleTimer, DynamicScrambleText, getLiveText, hashNoise, THIN_BRAILLE_SPARK } from "./scramble/index.js";
 
 // ---------------------------------------------------------------------------
 // Anonymous flow-id counter — prevents scramble-state collisions when multiple
@@ -48,7 +48,7 @@ function getLiveTextWithFallback(id: string): string | undefined {
 	const fallbackId = id.includes("#") ? "collapsed" + id.slice(id.indexOf("#")) : "collapsed";
 	return getLiveText(fallbackId);
 }
-import { formatCompactStats, formatFlowTypeName, lowerFirstWord, truncateChars, tailText, getTruncationBudget, visibleLength, stripAnsi, formatModelLabel, formatContextLabel, formatTps } from "./render-utils.js";
+import { formatCompactStats, formatFlowTypeName, lowerFirstWord, truncateChars, tailText, getTruncationBudget, visibleLength, stripAnsi, formatModelLabel, formatContextLabel, formatTps, italic } from "./render-utils.js";
 
 function shortenPath(p: string): string {
 	const home = os.homedir();
@@ -143,9 +143,236 @@ function renderFlowReport(
 	return lines.map((line) => applyRole("actContent", line, theme, config)).join("\n");
 }
 
+function getFlowStatus(r: SingleResult): string {
+	return r.status ?? (r.exitCode === -1 ? "running" : r.exitCode === 0 ? "done" : "error");
+}
+
+function isFlowStatusComplete(r: SingleResult): boolean {
+	const status = getFlowStatus(r);
+	return status === "done" || status === "error" || status === "skipped";
+}
+
+function isFlowRunning(r: SingleResult): boolean {
+	const status = getFlowStatus(r);
+	return status === "running" || status === "pending";
+}
+
+function isFlowAwaiting(r: SingleResult): boolean {
+	return getFlowStatus(r) === "awaiting";
+}
+
+// ---------------------------------------------------------------------------
+// Grouped audit-loop tree rendering helpers
+// ---------------------------------------------------------------------------
+
+export interface FlowGroup {
+  /** indices into results[] that are builds in this group */
+  buildIndices: number[];
+  /** index into results[] of the capstone audit */
+  auditIndex: number;
+}
+
+export interface GroupDetectionResult {
+  groups: FlowGroup[];
+  /** indices into results[] of standalone flows not in any group */
+  rootIndices: number[];
+}
+
+/**
+ * Detect audit-loop groups.
+ *
+ * When the executor stamps `auditLoopGroupId` on results, grouping is
+ * explicit and works regardless of array layout (no contiguity required).
+ *
+ * When no `auditLoopGroupId` is present (legacy / hand-crafted results),
+ * we fall back to contiguity-based detection: N contiguous builds with
+ * `pingPongMeta` followed immediately by an audit with
+ * `auditParentType === "build"`.
+ */
+export function detectGroups(results: SingleResult[]): GroupDetectionResult {
+  const groups: FlowGroup[] = [];
+  const rootIndices: number[] = [];
+
+  // Phase 1: explicit grouping by auditLoopGroupId
+  const groupMap = new Map<number, { buildIndices: number[]; auditIndex: number }>();
+  const ungroupedIndices: number[] = [];
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.auditLoopGroupId !== undefined) {
+      let g = groupMap.get(r.auditLoopGroupId);
+      if (!g) {
+        g = { buildIndices: [], auditIndex: -1 };
+        groupMap.set(r.auditLoopGroupId, g);
+      }
+      if (r.pingPongMeta) {
+        g.buildIndices.push(i);
+      } else if (r.auditParentType === "build") {
+        g.auditIndex = i;
+      }
+    } else {
+      ungroupedIndices.push(i);
+    }
+  }
+
+  for (const g of groupMap.values()) {
+    if (g.auditIndex !== -1) {
+      groups.push({ buildIndices: g.buildIndices, auditIndex: g.auditIndex });
+    } else {
+      // Orphaned builds with groupId but no audit capstone
+      rootIndices.push(...g.buildIndices);
+    }
+  }
+
+  // Phase 2: legacy fallback on ungrouped results (contiguity-based)
+  let i = 0;
+  while (i < ungroupedIndices.length) {
+    const idx = ungroupedIndices[i];
+    const r = results[idx];
+
+    if (r.pingPongMeta) {
+      const buildIndices: number[] = [];
+      while (i < ungroupedIndices.length && results[ungroupedIndices[i]].pingPongMeta) {
+        buildIndices.push(ungroupedIndices[i]);
+        i++;
+      }
+      if (i < ungroupedIndices.length && results[ungroupedIndices[i]].auditParentType === "build") {
+        groups.push({ buildIndices, auditIndex: ungroupedIndices[i] });
+        i++;
+      } else {
+        rootIndices.push(...buildIndices);
+      }
+    } else if (r.auditParentType === "build" && i > 0 && results[ungroupedIndices[i - 1]].pingPongMeta) {
+      i++; // orphan audit already consumed
+    } else {
+      rootIndices.push(idx);
+      i++;
+    }
+  }
+
+  return { groups, rootIndices };
+}
+
+/**
+ * Get the status icon dot for a result (● ○ ✗ ⊘).
+ */
 function flowStatusIcon(r: SingleResult, theme: { fg: ThemeFg }): string {
-	if (r.exitCode === -1) return theme.fg("warning", "(pending)");
-	return isFlowError(r) ? theme.fg("error", "(error)") : theme.fg("success", "(done)");
+	const status = getFlowStatus(r);
+	switch (status) {
+		case "running":
+		case "pending":
+			return theme.fg("warning", "●");
+		case "awaiting":
+			return theme.fg("muted", "○");
+		case "done":
+			return theme.fg("success", "●");
+		case "error":
+			return theme.fg("error", "✗");
+		case "skipped":
+			return theme.fg("muted", "⊘");
+		default:
+			return theme.fg("muted", "?");
+	}
+}
+
+function hashStrToSeed(s: string): number {
+	let h = 2166136261;
+	for (let i = 0; i < s.length; i++) {
+		h ^= s.charCodeAt(i);
+		h = Math.imul(h, 16777619);
+	}
+	return h >>> 0;
+}
+
+function getScintillatingStatusDot(r: SingleResult, theme: { fg: ThemeFg }, now: number, flowId?: string): string {
+	const status = getFlowStatus(r);
+	switch (status) {
+		case "running":
+		case "pending": {
+			const isPending = status === "pending";
+			const seed = hashStrToSeed(flowId || r.type);
+			const bucketSize = isPending ? 7000 : 5000;
+			const bucket = Math.floor(now / bucketSize);
+			const t = now % bucketSize;
+
+			const burstCount = isPending
+				? 1 + Math.floor(hashNoise(seed, bucket, 0, 0x5a4f) * 2) // 1-2
+				: 2 + Math.floor(hashNoise(seed, bucket, 0, 0x5a4f) * 2); // 2-3
+
+			let cursor = 50;
+			for (let b = 0; b < burstCount; b++) {
+				const gap = isPending
+					? 800 + Math.floor(hashNoise(seed, bucket, b * 4, 0xb8a0) * 1400) // 800-2200ms
+					: 500 + Math.floor(hashNoise(seed, bucket, b * 4, 0xb8a0) * 1300);  // 500-1800ms
+				cursor += gap;
+				const duration = isPending
+					? 80 + Math.floor(hashNoise(seed, bucket, b * 4 + 1, 0xc0de) * 170)  // 80-250ms
+					: 100 + Math.floor(hashNoise(seed, bucket, b * 4 + 1, 0xc0de) * 250); // 100-350ms
+				const burstStart = cursor;
+				const burstEnd = cursor + duration;
+				cursor = burstEnd;
+
+				if (t >= burstStart && t < burstEnd) {
+					const tInBurst = t - burstStart;
+					const tick = 12 + Math.floor(hashNoise(seed, bucket, b * 4 + 3, 0xd1a0) * 10); // 12-22ms per stutter step
+
+					// Vary stutter depth: 3-tick ○●○ or 5-tick ○●○●○ per burst
+					const rawStutterTicks = hashNoise(seed, bucket, b * 4 + 2, 0xe7a1) > 0.5 ? 5 : 3;
+					const stutterLen5 = tick * 5;
+					const onRunMax5 = duration - stutterLen5 - 5;
+					const stutterTicks = (rawStutterTicks === 5 && onRunMax5 >= tick) ? 5 : 3;
+					const stutterLen = tick * stutterTicks;
+
+					const onRunMax = duration - stutterLen - 5;
+					const onRun = Math.max(tick, Math.min(
+						Math.floor(duration * (0.35 + hashNoise(seed, bucket, b * 4 + 2, 0xf1c0) * 0.3)),
+						onRunMax
+					));
+					const cycleLen = onRun + stutterLen;
+					const phaseInCycle = tInBurst % cycleLen;
+					const cycleIdx = Math.floor(tInBurst / cycleLen);
+
+					// Helper: dip ○ with occasional sparkle
+					const dipDot = (dipIndex: number): string => {
+						if (hashNoise(seed, bucket, cycleIdx + dipIndex * 100, 0x5ab0) < 0.05) {
+							const sparkIdx = Math.floor(hashNoise(seed, bucket, cycleIdx + dipIndex * 100, 0x5b1) * THIN_BRAILLE_SPARK.length);
+							return theme.fg("muted", THIN_BRAILLE_SPARK[sparkIdx]);
+						}
+						return theme.fg("muted", "○");
+					};
+
+					if (phaseInCycle < onRun) {
+						// Sustained bright ●
+						return theme.fg("warning", "●");
+					} else if (phaseInCycle < onRun + tick) {
+						return dipDot(0); // ○ dip 1
+					} else if (phaseInCycle < onRun + tick * 2) {
+						return theme.fg("warning", "●"); // ● flash 1
+					} else if (phaseInCycle < onRun + tick * 3) {
+						return dipDot(1); // ○ dip 2
+					} else if (stutterTicks >= 5 && phaseInCycle < onRun + tick * 4) {
+						return theme.fg("warning", "●"); // ● flash 2 (5-tick only)
+					} else if (stutterTicks >= 5 && phaseInCycle < onRun + tick * 5) {
+						return dipDot(2); // ○ dip 3 (5-tick only)
+					} else {
+						// Fallback: shouldn't reach if scheduling is correct
+						return theme.fg("warning", "●");
+					}
+				}
+			}
+			return theme.fg("warning", "●");
+		}
+		case "awaiting":
+			return theme.fg("muted", "○");
+		case "done":
+			return theme.fg("success", "●");
+		case "error":
+			return theme.fg("error", "✗");
+		case "skipped":
+			return theme.fg("muted", "⊘");
+		default:
+			return theme.fg("muted", "?");
+	}
 }
 
 /** Center a label in a fixed-width header using em-dashes. Total width = 20. */
@@ -234,13 +461,13 @@ export function renderFlowResult(
 	let resolvedToolCallId: string | undefined;
 	if (args?.state) {
 		const s = args.state as Record<string, any>;
-		resolvedToolCallId = s.__flowId;
+		resolvedToolCallId = s.__widgetId;
 		if (!resolvedToolCallId) {
 			resolvedToolCallId = (result as any)._toolCallId || (args as any)?.toolCallId || (args as any)?.id;
 			if (!resolvedToolCallId) {
 				resolvedToolCallId = getAnonymousFlowId();
 			}
-			s.__flowId = resolvedToolCallId;
+			s.__widgetId = resolvedToolCallId;
 		}
 	} else {
 		resolvedToolCallId = (result as any)._toolCallId || (args as any)?.toolCallId || (args as any)?.id;
@@ -329,6 +556,174 @@ export function renderFlowResult(
 }
 
 // ---------------------------------------------------------------------------
+// Trace rendering — simplified, no model, inline stats
+// ---------------------------------------------------------------------------
+
+export function renderTraceCall(_args: Record<string, any>, _theme: FlowTheme, _config?: FlowColorConfig): Container | Text {
+	// Trace call frame is invisible — the result frame shows 'trace    <aim>'.
+	// Returning an empty Container avoids a duplicate 'trace' line.
+	return new Container();
+}
+
+export function renderTraceResult(
+	result: { content: Array<{ type: string; text?: string }>; details?: unknown },
+	expanded: boolean,
+	theme: FlowTheme,
+	args?: Record<string, any>,
+	config?: FlowColorConfig,
+): Container | Text {
+	const details = result.details as FlowDetails | undefined;
+	const streamingText = result.content?.[0]?.type === "text" ? result.content[0].text : undefined;
+
+	// Resolve id (same pattern as renderFlowResult)
+	let resolvedToolCallId: string | undefined;
+	if (args?.state) {
+		const s = args.state as Record<string, any>;
+		resolvedToolCallId = s.__widgetId;
+		if (!resolvedToolCallId) {
+			resolvedToolCallId = (result as any)._toolCallId || (args as any)?.toolCallId || (args as any)?.id;
+			if (!resolvedToolCallId) {
+				resolvedToolCallId = getAnonymousFlowId();
+			}
+			s.__widgetId = resolvedToolCallId;
+		}
+	} else {
+		resolvedToolCallId = (result as any)._toolCallId || (args as any)?.toolCallId || (args as any)?.id;
+	}
+
+	const id = resolvedToolCallId || "trace";
+	const now = Date.now();
+	let container: Container | Text = new Container();
+
+	// Get the SingleResult
+	let r: SingleResult | undefined;
+	if (details?.results && details.results.length > 0) {
+		r = details.results[0];
+	}
+
+	const isComplete = r ? isFlowStatusComplete(r) : false;
+
+	// Header line: ● trace · <aim> · <stats>
+	const typeName = formatFlowTypeName("trace");
+	const aimText = r?.aim || r?.intent || streamingText || "trace";
+	const initialDot = r ? flowStatusIcon(r, theme) : theme.fg("success", "●");
+	const dotPlaceholder = stripAnsi(initialDot) + " ";
+
+	const statsParts: string[] = [];
+	if (r) {
+		if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
+			statsParts.push(formatContextLabel(r.usage.contextTokens, r.maxContextTokens));
+		}
+		statsParts.push(formatTps(r.usage.smoothedTps));
+	}
+	const displayStats = statsParts.length > 0 ? " · " + statsParts.join(" · ") : "";
+	const statsPlain = stripAnsi(displayStats);
+
+	const headerPlain = `${dotPlaceholder}${typeName}${statsPlain}`;
+	const headerSegments: HeaderSegment[] = [
+		{ text: dotPlaceholder, style: (_s) => (r ? getScintillatingStatusDot(r, theme, Date.now(), id) : initialDot) + " " },
+		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
+	];
+	if (statsPlain) {
+		headerSegments.push({ text: displayStats, style: (s) => applyRole("stats", s, theme, config) });
+	}
+
+	(container as Container).addChild(new DynamicScrambleText(
+		`${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("stats", displayStats, theme, config)}`,
+		() => {
+			const now2 = Date.now();
+			const result2 = scrambleManager.updateText(id, "header", headerPlain, now2, isComplete, true);
+			return reconstructHeader(result2.content, headerSegments);
+		},
+		true,
+	));
+
+	// Cmd line: └─ cmd ▸ <last tool call>
+	const actTree = "└─";
+	const actLabel = ` cmd ▸ `;
+
+	if (r?.messages && r.messages.length > 0) {
+		const lastTool = getLastToolCall(r.messages);
+		const actStr = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
+		const actFullText = stripAnsi(lowerFirstWord(actStr));
+
+		const actInitial = `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(actFullText), theme, config)}`;
+
+		(container as Container).addChild(new DynamicScrambleText(
+			actInitial,
+			() => {
+				const now2 = Date.now();
+				const freshAct = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
+				const freshPlain = stripAnsi(lowerFirstWord(freshAct));
+				const result2 = scrambleManager.updateAct(id, freshPlain, now2, isComplete, true);
+				const content = result2.content;
+				return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(content), theme, config)}`;
+			},
+			true,
+		));
+	} else {
+		// No messages yet — show awaiting
+		const actInitial = `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("prefixLabel", "[awaiting...]", theme, config)}`;
+
+		(container as Container).addChild(new DynamicScrambleText(
+			actInitial,
+			() => {
+				const now2 = Date.now();
+				const plain = "[awaiting...]";
+				const result2 = scrambleManager.updateAct(id, plain, now2, isComplete, true);
+				const content = result2.content;
+				return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole((r && isFlowAwaiting(r)) ? "prefixLabel" : "actContent", italic(content), theme, config)}`;
+			},
+			true,
+		));
+	}
+
+	// Expanded view: add full output
+	if (expanded) {
+		const flowOutput = streamingText;
+		if (flowOutput) {
+			(container as Container).addChild(new Spacer(1));
+			(container as Container).addChild(new Markdown(flowOutput, 0, 0, getMarkdownTheme()));
+		}
+	}
+
+	// In-place mutation pattern (same as renderFlowResult)
+	if (args?.state) {
+		const s = args.state as Record<string, any>;
+		if (!s.__rootContainer) {
+			if (container instanceof Container) {
+				s.__rootContainer = container;
+			} else {
+				const root = new Container();
+				root.addChild(container);
+				s.__rootContainer = root;
+			}
+		} else if (container !== s.__rootContainer) {
+			const root = s.__rootContainer as Container;
+			root.clear();
+			if (container instanceof Container) {
+				const children = [...(container as Container).children];
+				for (const child of children) {
+					root.addChild(child);
+				}
+			} else {
+				root.addChild(container);
+			}
+			root.invalidate();
+			container = root;
+		}
+	}
+
+	if (isComplete) {
+		scrambleManager.completeFlow(id);
+	}
+
+	runScrambleTimer(args as Record<string, any> | undefined, id);
+
+	return container;
+}
+
+// ---------------------------------------------------------------------------
 // Single flow result
 // ---------------------------------------------------------------------------
 
@@ -346,7 +741,7 @@ export function renderSingleFlowResult(
 	const displayItems = getFlowDisplayItems(r.messages);
 	const flowOutput = getFlowOutput(r.messages);
 	const now = Date.now();
-	const isComplete = r.exitCode !== -1;
+	const isComplete = isFlowStatusComplete(r);
 
 	if (expanded) {
 		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config);
@@ -371,11 +766,14 @@ function renderFlowExpanded(
 	const container = new Container();
 
 	const typeName = formatFlowTypeName(r.type);
-	let header = applyRole("flowName", typeName, theme, config);
+	const initialDot = flowStatusIcon(r, theme);
+	let header = `${initialDot} ${applyRole("flowName", typeName, theme, config)}`;
 	const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";
 	if (errorSegment) header += ` ${theme.fg("error", errorSegment)}`;
-	const plainHeader = typeName + errorSegment;
+	const dotPlaceholder = stripAnsi(initialDot) + ' ';
+	const plainHeader = dotPlaceholder + typeName + errorSegment;
 	const headerSegments: HeaderSegment[] = [
+		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(r, theme, Date.now(), id) + " " },
 		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
 	];
 	if (errorSegment) {
@@ -384,8 +782,9 @@ function renderFlowExpanded(
 	container.addChild(new DynamicScrambleText(
 		header,
 		() => {
-			const result = scrambleManager.updateText(id, 'header', plainHeader, Date.now(), isComplete);
-			return result.isAnimating ? reconstructHeader(result.content, headerSegments) : header;
+			const now = Date.now();
+			const result = scrambleManager.updateText(id, 'header', plainHeader, now, isComplete);
+			return reconstructHeader(result.content, headerSegments);
 		}
 	));
 	if (error && r.errorMessage) {
@@ -507,7 +906,9 @@ function renderFlowExpanded(
 	}
 
 	// Output: animate streaming text; show clean markdown when complete
-	if (!isComplete && streamingText != null) {
+	if (isFlowAwaiting(r)) {
+		container.addChild(new Text(applyRole("prefixLabel", "[awaiting...]", theme, config), 0, 0));
+	} else if (!isComplete && streamingText != null) {
 		const msgBudget = getTruncationBudget(0);
 		const displayMsg = tailText(stripAnsi(streamingText), msgBudget);
 		container.addChild(new DynamicScrambleText(
@@ -580,9 +981,9 @@ function renderFlowCollapsed(
 	const maxWidth = process.stdout.columns ?? 80;
 	const typeName = formatCollapsedFlowHeaderTypeName(r.type);
 	const modelLabel = formatModelLabel(r.model);
-	const headerPrefixLen = visibleLength(typeName) + visibleLength(modelLabel ? `    ${modelLabel} · ` : "    ");
+	const headerPrefixLen = visibleLength(typeName) + visibleLength(modelLabel ? `  ${modelLabel} · ` : "  ");
 
-	const isComplete = r.exitCode !== -1;
+	const isComplete = isFlowStatusComplete(r);
 
 	// Build header stats: ctxLabel · t/s
 	const statsParts: string[] = [];
@@ -602,13 +1003,17 @@ function renderFlowCollapsed(
 			displayStats = displayStats.replace(`${tpsNum} t/s`, `${scrambledTps} t/s`);
 		}
 	}
-	const modelSegment = modelLabel ? `    ${modelLabel} · ` : "    ";
+
+	const modelSegment = modelLabel ? `  ${modelLabel} · ` : "  ";
 	const statsSegment = stripAnsi(displayStats);
 	const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";
-	let header = `${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", displayStats, theme, config)}`;
+	const initialDot = flowStatusIcon(r, theme);
+	let header = `${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", displayStats, theme, config)}`;
 	if (errorSegment) header += ` ${theme.fg("error", errorSegment)}`;
-	const plainHeader = typeName + modelSegment + statsSegment + errorSegment;
+	const dotPlaceholder = stripAnsi(initialDot) + ' ';
+	const plainHeader = dotPlaceholder + typeName + modelSegment + statsSegment + errorSegment;
 	const headerSegments: HeaderSegment[] = [
+		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(r, theme, Date.now(), id) + " " },
 		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
 		{ text: modelSegment, style: (s) => applyRole("modelName", s, theme, config) },
 		{ text: statsSegment, style: (s) => applyRole("stats", s, theme, config) },
@@ -619,8 +1024,9 @@ function renderFlowCollapsed(
 	container.addChild(new DynamicScrambleText(
 		header,
 		() => {
-			const result = scrambleManager.updateText(id, 'header', plainHeader, Date.now(), isComplete, true);
-			return result.isAnimating ? reconstructHeader(result.content, headerSegments) : header;
+			const now = Date.now();
+			const result = scrambleManager.updateText(id, 'header', plainHeader, now, isComplete, true);
+			return reconstructHeader(result.content, headerSegments);
 		},
 		true,
 	));
@@ -631,17 +1037,17 @@ function renderFlowCollapsed(
 		const aimLabel = ` aim ▸ `;
 		const aimPrefix = `${aimTree}${aimLabel}`;
 		const budget = getTruncationBudget(visibleLength(aimPrefix));
-		const displayAim = truncateChars(lowerFirstWord(r.aim), budget);
+		const displayAim = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), budget);
 		container.addChild(new DynamicScrambleText(
-			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole("aimContent", displayAim, theme, config)}`,
+			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(displayAim), theme, config)}`,
 			() => {
 				const now = Date.now();
 				const freshAimLabel = ` aim ▸ `;
 				const freshAimPrefix = `${aimTree}${freshAimLabel}`;
 				const freshBudget = getTruncationBudget(visibleLength(freshAimPrefix));
-				const freshText = truncateChars(lowerFirstWord(r.aim), freshBudget);
+				const freshText = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), freshBudget);
 				const result = scrambleManager.updateAim(id, freshText, now, isComplete, true);
-				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole("aimContent", result.content, theme, config)}`;
+				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(result.content), theme, config)}`;
 			},
 			true,
 		));
@@ -650,69 +1056,90 @@ function renderFlowCollapsed(
 	// act: line (last tool call with count)
 	const lastTool = getLastToolCall(r.messages);
 	const actStr = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
-	const actTree = "├─";
+	const isLite = config?.bodyVerbosity !== "full";
+	const actTree = isLite ? "└─" : "├─";
 	const actLabel = ` cmd ▸ `;
 	const prefixStub = `${actTree}${actLabel}`;
 	const budget = getTruncationBudget(visibleLength(prefixStub));
 	const actFullText = stripAnsi(lowerFirstWord(actStr));
-	const initialActContent = actFullText.length > budget ? tailText(actFullText, budget) : actFullText;
+	const initialActContent = isFlowAwaiting(r) ? "[n/a]" : (actFullText.length > budget ? tailText(actFullText, budget) : actFullText);
 	container.addChild(new DynamicScrambleText(
-		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", initialActContent, theme, config)}`,
+		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(initialActContent), theme, config)}`,
 		() => {
 			const now = Date.now();
-			const displayAct = tailText(actFullText, budget);
-			const actContent = scrambleManager.updateAct(id, displayAct, now, isComplete, true).content;
 			const actLabel = ` cmd ▸ `;
 			const actPrefix = `${actTree}${actLabel}`;
-			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", actContent, theme, config)}`;
+			const freshBudget = getTruncationBudget(visibleLength(actPrefix));
+			const displayAct = isFlowAwaiting(r) ? "[n/a]" : tailText(actFullText, freshBudget);
+			const actContent = scrambleManager.updateAct(id, displayAct, now, isComplete, true).content;
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(actContent), theme, config)}`;
 		},
 		true,
 	));
 
-	// msg: line (last assistant text or streaming)
-	const msgPrefixStub = `└─ msg ▸ `;
-	const msgBudget = getTruncationBudget(visibleLength(msgPrefixStub));
+	// msg: line (last assistant text or streaming) — full mode only
+	if (!isLite) {
+		const msgPrefixStub = `└─ msg ▸ `;
+		const msgBudget = getTruncationBudget(visibleLength(msgPrefixStub));
 
-	let rawMsg: string;
-	let useError = false;
-	const liveMsgText = r.exitCode === -1 ? getLiveTextWithFallback(id) : undefined;
-	if (liveMsgText != null) {
-		rawMsg = stripAnsi(liveMsgText);
-	} else if (r.exitCode === -1 && streamingText != null) {
-		rawMsg = stripAnsi(streamingText);
-	} else if (r.structuredOutput?.summary) {
-		rawMsg = stripAnsi(r.structuredOutput.summary);
-	} else if (flowOutput) {
-		rawMsg = stripAnsi(flowOutput);
-	} else if (error && r.errorMessage) {
-		rawMsg = stripAnsi(r.errorMessage);
-		useError = true;
-	} else {
-		const summary = getFlowSummaryText(r);
-		rawMsg = stripAnsi(summary) || "[n/a]";
-	}
+		let rawMsg: string;
+		let useError = false;
+		if (isFlowAwaiting(r)) {
+			rawMsg = "[awaiting...]";
+		} else if (r.status === "skipped") {
+			rawMsg = "[skipped]";
+		} else {
+			const liveMsgText = isFlowRunning(r) ? getLiveTextWithFallback(id) : undefined;
+			if (liveMsgText != null) {
+				rawMsg = stripAnsi(liveMsgText);
+			} else if (isFlowRunning(r) && streamingText != null) {
+				rawMsg = stripAnsi(streamingText);
+			} else if (r.structuredOutput?.summary) {
+				rawMsg = stripAnsi(r.structuredOutput.summary);
+			} else if (flowOutput) {
+				rawMsg = stripAnsi(flowOutput);
+			} else if (error && r.errorMessage) {
+				rawMsg = stripAnsi(r.errorMessage);
+				useError = true;
+			} else {
+				const summary = getFlowSummaryText(r);
+				rawMsg = stripAnsi(summary) || "[n/a]";
+			}
+		}
 
-	const initialNeedsTail = r.exitCode === -1 || streamingText != null || liveMsgText != null;
-	const initialMsgContent = initialNeedsTail
-		? tailText(rawMsg, msgBudget)
-		: truncateChars(rawMsg, msgBudget);
-	const msgTree = "└─";
-	const msgLabel = ` msg ▸ `;
-	const initialMsgPrefix = `${msgTree}${msgLabel}`;
-	container.addChild(new DynamicScrambleText(
-		`${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", initialMsgContent, theme, config)}`,
-		() => {
-			const now = Date.now();
-			const msgLabel = ` msg ▸ `;
-			const msgPrefix = `${msgTree}${msgLabel}`;
-			const freshRawMsg = (r.exitCode === -1 ? getLiveTextWithFallback(id) : undefined) ?? rawMsg;
-			const needsTail = r.exitCode === -1 || streamingText != null;
-			const displayMsg = needsTail ? tailText(freshRawMsg, msgBudget) : truncateChars(freshRawMsg, msgBudget);
-			const result = scrambleManager.updateMsg(id, displayMsg, now, isComplete, undefined, true);
-			return `${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", result.content, theme, config)}`;
-		},
-		true,
-	));
+		const initialNeedsTail = !isFlowAwaiting(r) && isFlowRunning(r) && (streamingText != null || getLiveTextWithFallback(id) != null);
+		const initialMsgContent = initialNeedsTail
+			? tailText(rawMsg, msgBudget)
+			: truncateChars(rawMsg, msgBudget);
+		const msgTree = "└─";
+		const msgLabel = ` msg ▸ `;
+		const initialMsgPrefix = `${msgTree}${msgLabel}`;
+		container.addChild(new DynamicScrambleText(
+			`${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", italic(initialMsgContent), theme, config)}`,
+			() => {
+				const now = Date.now();
+				const msgLabel = ` msg ▸ `;
+				const msgPrefix = `${msgTree}${msgLabel}`;
+				let freshRawMsg: string;
+				let needsTail: boolean;
+				if (isFlowAwaiting(r)) {
+					freshRawMsg = "[awaiting...]";
+					needsTail = false;
+				} else if (r.status === "skipped") {
+					freshRawMsg = "[skipped]";
+					needsTail = false;
+				} else {
+					const isRunningNow = isFlowRunning(r);
+					freshRawMsg = (isRunningNow ? getLiveTextWithFallback(id) : undefined) ?? rawMsg;
+					needsTail = isRunningNow && (streamingText != null || getLiveTextWithFallback(id) != null);
+				}
+				const displayMsg = needsTail ? tailText(freshRawMsg, msgBudget) : truncateChars(freshRawMsg, msgBudget);
+				const result = scrambleManager.updateMsg(id, displayMsg, now, isComplete, undefined, true);
+				return `${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", italic(result.content), theme, config)}`;
+			},
+			true,
+		));
+		}
 
 	if (isComplete) {
 		scrambleManager.completeFlow(id);
@@ -766,7 +1193,7 @@ function renderMultiFlowExpanded(
 	for (let flowIdx = 0; flowIdx < results.length; flowIdx++) {
 		const r = results[flowIdx];
 		const flowId = `${baseId}#${flowIdx}`;
-		const isComplete = r.exitCode !== -1;
+		const isComplete = isFlowStatusComplete(r);
 		const displayItems = getFlowDisplayItems(r.messages);
 		const flowOutput = getFlowOutput(r.messages);
 		const typeName = formatFlowTypeName(r.type);
@@ -823,7 +1250,9 @@ function renderMultiFlowExpanded(
 		}
 
 		// Output: animate streaming text; show clean markdown when complete
-		if (!isComplete && r.streamingText != null) {
+		if (isFlowAwaiting(r)) {
+			container.addChild(new Text(applyRole("prefixLabel", "[awaiting...]", theme, config), 0, 0));
+		} else if (!isComplete && r.streamingText != null) {
 			const streamingRaw = r.streamingText;
 			const msgBudget = getTruncationBudget(0);
 			const displayMsg = tailText(stripAnsi(streamingRaw), msgBudget);
@@ -889,19 +1318,170 @@ function renderActivityPanel(
 ): Container {
 	const idPrefix = baseId || "panel";
 	const container = new Container();
-	const maxWidth = process.stdout.columns ?? 80;
 	const now = Date.now();
 
-	for (let i = 0; i < results.length; i++) {
-		const r = results[i];
-		const isLast = i === results.length - 1;
-		const flowId = `${idPrefix}#${i}`;
-		const typeName = formatCollapsedFlowHeaderTypeName(r.type);
-		const modelLabel = formatModelLabel(r.model);
-		const headerPrefix = isLast ? "└─" : "├─";
-		const headerPrefixLen = visibleLength(headerPrefix) + 1 + visibleLength(typeName) + visibleLength(modelLabel ? `    ${modelLabel} · ` : "    ");
+	const { groups, rootIndices } = detectGroups(results);
 
-		// Build header stats: ctxLabel · t/s
+	// Build ordered list of "root items" — each is either a standalone flow index
+	// or a group index (rendered in original order).
+	let groupCursor = 0;
+	let rootCursor = 0;
+	const orderedItems: Array<
+		| { kind: "flow"; index: number }
+		| { kind: "group"; groupIndex: number }
+	> = [];
+
+	for (let i = 0; i < results.length; i++) {
+		// Is this index the start of a group?
+		if (groupCursor < groups.length) {
+			const g = groups[groupCursor];
+			if (g.buildIndices[0] === i || g.auditIndex === i) {
+				orderedItems.push({ kind: "group", groupIndex: groupCursor });
+				groupCursor++;
+				continue;
+			}
+		}
+		// Is this a standalone flow?
+		if (rootCursor < rootIndices.length && rootIndices[rootCursor] === i) {
+			orderedItems.push({ kind: "flow", index: i });
+			rootCursor++;
+		}
+	}
+
+	for (let itemIdx = 0; itemIdx < orderedItems.length; itemIdx++) {
+		const item = orderedItems[itemIdx];
+		const isLastRoot = itemIdx === orderedItems.length - 1;
+
+		if (item.kind === "flow") {
+			renderStandaloneFlow(
+				container, results[item.index], item.index,
+				idPrefix, theme, now, config, isLastRoot,
+			);
+		} else {
+			renderGroup(
+				container, groups[item.groupIndex], results,
+				idPrefix, theme, now, config, isLastRoot,
+			);
+		}
+
+		// No blank line separator between root items — compact tree
+	}
+
+	return container;
+}
+
+// ---------------------------------------------------------------------------
+// Standalone flow (rendered at depth 0)
+// ---------------------------------------------------------------------------
+function renderStandaloneFlow(
+	container: Container,
+	r: SingleResult,
+	index: number,
+	idPrefix: string,
+	theme: FlowTheme,
+	now: number,
+	config?: FlowColorConfig,
+	isLastRoot: boolean = false,
+): void {
+	const flowId = `${idPrefix}#${index}`;
+	const headerPrefix = isLastRoot ? "└─" : "├─";
+	const childPrefix = isLastRoot ? "   " : "│  ";
+
+	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config);
+	renderFlowBody(container, r, flowId, childPrefix, theme, now, config);
+
+	if (isFlowStatusComplete(r)) {
+		scrambleManager.completeFlow(flowId);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Group rendering (rendered at depth 1)
+// ---------------------------------------------------------------------------
+function renderGroup(
+	container: Container,
+	group: FlowGroup,
+	results: SingleResult[],
+	idPrefix: string,
+	theme: FlowTheme,
+	now: number,
+	config?: FlowColorConfig,
+	isLastRoot: boolean = false,
+): void {
+	// ─── Group header line ───
+	const headerPrefix = isLastRoot ? "" : "├─";
+	const headerText = `${headerPrefix}${headerPrefix ? ' ' : ''}audit-loop`;
+	container.addChild(new Text(applyRole("treeChars", headerText, theme, config), 0, 0));
+
+	// ─── Build children ───
+	for (let b = 0; b < group.buildIndices.length; b++) {
+		const buildIdx = group.buildIndices[b];
+		const r = results[buildIdx];
+		const flowId = `${idPrefix}#${buildIdx}`;
+		const isLastBuild = b === group.buildIndices.length - 1;
+		// Audit always follows the last build, so every build uses ├─; only audit gets └─
+		const buildHeaderPrefix = isLastRoot ? "├─" : "│  ├─";
+		const buildChildPrefix = isLastRoot ? "│  " : "│  │  "; // All builds: audit follows, tree line continues
+
+		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config);
+		renderFlowBody(container, r, flowId, buildChildPrefix, theme, now, config);
+
+		if (isFlowStatusComplete(r)) {
+			scrambleManager.completeFlow(flowId);
+		}
+
+		// No blank line between builds or before audit capstone — compact tree
+	}
+
+	// ─── Audit capstone ───
+	const auditIdx = group.auditIndex;
+	const auditResult = results[auditIdx];
+	const auditFlowId = `${idPrefix}#${auditIdx}`;
+	const auditHeaderPrefix = isLastRoot ? "└─" : "│  └─";
+	const auditChildPrefix = isLastRoot ? "   " : "│     ";
+
+	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config);
+	renderFlowBody(container, auditResult, auditFlowId, auditChildPrefix, theme, now, config);
+
+	if (isFlowStatusComplete(auditResult)) {
+		scrambleManager.completeFlow(auditFlowId);
+	}
+
+	// No extra spacer — renderActivityPanel handles uniform inter-item spacing
+}
+
+// ---------------------------------------------------------------------------
+// Shared flow rendering helpers
+// ---------------------------------------------------------------------------
+
+function renderFlowHeader(
+	container: Container,
+	r: SingleResult,
+	flowId: string,
+	headerPrefix: string,
+	theme: FlowTheme,
+	now: number,
+	config?: FlowColorConfig,
+): void {
+	const typeName = formatCollapsedFlowHeaderTypeName(r.type);
+	const modelLabel = formatModelLabel(r.model);
+	const isComplete = isFlowStatusComplete(r);
+	const flowComplete = isComplete;
+	const error = isFlowError(r);
+	const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";
+	const initialDot = flowStatusIcon(r, theme);
+	const dotPlaceholder = stripAnsi(initialDot) + ' ';
+
+	let headerLine: string;
+	let plainHeader: string;
+	const headerSegments: HeaderSegment[] = [
+		{ text: headerPrefix + " ", style: (s) => applyRole("treeChars", s, theme, config) },
+		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(r, theme, Date.now(), flowId) + " " },
+		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
+	];
+
+	{
+		// Standard flow: model + stats
 		const statsParts: string[] = [];
 		if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
 			const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
@@ -911,9 +1491,6 @@ function renderActivityPanel(
 		statsParts.push(tpsFormatted);
 		let displayStats = statsParts.join(" · ");
 
-		const flowComplete = r.exitCode !== -1;
-
-		// Flash TPS value when it changes
 		const tpsNum = tpsFormatted.slice(0, -4); // remove " t/s" suffix
 		if (r.usage.smoothedTps && r.usage.smoothedTps > 0) {
 			const scrambledTps = scrambleManager.updateTps(flowId, tpsNum, now, flowComplete, true);
@@ -922,137 +1499,164 @@ function renderActivityPanel(
 			}
 		}
 
-		const error = isFlowError(r);
-
-		const modelSegment = modelLabel ? `    ${modelLabel} · ` : "    ";
-		const statsSegment = stripAnsi(displayStats);
-		const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";
-		let headerLine = `${applyRole("treeChars", headerPrefix, theme, config)} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", displayStats, theme, config)}`;
+		const modelSegment = modelLabel ? ` · ${modelLabel}` : "";
+		const statsSegment = ` · ${displayStats}`;
+		const statsPlain = stripAnsi(statsSegment);
+		headerLine = `${applyRole("treeChars", headerPrefix, theme, config)} ${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", statsSegment, theme, config)}`;
 		if (errorSegment) {
 			headerLine += ` ${theme.fg("error", errorSegment)}`;
 		}
-		const plainHeader = headerPrefix + " " + typeName + modelSegment + statsSegment + errorSegment;
-		const headerSegments: HeaderSegment[] = [
-			{ text: headerPrefix + " ", style: (s) => applyRole("treeChars", s, theme, config) },
-			{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
+		plainHeader = headerPrefix + " " + dotPlaceholder + typeName + modelSegment + statsPlain + errorSegment;
+		headerSegments.push(
 			{ text: modelSegment, style: (s) => applyRole("modelName", s, theme, config) },
-			{ text: statsSegment, style: (s) => applyRole("stats", s, theme, config) },
-		];
-		if (errorSegment) {
-			headerSegments.push({ text: errorSegment, style: (s) => theme.fg("error", s) });
-		}
+			{ text: statsPlain, style: (s) => applyRole("stats", s, theme, config) },
+		);
+	}
+	if (errorSegment) {
+		headerSegments.push({ text: errorSegment, style: (s) => theme.fg("error", s) });
+	}
+	container.addChild(new DynamicScrambleText(
+		headerLine,
+		() => {
+			const now = Date.now();
+			const result = scrambleManager.updateText(flowId, 'header', plainHeader, now, flowComplete, true);
+			return reconstructHeader(result.content, headerSegments);
+		},
+		true,
+	));
+}
+
+function renderFlowBody(
+	container: Container,
+	r: SingleResult,
+	flowId: string,
+	indent: string,
+	theme: FlowTheme,
+	now: number,
+	config?: FlowColorConfig,
+): void {
+	const isComplete = isFlowStatusComplete(r);
+	const flowComplete = isComplete;
+
+	// aim: line — glitch on text change
+	if (r.aim) {
+		const aimTree = indent + "├─";
+		const aimLabel = ` aim ▸ `;
+		const aimPrefix = `${aimTree}${aimLabel}`;
+		const budget = getTruncationBudget(visibleLength(aimPrefix));
+		const displayAim = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), budget);
 		container.addChild(new DynamicScrambleText(
-			headerLine,
-			() => {
-				const result = scrambleManager.updateText(flowId, 'header', plainHeader, Date.now(), flowComplete, true);
-				return result.isAnimating ? reconstructHeader(result.content, headerSegments) : headerLine;
-			},
-			true,
-		));
-
-		// Continuation indent for sub-lines
-		const indent = isLast ? "   " : "│  ";
-
-		// aim: line — glitch on text change
-		if (r.aim) {
-			const aimTree = indent + "├─";
-			const aimLabel = ` aim ▸ `;
-			const aimPrefix = `${aimTree}${aimLabel}`;
-			const budget = getTruncationBudget(visibleLength(aimPrefix));
-			const displayAim = truncateChars(lowerFirstWord(r.aim), budget);
-			container.addChild(new DynamicScrambleText(
-				`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole("aimContent", displayAim, theme, config)}`,
-				() => {
-					const now = Date.now();
-					const freshAimLabel = ` aim ▸ `;
-					const freshAimPrefix = `${aimTree}${freshAimLabel}`;
-					const freshBudget = getTruncationBudget(visibleLength(freshAimPrefix));
-					const freshText = truncateChars(lowerFirstWord(r.aim), freshBudget);
-					const result = scrambleManager.updateAim(flowId, freshText, now, flowComplete, true);
-					return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole("aimContent", result.content, theme, config)}`;
-				},
-				true,
-			));
-		}
-
-		// act: line (last tool call with count)
-		const lastTool = getLastToolCall(r.messages);
-		const actStr = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
-		const actTree = `${indent}├─`;
-		const actLabel = ` cmd ▸ `;
-		const prefixStub = `${actTree}${actLabel}`;
-		const budget = getTruncationBudget(visibleLength(prefixStub));
-		const actFullText = stripAnsi(lowerFirstWord(actStr));
-		const initialActContent = actFullText.length > budget ? tailText(actFullText, budget) : actFullText;
-		container.addChild(new DynamicScrambleText(
-			`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", initialActContent, theme, config)}`,
+			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(displayAim), theme, config)}`,
 			() => {
 				const now = Date.now();
-				const actLabel = ` cmd ▸ `;
-				const actPrefix = `${actTree}${actLabel}`;
-				const freshBudget = getTruncationBudget(visibleLength(actPrefix));
-				const displayAct = tailText(actFullText, freshBudget);
-				const actContent = scrambleManager.updateAct(flowId, displayAct, now, flowComplete, true).content;
-				return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", actContent, theme, config)}`;
+				const freshAimLabel = ` aim ▸ `;
+				const freshAimPrefix = `${aimTree}${freshAimLabel}`;
+				const freshBudget = getTruncationBudget(visibleLength(freshAimPrefix));
+				const freshText = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), freshBudget);
+				const result = scrambleManager.updateAim(flowId, freshText, now, flowComplete, true);
+				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(result.content), theme, config)}`;
 			},
 			true,
 		));
+	}
 
-		// msg: line (live streaming text or last assistant text)
+	// act: line (last tool call with count)
+	const lastTool = getLastToolCall(r.messages);
+	const actStr = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
+	const isLite = config?.bodyVerbosity !== "full";
+	const actTree = isLite ? `${indent}└─` : `${indent}├─`;
+	const actLabel = ` cmd ▸ `;
+	const prefixStub = `${actTree}${actLabel}`;
+	const budget = getTruncationBudget(visibleLength(prefixStub));
+	const actFullText = stripAnsi(lowerFirstWord(actStr));
+	const initialActContent = isFlowAwaiting(r) ? "[n/a]" : (actFullText.length > budget ? tailText(actFullText, budget) : actFullText);
+	container.addChild(new DynamicScrambleText(
+		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(initialActContent), theme, config)}`,
+		() => {
+			const now = Date.now();
+			const actLabel = ` cmd ▸ `;
+			const actPrefix = `${actTree}${actLabel}`;
+			const freshBudget = getTruncationBudget(visibleLength(actPrefix));
+			const displayAct = isFlowAwaiting(r) ? "[n/a]" : tailText(actFullText, freshBudget);
+			const actContent = scrambleManager.updateAct(flowId, displayAct, now, flowComplete, true).content;
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(actContent), theme, config)}`;
+		},
+		true,
+	));
+
+	// msg: line (live streaming text or last assistant text) — full mode only
+	if (!isLite) {
 		const msgTree = `${indent}└─`;
 		const msgLabel = ` msg ▸ `;
 		const msgPrefixStub = `${msgTree}${msgLabel}`;
 		const msgBudget = getTruncationBudget(visibleLength(msgPrefixStub));
-		const liveText = r.exitCode === -1 ? r.streamingText : undefined;
-		const lastText = liveText || getLastAssistantText(r.messages);
 
 		let rawMsg: string;
 		let useError = false;
-		const liveText_ = flowComplete ? undefined : getLiveTextWithFallback(flowId);
-		if (liveText_ != null) {
-			rawMsg = stripAnsi(liveText_);
-		} else if (lastText) {
-			rawMsg = stripAnsi(lastText);
-		} else if (error && r.errorMessage) {
-			rawMsg = stripAnsi(r.errorMessage);
-			useError = true;
+		if (isFlowAwaiting(r)) {
+			rawMsg = "[awaiting...]";
+		} else if (r.status === "skipped") {
+			rawMsg = "[skipped]";
+		} else if (isFlowStatusComplete(r) && !isFlowRunning(r)) {
+			if (isFlowError(r) && r.errorMessage) {
+				rawMsg = stripAnsi(r.errorMessage);
+				useError = true;
+			} else if (r.pingPongMeta && r.pingPongMeta.finalVerdict === "pass") {
+				rawMsg = "[approved]";
+			} else {
+				rawMsg = "[finished]";
+			}
 		} else {
-			rawMsg = "[n/a]";
+			const liveMsgText = isFlowRunning(r) ? getLiveTextWithFallback(flowId) : undefined;
+			if (liveMsgText != null) {
+				rawMsg = stripAnsi(liveMsgText);
+			} else if (isFlowRunning(r) && r.streamingText != null) {
+				rawMsg = stripAnsi(r.streamingText);
+			} else if (r.structuredOutput?.summary) {
+				rawMsg = stripAnsi(r.structuredOutput.summary);
+			} else {
+				const flowOutput = getFlowOutput(r.messages);
+				if (flowOutput) {
+					rawMsg = stripAnsi(flowOutput);
+				} else if (isFlowError(r) && r.errorMessage) {
+					rawMsg = stripAnsi(r.errorMessage);
+					useError = true;
+				} else {
+					const summary = getFlowSummaryText(r);
+					rawMsg = stripAnsi(summary) || "[n/a]";
+				}
+			}
 		}
 
-		const initialNeedsTail = Boolean(liveText_ || liveText || lastText);
+		const initialNeedsTail = !isFlowAwaiting(r) && isFlowRunning(r) && (r.streamingText != null || getLiveTextWithFallback(flowId) != null);
 		const initialDisplayMsg = initialNeedsTail ? tailText(rawMsg, msgBudget) : truncateChars(rawMsg, msgBudget);
 		container.addChild(new DynamicScrambleText(
-			`${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", initialDisplayMsg, theme, config)}`,
+			`${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", italic(initialDisplayMsg), theme, config)}`,
 			() => {
 				const now = Date.now();
 				const msgLabel = ` msg ▸ `;
 				const msgPrefix = `${msgTree}${msgLabel}`;
-				const freshBudget = getTruncationBudget(visibleLength(msgPrefix));
-				const freshRawMsg = flowComplete ? rawMsg : (getLiveTextWithFallback(flowId) ?? rawMsg);
-				const needsTail = Boolean(getLiveTextWithFallback(flowId) || liveText || lastText);
-				const displayMsg = needsTail ? tailText(freshRawMsg, freshBudget) : truncateChars(freshRawMsg, freshBudget);
+				let freshRawMsg: string;
+				let needsTail: boolean;
+				if (isFlowAwaiting(r)) {
+					freshRawMsg = "[awaiting...]";
+					needsTail = false;
+				} else if (r.status === "skipped") {
+					freshRawMsg = "[skipped]";
+					needsTail = false;
+				} else {
+					const isRunningNow = isFlowRunning(r);
+					freshRawMsg = (isRunningNow ? getLiveTextWithFallback(flowId) : undefined) ?? rawMsg;
+					needsTail = isRunningNow && (r.streamingText != null || getLiveTextWithFallback(flowId) != null);
+				}
+				const displayMsg = needsTail ? tailText(freshRawMsg, msgBudget) : truncateChars(freshRawMsg, msgBudget);
 				const result = scrambleManager.updateMsg(flowId, displayMsg, now, flowComplete, undefined, true);
-				return `${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", result.content, theme, config)}`;
+				return `${applyRole("treeChars", msgTree, theme, config)}${applyRole("prefixLabel", msgLabel, theme, config)}${applyRole(useError ? "msgError" : "msgContent", italic(result.content), theme, config)}`;
 			},
 			true,
 		));
-
-		if (flowComplete) {
-			scrambleManager.completeFlow(flowId);
 		}
-
-		// Add blank line separator between flows (with continuation pipe)
-		if (!isLast) {
-			container.addChild(new TruncatedText(applyRole("treeChars", "│", theme, config), 0, 0));
-		}
-	}
-
-	container.addChild(new TruncatedText(applyRole("prefixLabel", "(Ctrl+O to expand tool traces)", theme, config), 0, 0));
-
-	return container;
 }
-
 function renderMultiFlowCollapsed(
 	results: SingleResult[],
 	theme: FlowTheme,

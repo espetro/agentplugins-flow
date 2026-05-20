@@ -14,7 +14,7 @@
 | **Dump Analysis** | [`docs/dump-analysis/VERSION-NOTES.md`](docs/dump-analysis/VERSION-NOTES.md) — version notes for collected artifacts • [`docs/dump-artifacts/ANALYSIS.md`](docs/dump-artifacts/ANALYSIS.md) — cross-reference of dumps against source • [`docs/dump-artifacts/README.md`](docs/dump-artifacts/README.md) — catalog of representative dump files |
 | **Workflows** | [`ci.yml`](.github/workflows/ci.yml) — lint + test on PR/push • [`bump-version.yml`](.github/workflows/bump-version.yml) — version bump → commit → tag → push • [`publish.yml`](.github/workflows/publish.yml) — npm publish with provenance |
 | **Scripts** | [`dev-start.sh`](scripts/dev-start.sh) — start `pi` with `PI_FLOW_DUMP_SNAPSHOT` preset • [`switch.sh`](scripts/switch.sh) — toggle local ↔ remote install • [`sync-dumps.sh`](scripts/sync-dumps.sh) — sync `/tmp` dumps into `dump-artifacts/` • [`example-autonomous-pi.expect`](scripts/example-autonomous-pi.expect) — PTY test harness template • [`./tmp/validate-context-pipeline.js`](./tmp/validate-context-pipeline.js) — synthetic context pipeline validator • [`./tmp/analyze-dump.js`](./tmp/analyze-dump.js) — real dump analyzer |
-| **Key Source** | `src/index.ts` — entrypoint • `src/flow/runner.ts` — flow fork runner and process management • `src/core2/snapshot.ts` — core-2 session snapshot builder (verbatim-preserving) • `src/flow/agents.ts` — bundled flow definitions & loading • `src/batch/index.ts` / `src/batch/` — unified file/batch tools • `src/tui/render.ts` — TUI rendering & animations • `src/snapshot/structured-output.ts` — JSON output validation & enrichment • `src/tools/web-tool.ts` — search & fetch • `src/tools/ask-user.ts` — interactive prompts • `src/config/config.ts` — settings resolution • `src/notify/notify.ts` — desktop/terminal notifications • `src/flow/loop.ts` — endless loop state management (enable, disable, reset, terminate, warp tracking) • `src/flow/loop-command.ts` — `/flow:loop` slash command (enable/disable/status/stop/reset) • `src/flow/auto-warp.ts` — auto-warp trigger when loop budget is exceeded • `src/flow/loop-templates.ts` — loop runtime prompt templates • `src/flow/warp.ts` — warp distillation and session creation |
+| **Key Source** | `src/index.ts` — entrypoint • `src/flow/runner.ts` — flow fork runner and process management • `src/core2/snapshot.ts` — core-2 session snapshot builder (verbatim-preserving) • `src/flow/agents.ts` — bundled flow definitions & loading • `src/batch/index.ts` / `src/batch/` — unified file/batch tools • `src/tui/render.ts` — TUI rendering & animations • `src/snapshot/structured-output.ts` — JSON output validation & enrichment • `src/tools/trace.ts` — replay prior tool results by ID + remark, no model call • `src/tools/web-tool.ts` — search & fetch • `src/tools/ask-user.ts` — interactive prompts • `src/config/config.ts` — settings resolution • `src/notify/notify.ts` — desktop/terminal notifications • `src/flow/loop.ts` — endless loop state management (enable, disable, reset, terminate, warp tracking) • `src/flow/loop-command.ts` — `/flow:loop` slash command (enable/disable/status/stop/reset) • `src/flow/auto-warp.ts` — auto-warp trigger when loop budget is exceeded • `src/flow/loop-templates.ts` — loop runtime prompt templates • `src/flow/warp.ts` — warp distillation and session creation |
 | **Additional Source** | `src/flow/` — flow goal orchestration, continuation, loop, runner, executor, transitions, depth config, session modes, and settings commands • `src/steering/` — steering hint injection, sliding prompts, and tool utilities • `src/types/` — shared TypeScript types for flow execution, output, and UI • `src/batch/` — batch operation engine, rendering, fuzzy editing, symbol extraction • `src/config/` — TUI-safe logging and settings resolution • `src/tui/` — color themes, render utilities, single-select layout, scramble animation • `src/snapshot/` — CLI arg inheritance, runner event parsing • `src/tools/` — timed bash wrapper with deadline awareness • `src/notify/` — notification state tracking |
 
 ## CI/CD
@@ -210,12 +210,13 @@ Agent work is organized into two tiers. **Access is not the boundary — intent 
 
 | Flow | Tools | maxDepth | Tier | Notes |
 |------|-------|----------|------|-------|
-| `scout` | batch, bash, find, grep, ls, web | 0 | lite | Explore, map, discover. Full access for best exploration. The pathfinder. |
+| `trace` | batch, bash | 0 | lite | Fast code verification and snap user Q&A. |
+| `scout` | batch, bash, find, grep, ls, web | 0 | lite | Deep dive architecture mapping and bash execution. |
 | `build` | batch, bash, find, grep, ls, web | 0 | flash | Implement, test, verify, ship. The craftsman. |
-| `audit` | batch, bash, find, grep, ls, web | 0 | flash | Audit security, quality, correctness; fix safe issues. The watchful eye. |
-| `debug` | batch, bash, find, grep, ls, web | 0 | lite | Investigate root cause AND fix the bug. The detective + fixer. |
-| `ideas` | batch, bash, web | 0 | full | Diverge → evaluate → recommend with inherited context. The strategist. |
-| `craft` | batch, bash, find, grep, ls, web | 0 | full | Conservative design, may transition to `[scout]`. The architect. |
+| `audit` | batch, bash, find, grep, ls, web | 0 | flash | Audit security, quality, correctness; provide feedback — no code edits. |
+| `debug` | batch, bash, find, grep, ls, web | 0 | lite | Investigate root cause AND fix the bug. |
+| `ideas` | batch, bash, web | 0 | full | Generate ideas and explore possibilities using inherited context. |
+| `craft` | batch, bash, find, grep, ls, web | 0 | full | Plan structure, break down requirements, and design solutions. |
 
 > **None of these flows have `ask_user`.** If user input is needed, a flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user.
 >
@@ -302,7 +303,7 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_FLOW_MAX_CONCURRENCY` | Override the default maximum concurrent flows (default 4, capped to CPU count). |
 | `PI_FLOW_IDLE_WAKEUP_MS` | Override the idle wake-up threshold in milliseconds (default 600000 = 10 minutes). |
 | `PI_FLOW_TOOL_OPTIMIZE` | Set to `1` to enable tool-call optimization. |
-| `PI_FLOW_SESSION_MODE` | Override the default child-flow session mode (`snap`, `fast`, `default`, `long`, `extreme_long`). |
+| `PI_FLOW_COMPLEXITY` | Override the default child-flow complexity (`snap`, `simple`, `moderate`, `complex`, `intricate`). |
 | `PI_TUI_MODE` | Set to `1` to route `logWarn`/`logError` to a log file instead of stderr, preventing on-screen text flash. Detected automatically when stdout is a TTY or `PI_FLOW_DEPTH > 0`. |
 | `PI_FLOW_LOG_FILE` | Override the default log file path (`$TMPDIR/pi-agent-flow.log`) for TUI-safe logging. Set to `/dev/null` to suppress entirely. |
 | `PI_FLOW_NO_STEERING` | Set to `1` to disable root state steering hint injection. |
@@ -310,6 +311,7 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_FLOW_NO_STRATEGIC_HINT` | Legacy alias for `PI_FLOW_NO_DIRECTIVE` — still honored for backward compatibility. |
 | `PI_FLOW_NO_ANIMATION` | Set to `1` to disable all flow animation (instant render). |
 | `PI_FLOW_NO_GLITCH` | Set to `1` to disable glitch/scramble effect. |
+| `PI_FLOW_BODY_VERBOSITY` | Override collapsed body verbosity (`lite` or `full`). Default: `lite`. |
 | `PI_ASK_USER_TIMEOUT` | Override the ask_user default timeout in seconds (e.g., `60` for 1 minute). |
 | `PI_BATCH_MAX_LINES` | Override the default batch max lines limit (default 3000, Pi spec: 2000). |
 | `PI_BATCH_MAX_BYTES` | Override the default batch max bytes limit (default 102400, Pi spec: 51200). |
@@ -337,9 +339,10 @@ Control runtime behavior via slash commands, CLI flags, environment variables, o
 | `directive` | Alias for `strategic-hint` — controls the same setting. |
 | `animation` | `/flow:settings animation on\|off` — Enable/disable all flow animations. |
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
+| `body` | `/flow:settings body <lite\|full>` — Collapsed body verbosity. `lite` (default) = aim + cmd only; `full` = aim + cmd + msg. |
 | `tool-optimize` | `/flow:settings tool-optimize on\|off` — Enable/disable tool-call optimization. |
 | `structured-output` | `/flow:settings structured-output on\|off` — Enable/disable structured JSON output from flows. |
-| `session-mode` | `/flow:settings session-mode <snap\|fast\|default\|long\|extreme_long>` — Set the child-flow session budget mode. |
+| `complexity` | `/flow:settings complexity <snap\|simple\|moderate\|complex\|intricate>` — Set the child-flow complexity (budget + review). |
 | `max-concurrency` | `/flow:settings max-concurrency <n>` — Set maximum concurrent flows. |
 | `ask-user` | `/flow:settings ask-user enabled <on\|off>` — Enable/disable ask_user countdown. `/flow:settings ask-user timeout <seconds>` — Set auto-dismiss timeout. |
 | `reset` | `/flow:settings reset` — Reset all settings to their defaults. |
@@ -387,7 +390,8 @@ When the same setting is defined in multiple places, the value is resolved as:
     },
     "toolOptimize": false,
     "structuredOutput": true,
-    "sessionMode": "default",
+    "bodyVerbosity": "lite",
+    "complexity": "moderate",
     "maxConcurrency": 3
   }
 }

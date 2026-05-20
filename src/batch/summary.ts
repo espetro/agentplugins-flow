@@ -32,8 +32,20 @@ function extractBatchOps(args: Record<string, unknown>): Array<{ o: string; p: s
 		});
 }
 
-function formatOpSummary(op: { o: string; p: string; e?: unknown[]; c?: string; s?: number; l?: number; q?: string; t?: string }): string {
-	const shortPath = shortenPath(op.p);
+function extractWebOps(args: Record<string, unknown>): Array<{ o: string; q?: string; u?: string }> {
+	const rawOps = (args as any)?.w;
+	if (!Array.isArray(rawOps)) return [];
+	return rawOps
+		.filter((op: unknown): op is Record<string, unknown> => !!op && typeof op === "object")
+		.map((op: Record<string, unknown>) => ({
+			o: String(op.o ?? "?"),
+			q: typeof op.q === "string" ? op.q : undefined,
+			u: typeof op.u === "string" ? op.u : undefined,
+		}));
+}
+
+function formatOpSummary(op: { o: string; p?: string; e?: unknown[]; c?: string; s?: number; l?: number; q?: string; t?: string; u?: string }): string {
+	const shortPath = op.p ? shortenPath(op.p) : "";
 	switch (op.o) {
 		case "bash": {
 			const cmd = op.c ?? "?";
@@ -65,24 +77,30 @@ function formatOpSummary(op: { o: string; p: string; e?: unknown[]; c?: string; 
 			return `rg ${op.q ?? "?"} in ${shortPath}${op.t ? ` (${op.t})` : ""}`;
 		case "delete":
 			return `delete ${shortPath}`;
+		case "search":
+			return `search: "${op.q ?? ""}"`;
+		case "fetch":
+			return `fetch: ${op.u ?? ""}`;
 		case "patch": {
 			const patchPreview = op.c ? ` (${op.c.split("\n")[0]}…)` : "";
 			return `patch${patchPreview}`;
 		}
 		default:
-			return `${op.o} ${shortPath}`;
+			return op.p ? `${op.o} ${shortPath}` : `${op.o}`;
 	}
 }
 
 export function formatBatchOpsSummary(args: Record<string, unknown>): string {
 	const ops = extractBatchOps(args);
-	if (ops.length === 0) return "batch (empty)";
+	const webOps = extractWebOps(args);
+	const allOps = [...ops, ...webOps];
+	if (allOps.length === 0) return "batch (empty)";
 
 	const parts: string[] = [];
 	let prev = "";
 	let count = 0;
 
-	for (const op of ops) {
+	for (const op of allOps) {
 		const summary = formatOpSummary(op);
 		if (summary === prev) {
 			count++;

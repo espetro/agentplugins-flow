@@ -1,7 +1,7 @@
 ---
 name: ideas
 description: Generate ideas explore possibilities think creatively using inherited context as background
-tools: batch bash find grep ls web
+tools: batch bash find grep ls
 maxDepth: 0
 tier: full
 ---

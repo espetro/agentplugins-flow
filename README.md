@@ -17,7 +17,7 @@ Long conversations bloat context, duplicate tool calls, and bury signal in noise
 
 Four concrete benefits:
 
-1. **Avoid duplicate tool calls** — flow states no longer re-run the same `read`, `grep`, or `bash` probes the parent already performed.
+1. **Avoid duplicate tool calls** — flow states no longer re-run the same `read`, `grep`, or `bash` commands the parent already performed.
 2. **Prevent context bloat** — long transcripts with repeated file listings stay out of the main conversation thread.
 3. **Eliminate unnecessary noise** — the parent sees only structured results instead of pages of intermediate reasoning.
 4. **Preserve focus** — each flow stays locked on its intent because it isn't distracted by unrelated earlier messages.

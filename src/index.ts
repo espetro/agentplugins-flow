@@ -6,11 +6,12 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
 import { discoverFlows, getFlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
+import { DEFAULT_FLOW_COLORS } from "./tui/flow-colors.js";
 import { terminateAllChildGroups } from "./flow/runner.js";
 import { executeFlows } from "./flow/executor.js";
 import { appendDirectiveOnce, resetDirectiveTracker, configureDirective, stripDirectivesFromMessages, type FlowHintContext } from "./steering/tool-utils.js";
@@ -25,8 +26,8 @@ import {
 	createBatchReadTool,
 	BashProcessTracker,
 	createBatchBashPollTool,
+	runBashWithLimits,
 } from "./batch/index.js";
-import { createWebTool } from "./tools/web-tool.js";
 import { createAskUserTool } from "./tools/ask-user.js";
 import {
 	stripSteeringHintText,
@@ -38,6 +39,11 @@ import { registerFlow, getGoal, getGoalForSession, getLoop, recordFlowCompletion
 import * as sessionRegistry from "./flow/session-registry.js";
 
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
+import { createTraceTool } from "./tools/trace.js";
+import { executeOperations } from "./batch/execute.js";
+import { runWebOps } from "./tools/web-ops.js";
+import type { FileOpInput } from "./batch/constants.js";
+import type { WebOpInput } from "./tools/web-ops.js";
 import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
@@ -63,55 +69,105 @@ import {
 // Tool parameter schema
 // ---------------------------------------------------------------------------
 
+const BatchDispatchOp = Type.Object({
+	tool: Type.Literal("batch"),
+	ops: Type.Array(Type.Object({
+		o: Type.String(),
+		p: Type.String(),
+		c: Type.Optional(Type.String()),
+		e: Type.Optional(Type.Array(Type.Object({ f: Type.String(), r: Type.String() }))),
+		s: Type.Optional(Type.Number()),
+		l: Type.Optional(Type.Union([Type.Number(), Type.Boolean()])),
+		i: Type.Optional(Type.Union([Type.String(), Type.Boolean()])),
+		t: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+		h: Type.Optional(Type.String()),
+		q: Type.Optional(Type.String()),
+		n: Type.Optional(Type.Number()),
+		u: Type.Optional(Type.Number()),
+	}), { description: "File/batch operations matching the batch tool schema." }),
+});
+const BashDispatchOp = Type.Object({
+	tool: Type.Literal("bash"),
+	ops: Type.Array(Type.Object({
+		c: Type.String({ description: "Shell command" }),
+		h: Type.Optional(Type.String({ description: "Working directory override" })),
+		t: Type.Optional(Type.Number({ description: "Timeout in ms" })),
+	}), { description: "Bash command objects." }),
+});
+const WebDispatchOp = Type.Object({
+	tool: Type.Literal("web"),
+	ops: Type.Array(Type.Object({
+		o: Type.Union([Type.Literal("search"), Type.Literal("fetch")]),
+		q: Type.Optional(Type.String()),
+		u: Type.Optional(Type.String()),
+		f: Type.Optional(Type.String()),
+	}), { description: "Web operations matching the web tool schema." }),
+});
+const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
+	description: "Pre-dispatch tool call with discriminated tool type and typed ops array.",
+});
+
 const FlowItem = Type.Object({
 	type: Type.String({
-		description: "Flow type. Matching is case-insensitive. Must correspond to an available flow name such as scout, debug, build, craft, audit, or ideas.",
+		description: "Flow type (scout, debug, build, craft, audit, ideas).",
 	}),
 	intent: Type.String({
-		description: "Specific mission for this flow — target concrete files, folders, or code patterns. Be precise in final outcome/expectation and common sense, but avoid over-specifying implementation details or assuming current state that may have shifted.",
+		description: "Detailed mission for this flow.",
 	}),
 	aim: Type.String({
-		description: "Extreme short intent — one sentence, 5-7 words, headline-style summary of what this flow does.",
+		description: "Short (5-7 words) headline summary.",
 	}),
 	acceptance: Type.Optional(
-		Type.String({ description: "Short success criteria — one sentence stating what done looks like." }),
+		Type.String({ description: "Success criteria for the task." }),
 	),
 	cwd: Type.Optional(
-		Type.String({ description: "Working directory override for this flow." }),
+		Type.String({ description: "Working directory override." }),
 	),
-	sessionMode: Type.Optional(
-		Type.Union([
-			Type.Literal("snap"),
-			Type.Literal("fast"),
-			Type.Literal("default"),
-			Type.Literal("long"),
-			Type.Literal("extreme_long"),
-		], {
-			description: "Agent session budget for this flow: snap=90s, fast=300s, default=600s, long=900s, extreme_long=1200s. Use long or extreme_long only when the work genuinely needs the larger budget.",
+	complexity: Type.Union([
+		Type.Literal("snap"),
+		Type.Literal("simple"),
+		Type.Literal("moderate"),
+		Type.Literal("complex"),
+		Type.Literal("intricate"),
+	], {
+		description: "Budget/Audit level: snap (120s), simple (300s), moderate (600s), complex (900s), intricate (1200s).",
+	}),
+	dispatch: Type.Optional(
+		Type.Array(DispatchOpSchema, {
+			description: "Tools to run before the flow starts (results are injected into the prompt).",
 		}),
 	),
+
 }, {
 	title: "FlowTask",
-	description: "A single flow task — must be a JSON object, NOT a string.",
+	description: "A single flow task object.",
 });
 
 const FlowParams = Type.Object({
 	flow: Type.Array(FlowItem, {
-		description:
-			"Array of flow tasks to execute. Each runs in its own forked process. " +
-			"Optional sessionMode selects the flow state budget: fast=300s, default=600s, long=900s, extreme_long=1200s.",
-		examples: [
-			{ type: "scout", intent: "Map auth module files and trace JWT validation path", aim: "Map auth and trace JWT" },
-			{ type: "audit", intent: "Audit input validation and SQL injection risks in user routes", aim: "Audit user route security" },
-		],
+		description: "Specialized flow tasks to dive into.",
 		minItems: 1,
 	}),
 	confirmProjectFlows: Type.Optional(
 		Type.Boolean({
-			description: "Whether to prompt the user before running project-local flows. Default: true.",
+			description: "Prompt before running local flows. Default: true.",
 			default: true,
 		}),
 	),
+	auditLoop: Type.Optional(
+		Type.Number({
+			description: "Override audit cycles (0-3).",
+			default: 0,
+			minimum: 0,
+			maximum: 3,
+		}),
+	),
+}, {
+	title: "FlowToolParams",
+	description: "The root object MUST contain a 'flow' array. Never flatten fields to the root.",
+	examples: [{
+		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate" }],
+	}],
 });
 
 const inheritedCliArgs = getInheritedCliArgs();
@@ -119,6 +175,58 @@ const inheritedCliArgs = getInheritedCliArgs();
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+async function executeDispatchOps(
+	dispatch: Array<
+		| { tool: "batch"; ops: FileOpInput[] }
+		| { tool: "bash"; ops: Array<{ c: string; h?: string; t?: number }> }
+		| { tool: "web"; ops: WebOpInput[] }
+	>,
+	cwd: string,
+	ctx: ExtensionContext,
+	signal?: AbortSignal,
+): Promise<string> {
+	const parts: string[] = [];
+	let toolCallIndex = 0;
+
+	for (const group of dispatch) {
+		if (signal?.aborted) break;
+		const toolCallId = `pre_dispatch_${group.tool}_${toolCallIndex++}`;
+
+		try {
+			if (group.tool === "batch") {
+				// Separate file ops from bash ops
+				const fileOps = group.ops.filter((op) => op.o !== "bash");
+				const bashOps = group.ops.filter((op) => op.o === "bash");
+
+				if (fileOps.length > 0) {
+					const fileOutput = await executeOperations(fileOps as FileOpInput[], cwd, signal, { includeLimitWarnings: true });
+					parts.push(`### batch (file ops)\n\ntool_call_id: ${toolCallId}\n\n${fileOutput.contentText}`);
+				}
+
+				if (bashOps.length > 0) {
+					for (const op of bashOps) {
+						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? 30000, signal);
+						parts.push(`### bash [${op.i ?? "auto"}] exit ${exitCode}\n\ntool_call_id: ${toolCallId}\n\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
+					}
+				}
+			} else if (group.tool === "bash") {
+				for (const cmd of group.ops) {
+					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? 30000, signal);
+					parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\n--- bash exit ${exitCode} ---\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
+				}
+			} else if (group.tool === "web") {
+				const webOutput = await runWebOps({ op: group.ops }, ctx, signal);
+				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${webOutput.content[0].text}`);
+			}
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			parts.push(`### ${group.tool} (error)\n\ntool_call_id: ${toolCallId}\n\nPre-dispatch failed: ${message}`);
+		}
+	}
+
+	return parts.join("\n\n---\n\n");
+}
 
 function makeFlowDetailsFactory(projectFlowsDir: string | null) {
 	return (results: SingleResult[]): FlowDetails => ({
@@ -169,8 +277,8 @@ export default function (pi: ExtensionAPI) {
 		description: "Maximum number of flows to execute in parallel (default: 4).",
 		type: "string",
 	});
-	pi.registerFlag("flow-session-mode", {
-		description: "Default child-flow session mode: snap (90s), fast (300s), default (600s), long (900s), or extreme_long (1200s).",
+	pi.registerFlag("flow-complexity", {
+		description: "Default child-flow complexity: snap (120s no review), simple (300s no review), moderate (600s 1x audit), complex (900s 2x audit), or intricate (1200s 3x audit).",
 		type: "string",
 	});
 
@@ -196,6 +304,14 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.registerFlag("no-glitch", {
 		description: "Disable glitch/scramble effect.",
+		type: "boolean",
+	});
+	pi.registerFlag("body-lite", {
+		description: "Use lite collapsed body mode (aim + cmd only).",
+		type: "boolean",
+	});
+	pi.registerFlag("body-full", {
+		description: "Use full collapsed body mode (aim + cmd + msg).",
 		type: "boolean",
 	});
 
@@ -233,16 +349,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Register tools based on depth.
-		// Depth 0 (main root state): only batch_read — no bash ops, only reads + flow tool.
+		// Depth 0 (main root state): batch_read + no bash ops.
 		// Depth > 0 (child flows): batch (with bash), batch_bash_poll — they need bash ops.
-		// Children use batch for reads (which includes read ops), so batch_read is NOT
-		// registered for depth > 0 to avoid confusion and keep the tool set minimal.
+		// batch_read is registered at all depths for trace and read-only child operations.
 		// The bashProcessTracker is shared between the batch tool (launches bash ops)
 		// and the batch_bash_poll tool (checks on pending bash ops).
 		if (resolved.toolOptimize) {
-			if (currentDepth === 0) {
-				pi.registerTool(createBatchReadTool());
-			} else {
+			pi.registerTool(createBatchReadTool());
+			if (currentDepth > 0) {
 				bashTracker = new BashProcessTracker();
 				pi.registerTool(createBatchTool(bashTracker, resolved.toolOptimize));
 				pi.registerTool(createBatchBashPollTool(bashTracker));
@@ -295,6 +409,36 @@ export default function (pi: ExtensionAPI) {
 
 		if (augmented === undefined) return undefined;
 		return { systemPrompt: augmented };
+	});
+
+	// Compaction: inject flow context into the summarization prompt.
+	pi.on("session_before_compact", async (event, ctx) => {
+		const goal = getGoal(ctx.cwd);
+		if (!goal) return undefined;
+
+		const completed = goal.completedFlows.slice(-3);
+		const flowSummary = completed.length > 0
+			? `\nRecently completed flows:\n${completed.map(f => `- [${f.type}] ${f.aim}`).join("\n")}`
+			: "";
+
+		const injection = `\n\n[Flow Context]\nCurrent Goal: ${goal.objective}${goal.acceptance ? `\nAcceptance: ${goal.acceptance}` : ""}${flowSummary}\nMaintain this goal and status in the summary.`;
+
+		return { prompt: (event.prompt || "") + injection };
+	});
+
+	// Compaction: re-anchor flow context after summarization.
+	pi.on("session_compact", async (_event, ctx) => {
+		const goal = getGoal(ctx.cwd);
+		if (!goal) return;
+
+		// Send a non-displaying message to re-anchor the agent to its goal.
+		pi.sendMessage(
+			{
+				content: `[Flow Re-anchor] Compaction completed. Current Goal: ${goal.objective}. Continue execution.`,
+				display: false,
+			},
+			{ triggerTurn: false }
+		);
 	});
 
 	// Steering hint: insert as a separate system message immediately
@@ -366,33 +510,27 @@ export default function (pi: ExtensionAPI) {
 		return result;
 	});
 
-	// Register the web tool
-	pi.registerTool(createWebTool());
-
 	// Register the ask_user tool
 	pi.registerTool(createAskUserTool());
+
+	// Register the trace tool (available at all depths — spawns a lightweight child reflection flow)
+	pi.registerTool(createTraceTool({
+		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
+		getDepthConfig: () => depthConfig,
+	}));
 
 	// Register the flow tool
 	if (canTransition) {
 		pi.registerTool({
 			name: "flow",
 			label: "Flow",
-			promptSnippet: "Transition to specialized agent flows running in isolated forked processes",
+			promptSnippet: "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.",
 			promptGuidelines: [
-				"Use `flow` when the task requires skills beyond your current context (scout, debug, build, craft, audit, ideas).",
-				"Combine multiple related tasks into a single `flow` call with an array of flow items.",
-				"Always provide a concrete intent, aim, and optional acceptance criteria.",
+				"Combine multiple tasks into a single `flow` array call.",
+				"Each task requires `type`, `intent`, `aim`, and `complexity`.",
+				"All tasks MUST be nested inside the `flow` array.",
 			],
-			description: [
-				"If you cannot answer from your current context, you are forbidden from guessing.",
-				"You MUST enter to the following flow states, with tool call method.",
-				"",
-				"Flow states are isolated π processes with forked session snapshots. They run in parallel.",
-				'Invoke: { "flow": [{ "type": "scout", "intent": "...", "aim": "...", "sessionMode": "default" }, ...] }',
-				"Session modes: fast=300s, default=600s, long=900s, extreme_long=1200s. Use long or extreme_long only when the work genuinely needs the larger budget.",
-				"States: scout, debug, build, craft, audit, ideas.",
-				"Custom states configs in (create if not exists): .md files in .pi/agents/ or ~/.pi/agent/agents/.",
-			].join("\n"),
+			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",
 			parameters: FlowParams,
 
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
@@ -435,7 +573,15 @@ export default function (pi: ExtensionAPI) {
 					acceptance: activeGoal.acceptance,
 					flowCount: activeGoal.completedFlows.length,
 					maxFlows: activeGoal.maxFlows,
+					completedFlows: activeGoal.completedFlows.map(f => ({ type: f.type, aim: f.aim })),
 				} : undefined;
+
+				const preDispatchResults = await Promise.all(
+					params.flow.map(async (f: Static<typeof FlowItem>) => {
+						if (!f.dispatch || f.dispatch.length === 0) return undefined;
+						return executeDispatchOps(f.dispatch, f.cwd ?? ctx.cwd, ctx, signal);
+					})
+				);
 
 				const result = await executeFlows(
 					{
@@ -450,7 +596,7 @@ export default function (pi: ExtensionAPI) {
 						loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
 						maxConcurrency: resolved.maxConcurrency,
 
-						defaultSessionMode: resolved.defaultSessionMode,
+						defaultComplexity: resolved.defaultComplexity,
 						signal,
 						onUpdate,
 						makeDetails,
@@ -474,8 +620,17 @@ export default function (pi: ExtensionAPI) {
 							}
 						},
 					},
-					params.flow.map((f: any) => ({ type: f.type, intent: f.intent, aim: f.aim, acceptance: f.acceptance, cwd: f.cwd, sessionMode: f.sessionMode })),
+					params.flow.map((f: Static<typeof FlowItem>, i: number) => ({
+						type: f.type,
+						intent: f.intent,
+						aim: f.aim,
+						acceptance: f.acceptance,
+						cwd: f.cwd,
+						complexity: f.complexity,
+						preDispatchResults: preDispatchResults[i],
+					})),
 					toolCallId,
+					params.auditLoop ?? 0,
 				);
 
 				if (result.failed) {
@@ -488,7 +643,7 @@ export default function (pi: ExtensionAPI) {
 					details: result.details,
 					failed: result.failed,
 					_toolCallId: toolCallId,
-				} as any;
+				};
 				// Build adaptive directive context from flow results
 				const hintContext: FlowHintContext = { hasNotDone: false, statusVague: false };
 				if (result.details?.results && Array.isArray(result.details.results)) {
@@ -505,9 +660,9 @@ export default function (pi: ExtensionAPI) {
 				return flowToolResult;
 			},
 
-			renderCall: (args, theme) => renderFlowCall(args, theme),
+			renderCall: (args, theme) => renderFlowCall(args, theme, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: resolved?.bodyVerbosity }),
 			renderResult: (result, { expanded }, theme, args) =>
-				renderFlowResult(result, expanded, theme, args),
+				renderFlowResult(result, expanded, theme, args, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: resolved?.bodyVerbosity }),
 		});
 	}
 
@@ -530,6 +685,7 @@ export default function (pi: ExtensionAPI) {
 					steeringStrategicHint: resolved.steeringStrategicHint,
 					animationEnabled: resolved.animationEnabled,
 					animationGlitch: resolved.animationGlitch,
+					bodyVerbosity: resolved.bodyVerbosity,
 				}
 			: {
 					toolOptimize: true,
@@ -540,6 +696,7 @@ export default function (pi: ExtensionAPI) {
 					steeringStrategicHint: true,
 					animationEnabled: true,
 					animationGlitch: true,
+					bodyVerbosity: "lite",
 				},
 	};
 

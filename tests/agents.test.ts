@@ -120,19 +120,19 @@ describe("discoverFlows", () => {
 		writeFlow(
 			agentsDir,
 			"build.md",
-			`---\nname: build\ndescription: Build\ntools: batch, bash find, grep ls, web\n---\nBuild prompt.`,
+			`---\nname: build\ndescription: Build\ntools: batch, bash find, grep ls\n---\nBuild prompt.`,
 		);
 
 		const result = discoverFlows(tmpDir, "project");
 		const build = result.flows.find((f) => f.name === "build");
-		expect(build?.tools).toEqual(["batch", "bash", "find", "grep", "ls", "web"]);
+		expect(build?.tools).toEqual(["batch", "bash", "find", "grep", "ls"]);
 	});
 
 	it("parses bundled build flow tools without duplication", () => {
 		const result = discoverFlows(tmpDir, "bundled");
 		const build = result.flows.find((f) => f.name === "build");
 		expect(build).toBeDefined();
-		expect(build?.tools).toEqual(["batch", "bash", "find", "grep", "ls", "web"]);
+		expect(build?.tools).toEqual(["batch", "bash", "find", "grep", "ls"]);
 	});
 });
 

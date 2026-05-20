@@ -2,7 +2,7 @@
  * /flow:settings slash command registration.
  *
  * Subcommands: steering, strategic-hint, animation, glitch,
- * tool-optimize, structured-output, session-mode, max-concurrency, reset
+ * tool-optimize, structured-output, complexity, max-concurrency, reset
  *
  * When called with no arguments, opens an interactive TUI overlay.
  */
@@ -269,7 +269,7 @@ function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSelectIte
 	const animationEnabled = settings.animation?.enabled ?? true;
 	const toolOptimize = settings.toolOptimize ?? true;
 	const structuredOutput = settings.structuredOutput ?? true;
-	const sessionMode = settings.sessionMode ?? "default";
+	const complexity = settings.complexity ?? "moderate";
 	const askUserEnabled = settings.askUser?.enabled ?? false;
 	const askUserTimeout = settings.askUser?.timeout ?? 300;
 
@@ -303,8 +303,8 @@ function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSelectIte
 		{
 			value: "session",
 			label: "Session Settings",
-			description: `mode: ${sessionMode}`,
-			tooltip: "Set default session mode and concurrency",
+			description: `complexity: ${complexity} · body: ${settings.bodyVerbosity ?? "lite"}`,
+			tooltip: "Set default complexity and concurrency",
 		},
 		{
 			value: "ask-user",
@@ -406,11 +406,18 @@ function getToolItems(settings: FlowSettings): SettingItem[] {
 function getSessionItems(settings: FlowSettings): SettingItem[] {
 	return [
 		{
-			id: "sessionMode",
-			label: "session-mode",
-			description: "Session safety mode",
-			currentValue: settings.sessionMode ?? "default",
-			values: ["fast", "default", "long", "extreme_long"],
+			id: "bodyVerbosity",
+			label: "body",
+			description: "Collapsed result verbosity",
+			currentValue: settings.bodyVerbosity ?? "lite",
+			values: ["lite", "full"],
+		},
+		{
+			id: "complexity",
+			label: "complexity",
+			description: "Complexity sets budget + review",
+			currentValue: settings.complexity ?? "moderate",
+			values: ["snap", "simple", "moderate", "complex", "intricate"],
 		},
 		{
 			id: "maxConcurrency",
@@ -625,7 +632,7 @@ function buildModelPickerSubmenu(
 export function setupSettingsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("flow:settings", {
 		description:
-			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, session-mode <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, reset. Call with no args for interactive TUI.",
+			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, reset. Call with no args for interactive TUI.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (!ctx.ui) {
 				return;
@@ -784,8 +791,8 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 								} else if (currentCategory === "session") {
 									items = getSessionItems(currentSettings);
 									handleChange = (id, value) => {
-										if (id === "sessionMode") {
-											writeFlowSetting(cwd, "sessionMode", value);
+										if (id === "complexity") {
+											writeFlowSetting(cwd, "complexity", value);
 										} else if (id === "maxConcurrency") {
 											writeFlowSetting(cwd, "maxConcurrency", Number(value));
 										}
@@ -969,17 +976,26 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 					ctx.ui.notify?.(`structuredOutput = ${parsed}`, "info");
 					break;
 				}
-				case "session-mode": {
-					const validModes = ["snap", "fast", "default", "long", "extreme_long"] as const;
+							case "body": {
+								if (args[0] === "lite" || args[0] === "full") {
+									writeFlowSetting(cwd, "bodyVerbosity", args[0]);
+									ctx.ui.notify?.(`bodyVerbosity = ${args[0]}`, "info");
+								} else {
+									ctx.ui.notify?.("Usage: /flow:settings body <lite|full>", "error");
+								}
+								break;
+							}
+				case "complexity": {
+					const validModes = ["snap", "simple", "moderate", "complex", "intricate"] as const;
 					if (!validModes.includes(value as any)) {
 						ctx.ui.notify?.(
-							"Usage: /flow:settings session-mode <snap|fast|default|long|extreme_long>",
+							"Usage: /flow:settings complexity <snap|simple|moderate|complex|intricate>",
 							"error",
 						);
 						return;
 					}
-					writeFlowSetting(cwd, "sessionMode", value);
-					ctx.ui.notify?.(`sessionMode = ${value}`, "info");
+					writeFlowSetting(cwd, "complexity", value);
+					ctx.ui.notify?.(`complexity = ${value}`, "info");
 					break;
 				}
 				case "max-concurrency": {
@@ -1026,9 +1042,10 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 					const currentSettings = loadFlowSettings(cwd);
 					const loop = getLoop(cwd);
 					const lines = [
+									`bodyVerbosity: ${currentSettings.bodyVerbosity ?? "lite"}`,
 						`toolOptimize: ${currentSettings.toolOptimize ?? true}`,
 						`structuredOutput: ${currentSettings.structuredOutput ?? true}`,
-						`sessionMode: ${currentSettings.sessionMode ?? "default"}`,
+						`complexity: ${currentSettings.complexity ?? "moderate"}`,
 						`maxConcurrency: ${currentSettings.maxConcurrency ?? 4}`,
 						`steering.enabled: ${currentSettings.steering?.enabled ?? true}`,
 						`steering.strategicHint: ${currentSettings.steering?.strategicHint ?? true}`,
@@ -1051,7 +1068,7 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 				}
 				default: {
 					ctx.ui.notify?.(
-						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|session-mode|max-concurrency|ask-user|reset|show}",
+						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|reset|show}",
 						"error",
 					);
 				}

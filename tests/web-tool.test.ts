@@ -1,14 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+	looksLikeUrlPrompt,
+	looksLikeWebSearchPrompt,
+} from "../src/tools/web-ops.js";
 import {
 	extractSnippet,
 	trimLargeDocument,
 	stripMarkdownFormatting,
 	urlToHash,
 	validateFetchUrl,
-	looksLikeUrlPrompt,
-	looksLikeWebSearchPrompt,
 	htmlToMarkdown,
-} from "../src/tools/web-tool.js";
+	runWebOps,
+} from "../src/tools/web-ops.js";
 
 describe("extractSnippet", () => {
 	it("returns trimmed text up to max length", () => {
@@ -437,5 +440,73 @@ describe("looksLikeWebSearchPrompt additional patterns", () => {
 
 	it("detects 'google when'", () => {
 		expect(looksLikeWebSearchPrompt("google when was Node released")).toBe(true);
+	});
+});
+
+describe("runWebOps", () => {
+	const mockCtx = { sessionManager: { getSessionDir: () => "/tmp/test-session" } };
+
+	beforeEach(() => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((url: string) => {
+				if (url.includes("search.brave.com")) {
+					return Promise.resolve({
+						ok: true,
+						headers: { get: () => null },
+						text: () =>
+							Promise.resolve(
+								`<html><body><a data-testid="result-title-a" href="https://example.com">Test Result</a><div data-type="web">Test snippet</div></body></html>`,
+							),
+					});
+				}
+				return Promise.reject(new Error("Network disabled in tests"));
+			}),
+		);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("handles per-op errors without aborting the array", async () => {
+		const result = await runWebOps(
+			{
+				op: [
+					{ o: "fetch", u: "not-a-url" },
+					{ o: "search", q: "test query" },
+				],
+			},
+			mockCtx,
+		);
+
+		expect(result.details.ops).toHaveLength(2);
+		expect(result.details.ops[0]).toMatchObject({
+			op: "fetch",
+			status: "error",
+			error: expect.stringContaining("Invalid URL"),
+		});
+		expect(result.details.ops[1]).toMatchObject({
+			op: "search",
+			q: "test query",
+			status: "ok",
+		});
+		expect(result.content[0].text).toContain("Invalid URL");
+		expect(result.content[0].text).toContain("Test Result");
+	});
+
+	it("rejects unknown web operations", async () => {
+		const result = await runWebOps(
+			{
+				op: [{ o: "unknown" as any, q: "test" }],
+			},
+			mockCtx,
+		);
+
+		expect(result.details.ops[0]).toMatchObject({
+			op: "unknown",
+			status: "error",
+			error: "Unknown web operation: unknown",
+		});
 	});
 });

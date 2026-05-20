@@ -107,6 +107,7 @@ export function setupContinuation(pi: ExtensionAPI): void {
         pi.sendMessage({ content: prompt, display: false }, { triggerTurn: true });
       }
     }, WAKEUP_CHECK_INTERVAL_MS);
+    _wakeupInterval.unref();
   }
 
   pi.on("turn_end", async (event: TurnEndEvent) => {

@@ -1,7 +1,7 @@
 ---
 name: debug
 description: Hypothesis driven root cause analysis minimal instrumentation targeted fix verify
-tools: batch bash find grep ls web
+tools: batch bash find grep ls
 maxDepth: 0
 tier: lite
 ---

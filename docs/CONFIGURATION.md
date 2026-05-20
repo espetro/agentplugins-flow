@@ -63,7 +63,7 @@ Set flow runtime defaults under `flowSettings`:
 ```json
 {
   "flowSettings": {
-    "sessionMode": "default",
+    "complexity": "moderate",
     "maxConcurrency": 4,
     "toolOptimize": true,
     "structuredOutput": true
@@ -73,7 +73,7 @@ Set flow runtime defaults under `flowSettings`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sessionMode` | `default` | Default child-flow session mode: `snap`, `fast`, `default`, `long`, or `extreme_long` |
+| `complexity` | `moderate` | Default child-flow complexity: `snap`, `simple`, `moderate`, `complex`, or `intricate` |
 | `maxConcurrency` | `4` | Maximum parallel flows (capped to CPU count) |
 | `toolOptimize` | `true` | Use unified `batch`/`batch_read` instead of separate read/write/edit |
 | `structuredOutput` | `true` | Inject JSON structured-output instructions into flow prompts |
@@ -90,7 +90,7 @@ Set flow runtime defaults under `flowSettings`:
 | `--flow-lite-model [model]` | Override the lite-tier model | — |
 | `--flow-flash-model [model]` | Override the flash-tier model | — |
 | `--flow-full-model [model]` | Override the full-tier model | — |
-| `--flow-session-mode [mode]` | Default child-flow session mode | `default` |
+| `--flow-complexity [mode]` | Default child-flow complexity | `moderate` |
 | `--flow-max-concurrency [n]` | Maximum parallel flows | `4` |
 | `--tool-optimize` | Use unified `batch`/`batch_read` | `true` |
 | `--no-steering` | Disable root state steering hint injection | — |
@@ -109,7 +109,7 @@ Set flow runtime defaults under `flowSettings`:
 | `PI_FLOW_STACK` | JSON array of ancestor flow names |
 | `PI_FLOW_PREVENT_CYCLES` | `"1"` or `"0"` |
 | `PI_FLOW_TOOL_OPTIMIZE` | `"1"` or `"0"` (overrides default tool optimization) |
-| `PI_FLOW_SESSION_MODE` | Default child-flow session mode: `snap`, `fast`, `default`, `long`, or `extreme_long` |
+| `PI_FLOW_COMPLEXITY` | Default child-flow complexity: `snap`, `simple`, `moderate`, `complex`, or `intricate` |
 | `PI_FLOW_MAX_CONCURRENCY` | Maximum parallel flows |
 | `PI_FLOW_SPAWN_COMMAND` | Override the spawn command for exotic runtime environments (e.g. bundled with pkg/nexe) |
 | `PI_FLOW_DEADLINE_MS` | Absolute deadline timestamp (ms) propagated to child flows for timeout awareness |
@@ -153,7 +153,7 @@ Set flow runtime defaults under `flowSettings`:
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
 | `tool-optimize` | `/flow:settings tool-optimize on\|off` — Enable/disable tool-call optimization. |
 | `structured-output` | `/flow:settings structured-output on\|off` — Enable/disable structured JSON output from flows. |
-| `session-mode` | `/flow:settings session-mode <snap\|fast\|default\|long\|extreme_long>` — Set the child-flow session budget mode. |
+| `complexity` | `/flow:settings complexity <snap\|simple\|moderate\|complex\|intricate>` — Set the child-flow complexity (budget + review). |
 | `max-concurrency` | `/flow:settings max-concurrency <n>` — Set maximum concurrent flows. |
 | `ask-user` | `/flow:settings ask-user enabled <on\|off>` — Enable/disable ask_user countdown. `/flow:settings ask-user timeout <seconds>` — Set auto-dismiss timeout. |
 | `reset` | `/flow:settings reset` — Reset all settings to their defaults. |
@@ -183,7 +183,7 @@ Set flow runtime defaults under `flowSettings`:
     },
     "toolOptimize": false,
     "structuredOutput": true,
-    "sessionMode": "default",
+    "complexity": "moderate",
     "maxConcurrency": 3
   }
 }

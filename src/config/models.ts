@@ -4,7 +4,12 @@ import * as path from "node:path";
 
 function getModelsJsonPath(): string {
 	const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
-	return path.join(agentDir, "models.json");
+	const defaultPath = path.join(agentDir, "models.json");
+	if (!process.env["PI_CODING_AGENT_DIR"] && !fs.existsSync(defaultPath)) {
+		const rootPath = path.join(os.homedir(), ".pi", "models.json");
+		if (fs.existsSync(rootPath)) return rootPath;
+	}
+	return defaultPath;
 }
 
 function readSettingsJson(filePath: string): Record<string, unknown> | null {

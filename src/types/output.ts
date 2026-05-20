@@ -74,6 +74,12 @@ export interface FlowStructuredOutput {
 	reasoning: string[];
 	/** Observations, warnings, caveats, side notes. */
 	notes: string[];
+	/** Audit verdict: pass or rework. Used by the audit flow to signal whether the audited work needs rework. */
+	verdict?: "pass" | "rework";
+	/** Audit feedback: required when verdict is 'rework'; optional free-form text when 'pass'. Contains specific actionable findings. */
+	feedback?: string;
+	/** Per-build verdicts when an audit reviews multiple builds. Each entry maps a build index to its verdict and optional feedback. */
+	builds?: Array<{ index: number; verdict: "pass" | "rework"; feedback?: string }>;
 	/** Escape hatch for flow-specific data (audit findings, debug root cause, etc.). */
 	extensions?: Record<string, unknown>;
 }

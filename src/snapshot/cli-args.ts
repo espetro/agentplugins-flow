@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseAgentSessionMode, type AgentSessionMode } from "../flow/session-mode.js";
+import { parseComplexity, type Complexity } from "../flow/complexity.js";
 
 function looksLikeExplicitRelativePath(value: string): boolean {
 	return (
@@ -49,7 +49,7 @@ interface ParsedFlowCliArgs {
 	fallbackNoTools: boolean;
 	flowModelConfig?: string;
 	flowMode?: string;
-	flowSessionMode?: AgentSessionMode;
+	flowComplexity?: Complexity;
 	tieredModels: {
 		lite?: string;
 		flash?: string;
@@ -87,7 +87,7 @@ export function parseFlowCliArgs(argv: string[]): ParsedFlowCliArgs {
 	let fallbackNoTools = false;
 	let flowModelConfig: string | undefined;
 	let flowMode: string | undefined;
-	let flowSessionMode: AgentSessionMode | undefined;
+	let flowComplexity: Complexity | undefined;
 	let tieredLiteModel: string | undefined;
 	let tieredFlashModel: string | undefined;
 	let tieredFullModel: string | undefined;
@@ -129,9 +129,9 @@ export function parseFlowCliArgs(argv: string[]): ParsedFlowCliArgs {
 			continue;
 		}
 
-		if (flagName === "--flow-session-mode") {
+		if (flagName === "--flow-complexity") {
 			const [value, skip] = getValue();
-			flowSessionMode = parseAgentSessionMode(value);
+			flowComplexity = parseComplexity(value);
 			i += skip;
 			continue;
 		}
@@ -346,7 +346,7 @@ export function parseFlowCliArgs(argv: string[]): ParsedFlowCliArgs {
 		fallbackNoTools,
 		flowModelConfig,
 		flowMode,
-		flowSessionMode,
+		flowComplexity,
 		tieredModels: {
 			lite: tieredLiteModel,
 			flash: tieredFlashModel,

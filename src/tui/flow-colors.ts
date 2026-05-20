@@ -12,6 +12,7 @@ export type FlowColorRole =
   | "msgError";
 
 export interface FlowColorConfig {
+  bodyVerbosity?: "lite" | "full";
   flowName: { color: string; bold?: boolean; italic?: boolean };
   modelName: { color: string; bold?: boolean; italic?: boolean };
   stats: { color: string; bold?: boolean; italic?: boolean };
@@ -27,8 +28,8 @@ export type FlowTheme = { fg: (color: string, text: string) => string; bold: (s:
 
 export const DEFAULT_FLOW_COLORS: FlowColorConfig = {
   flowName: { color: "accent", bold: true },
-  modelName: { color: "muted" },
-  stats: { color: "muted" },
+  modelName: { color: "muted", italic: true },
+  stats: { color: "muted", italic: true },
   treeChars: { color: "dim" },
   prefixLabel: { color: "muted" },
   aimContent: { color: "dim", italic: true },

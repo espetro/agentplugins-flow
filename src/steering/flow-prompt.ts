@@ -8,7 +8,7 @@ import type { FlowConfig } from "../flow/agents.js";
 import {
 	looksLikeUrlPrompt,
 	looksLikeWebSearchPrompt,
-} from "../tools/web-tool.js";
+} from "../tools/web-ops.js";
 import type { FlowDepthConfig } from "../flow/depth.js";
 
 // ---------------------------------------------------------------------------
@@ -26,8 +26,8 @@ export interface BeforeAgentStartEvent {
 
 export function computeActiveTools(optimize: boolean): string[] {
 	return optimize
-		? ["batch_read", "flow", "web", "ask_user"]
-		: ["read", "write", "edit", "batch", "bash", "flow", "web", "ask_user"];
+		? ["batch_read", "flow", "trace", "ask_user"]
+		: ["read", "write", "edit", "batch", "bash", "flow", "trace", "ask_user"];
 }
 
 // ---------------------------------------------------------------------------
@@ -60,12 +60,12 @@ export function buildBeforeAgentStartPrompt(
 	const webInstructions: string[] = [];
 	if (hasUrl) {
 		webInstructions.push(
-			"The prompt includes a URL. Use web tool with op: { o: 'fetch', u: '<url>' } before answering about that page.",
+			"The prompt includes a URL. Use batch with w: [{ o: 'fetch', u: '<url>' }] before answering about that page.",
 		);
 	}
 	if (likelyNeedsWeb) {
 		webInstructions.push(
-			"The prompt likely needs external or current info. Prefer web tool with op: [{ o: 'search', q: '<query>' }] over memory.",
+			"The prompt likely needs external or current info. Prefer batch with w: [{ o: 'search', q: '<query>' }] over memory.",
 		);
 	}
 
@@ -100,43 +100,24 @@ export function buildBeforeAgentStartPrompt(
 		systemPrompt +
 		`\n\n## Flows
 
-Before acting, reason about whether to dive into a flow:
+Reason about whether to dive into a flow before acting:
+- [trace] Fast code verification / snap user Q&A.
+- [scout] Deep dive / architecture mapping / bash execution.
+- [build] Implementation / verification (already clear).
 
 ${flowList}
 
-Multiple independent flows? Batch them into one call:
+Batch independent flows: { "flow": [{ "type": "scout", "intent": "..." }, { "type": "audit", "intent": "..." }] }
 
-{ "flow": [{ "type": "scout", "intent": "Map auth and trace JWT", "aim": "Map auth and trace JWT" }, { "type": "audit", "intent": "Audit user route security", "aim": "Audit user route security" }] }
-Two separate calls — wastes time
-
-Each call renders as:
-
-• flow [scout] — Map the full directory structure...
-• flow [audit] — Audit security and quality, then fix safe issues...
-
-Each flow returns a structured result:
-
-flow [type] accomplished
-
-summary — what happened and current status
-files — files touched, read, or referenced
-actions — what was done, with results and evidence
-commands — commands or tool calls executed (auto-extracted from tool history)
-notDone — incomplete items, skipped checks, blockers, and reasons
-nextSteps — specific recommended follow-up or next flow
-reasoning — key hypotheses or inferences made during the flow
-notes — observations, warnings, caveats
+Results: summary, files, actions, commands, notDone, nextSteps, reasoning, notes.
 
 ### Guards
 - Depth: ${currentDepth}/${maxDepth} | Cycles: ${preventCycles ? "blocked" : "off"} | Stack: ${ancestorFlowStack.length > 0 ? ancestorFlowStack.join(" -> ") : "(root)"}
 
 ### Shared Context
-Child flows fork your session automatically:
-
-- They receive a sanitized snapshot of your conversation — files read, commands run, prior flow results.
-- Prior flow tool results are **compressed** into compact summaries (files touched, commands used, status).
-- Write 'intent' as a **forward-looking mission** — reference what the child already sees, don't re-describe it.
-- Set inheritContext: false in a custom flow's front-matter to start with a **clean slate** (no inherited context).
+Child flows fork a sanitized snapshot (files read, commands, compressed results).
+Write 'intent' as a **forward-looking mission**.
+Set inheritContext: false for a clean slate.
 `
 	);
 }

@@ -23,7 +23,7 @@ import {
 import { extractStructuredOutput, generateCommandsFromHistory } from "../snapshot/structured-output.js";
 import { setLiveText } from '../tui/scramble/index.js';
 import { logWarn, logError } from '../config/log.js';
-import { DEFAULT_AGENT_SESSION_MODE, getAgentSessionTimeoutMs, type AgentSessionMode } from "./session-mode.js";
+import { DEFAULT_COMPLEXITY, getComplexityTimeoutMs, type Complexity } from "./complexity.js";
 import type { GoalContext } from "./types.js";
 
 function getEnvInt(name: string, fallback: number): number {
@@ -307,14 +307,16 @@ function buildFlowArgs(
 	maxDepth: number = 0,
 	toolOptimize: boolean = false,
 	structuredOutput: boolean = true,
-	sessionMode: AgentSessionMode = DEFAULT_AGENT_SESSION_MODE,
-	sessionTimeoutMs: number = getAgentSessionTimeoutMs(sessionMode),
+	complexity: Complexity = DEFAULT_COMPLEXITY,
+	sessionTimeoutMs: number = getComplexityTimeoutMs(complexity),
 	acceptance?: string,
 	discoveredFlows: FlowConfig[] = [],
 	parentFlowStack: string[] = [],
 	preventCycles: boolean = true,
 	goalContext?: GoalContext,
 	cwd?: string,
+	tools?: string[],
+	preDispatchResults?: string,
 ): string[] {
 	const args: string[] = [
 		"--mode",
@@ -331,8 +333,8 @@ function buildFlowArgs(
 	if (inheritedCliArgs.flowModelConfig) {
 		args.push("--flow-model-config", inheritedCliArgs.flowModelConfig);
 	}
-	if (inheritedCliArgs.flowSessionMode) {
-		args.push("--flow-session-mode", inheritedCliArgs.flowSessionMode);
+	if (inheritedCliArgs.flowComplexity) {
+		args.push("--flow-complexity", inheritedCliArgs.flowComplexity);
 	}
 	if (inheritedCliArgs.tieredModels?.lite) {
 		args.push("--flow-lite-model", inheritedCliArgs.tieredModels.lite);
@@ -368,21 +370,22 @@ function buildFlowArgs(
 	// The flow's frontmatter `tools` field overrides this default when set.
 	const defaultTools = toolOptimize
 		? canTransition
-			? ["batch", "bash", "flow", "web"]
-			: ["batch", "bash", "web"]
+			? ["batch", "bash", "flow"]
+			: ["batch", "bash"]
 		: canTransition
-			? ["batch", "bash", "flow", "web"]
-			: ["batch", "bash", "web"];
+			? ["batch", "bash", "flow"]
+			: ["batch", "bash"];
 	// getOptimizedTools replaces legacy read/write/edit with batch when
 	// toolOptimize is on. If the flow's frontmatter explicitly lists "flow",
 	// it passes through; otherwise the defaultTools above handle it.
-	const optimizedTools = getOptimizedTools(flow.tools, toolOptimize) ?? defaultTools;
+	const sourceTools = tools ?? flow.tools;
+	const optimizedTools = getOptimizedTools(sourceTools, toolOptimize) ?? defaultTools;
 	let harnessTools = optimizedTools;
 	// If the flow explicitly listed only tools that got filtered (e.g. just
 	// "web"), or the remaining tools lack essentials (batch/bash), fall back
 	// to defaultTools so the child isn't orphaned.
 	const hasEssentials = harnessTools.some(
-		(t) => t === "batch" || t === "bash",
+		(t) => t === "batch" || t === "bash" || t === "batch_read",
 	);
 	if (harnessTools.length === 0 || !hasEssentials) {
 		harnessTools = [...new Set([...defaultTools, ...harnessTools])];
@@ -421,9 +424,13 @@ function buildFlowArgs(
 
 	// Append structured output instructions when enabled (unless opted out via env).
 	if (structuredOutput && directiveBody && !skipStructuredDirective) {
+		const isAudit = flow.name.toLowerCase() === "audit";
+		const auditFields = isAudit
+			? " Also include `verdict: 'pass' | 'rework'` and `feedback: string` (required when verdict is 'rework', optional when 'pass'). When auditing multiple builds, also include `builds: { index: number, verdict: 'pass' | 'rework', feedback?: string }[]` with per-build verdicts."
+			: "";
 		directiveBody +=
 			`\n\n## Structured Output\n` +
-			`End with a \`\`\`json block: { version, status, summary, files[], actions[], notDone[], nextSteps[], reasoning[], notes[] }. Commands auto-extracted; omit empty arrays. Keep snippets under 300 chars. List at most 10 items per array.`;
+			`End with a \`\`\`json block: { version, status, summary, files[], actions[], notDone[], nextSteps[], reasoning[], notes[]${isAudit ? ", verdict, feedback, builds" : ""} }. Commands auto-extracted; omit empty arrays. Keep snippets under 300 chars. List at most 10 items per array.${auditFields}`;
 	}
 
 	const directive = directiveBody
@@ -439,12 +446,21 @@ function buildFlowArgs(
 		`</mission>`;
 
 	// Phase 4.5: Flow goal context (optional)
-	const goalSection = goalContext?.objective
-		? `\n\n<flow>\nObjective: ${goalContext.objective}\n${goalContext.acceptance ? `Acceptance: ${goalContext.acceptance}\n` : ""}${goalContext.maxFlows !== undefined ? `Progress: ${goalContext.flowCount ?? 0}/${goalContext.maxFlows} flows used.\n` : ""}</flow>`
+	let goalSection = "";
+	if (goalContext?.objective) {
+		const completedSummary = goalContext.completedFlows?.length
+			? `\nCompleted steps:\n${goalContext.completedFlows.map(f => `- [${f.type}] ${f.aim}`).join("\n")}`
+			: "";
+		goalSection = `\n\n<flow>\nObjective: ${goalContext.objective}\n${goalContext.acceptance ? `Acceptance: ${goalContext.acceptance}\n` : ""}${goalContext.maxFlows !== undefined ? `Progress: ${goalContext.flowCount ?? 0}/${goalContext.maxFlows} flows used.\n` : ""}${completedSummary}\n</flow>`;
+	}
+
+	// Phase 4.6: Pre-dispatch results (optional)
+	const preDispatchSection = preDispatchResults
+		? `\n\n<pre-dispatch>\nThe following tool calls were already executed on your behalf. Continue your exploration from there, or synthesize the outputs, pick up necessary tool id to keep.\n\n${preDispatchResults}\n</pre-dispatch>`
 		: "";
 
 	// -p must immediately precede the prompt so the CLI parser binds it correctly
-	args.push("-p", `${contextSeal}${activation}${directive}${mission}${goalSection}`);
+	args.push("-p", `${contextSeal}${activation}${directive}${mission}${goalSection}${preDispatchSection}`);
 	return args;
 }
 
@@ -489,12 +505,16 @@ export interface RunFlowOptions {
 	onUpdate?: FlowUpdateCallback;
 	/** Factory to wrap results into FlowDetails. */
 	makeDetails: (results: SingleResult[]) => FlowDetails;
-	/** Child-flow session mode. Default: "default" (600s). */
-	sessionMode?: AgentSessionMode;
+	/** Complexity sets budget + review. Default: moderate. */
+	complexity?: Complexity;
 	/** Optional flow goal context to inject into the child prompt. */
 	goalContext?: GoalContext;
 	/** Optional max context token budget to record in the result. */
 	maxContextTokens?: number;
+	/** Optional explicit tool list. Overrides the flow's frontmatter `tools`. */
+	tools?: string[];
+	/** Pre-dispatch results — injected into the child's activation prompt. */
+	preDispatchResults?: string;
 }
 
 /**
@@ -548,8 +568,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		};
 	}
 
-	const effectiveSessionMode = opts.sessionMode ?? DEFAULT_AGENT_SESSION_MODE;
-	const effectiveTimeout = getAgentSessionTimeoutMs(effectiveSessionMode);
+	const effectiveComplexity = opts.complexity ?? DEFAULT_COMPLEXITY;
+	const effectiveTimeout = getComplexityTimeoutMs(effectiveComplexity);
 	const startedAtMs = Date.now();
 	const deadlineAtMs = effectiveTimeout > 0 ? startedAtMs + effectiveTimeout : undefined;
 	const resolvedModel = model ?? flow.model ?? inheritedCliArgs.fallbackModel;
@@ -639,7 +659,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			maxDepth,
 			toolOptimize,
 			structuredOutput,
-			effectiveSessionMode,
+			effectiveComplexity,
 			effectiveTimeout,
 			opts.acceptance,
 			flows,
@@ -647,6 +667,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			preventCycles,
 			opts.goalContext,
 			cwd,
+			opts.tools,
+			opts.preDispatchResults,
 		);
 
 		// Dump verbatim child payload to disk for debugging when requested.
@@ -714,7 +736,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			const { command, prefixArgs } = resolveFlowSpawn();
 			if (dumpPath) {
 				const distDir = path.dirname(new URL(import.meta.url).pathname);
-				const srcDir = path.join(distDir, "..", "src");
+				const srcDir = path.join(distDir, "..", "..", "src");
 				const checkStale = (srcFile: string, distFile: string) => {
 					try {
 						const srcMtime = fs.statSync(path.join(srcDir, srcFile)).mtimeMs;
@@ -722,7 +744,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 						return srcMtime > distMtime;
 					} catch { return false; }
 				};
-				if (checkStale("snapshot.ts", "snapshot.js") || checkStale("flow.ts", "flow.js")) {
+				if (checkStale("core2/snapshot.ts", "../core2/snapshot.js") || checkStale("flow/runner.ts", "runner.js")) {
 					logWarn("⚠️ Source newer than dist — run npm run build for accurate dumps");
 				}
 			}

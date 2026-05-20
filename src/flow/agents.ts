@@ -269,7 +269,10 @@ export function discoverFlows(cwd: string, scope: FlowScope): FlowDiscoveryResul
 	const projectFlowsDir = findNearestProjectFlowsDir(cwd);
 
 	const bundledFlows = scope === "user" || scope === "project" ? [] : loadFlowsFromDir(bundledFlowsDir, "bundled");
-	const userFlows = scope === "project" || scope === "bundled" ? [] : loadFlowsFromDir(userFlowsDir, "user");
+	const userFlows = scope === "project" || scope === "bundled" ? [] : [
+		...loadFlowsFromDir(userFlowsDir, "user"),
+		...loadFlowsFromDir(path.join(os.homedir(), ".pi", "agents"), "user"),
+	];
 	const projectFlows = scope === "user" || scope === "bundled" || !projectFlowsDir ? [] : loadFlowsFromDir(projectFlowsDir, "project");
 
 	if (scope === "bundled") {

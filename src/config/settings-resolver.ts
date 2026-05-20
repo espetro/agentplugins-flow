@@ -22,11 +22,10 @@ import { getInheritedCliArgs } from "../snapshot/cli-args.js";
 import { parseBoolean, FLOW_TOOL_OPTIMIZE_ENV } from "../flow/depth.js";
 import { logWarn } from "./log.js";
 import {
-	DEFAULT_AGENT_SESSION_MODE,
-	PI_FLOW_SESSION_MODE_ENV,
-	parseAgentSessionMode,
-	type AgentSessionMode,
-} from "../flow/session-mode.js";
+	DEFAULT_COMPLEXITY,
+	parseComplexity,
+	type Complexity,
+} from "../flow/complexity.js";
 
 // Environment variables for steering and animation
 const PI_FLOW_NO_STEERING_ENV = "PI_FLOW_NO_STEERING";
@@ -42,7 +41,7 @@ export interface ResolvedSettings {
 	toolOptimize: boolean;
 	structuredOutput: boolean;
 	maxConcurrency: number;
-	defaultSessionMode: AgentSessionMode;
+	defaultComplexity: Complexity;
 	steeringEnabled: boolean;
 	steeringCustomPrompt: string | undefined;
 	steeringStrategicHint: boolean;
@@ -53,6 +52,7 @@ export interface ResolvedSettings {
 	discoveredFlows: FlowConfig[];
 	loadedFlowModelConfigs: LoadedFlowModelConfigs;
 	activeRuntimeFlowMode: string | undefined;
+	bodyVerbosity: "lite" | "full";
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ export function resolveSettings(
 	let toolOptimize = true;
 	let structuredOutput = true;
 	let maxConcurrency = 4;
-	let defaultSessionMode: AgentSessionMode = DEFAULT_AGENT_SESSION_MODE;
+	let defaultComplexity: Complexity = DEFAULT_COMPLEXITY;
 	let steeringEnabled = true;
 	let steeringCustomPrompt: string | undefined = undefined;
 	let steeringStrategicHint = true;
@@ -168,27 +168,27 @@ export function resolveSettings(
 		if (parsed !== null) toolOptimize = parsed;
 	}
 
-	// Resolve sessionMode: CLI flag > env var > settings.json > default
-	defaultSessionMode = flowSettings.sessionMode ?? DEFAULT_AGENT_SESSION_MODE;
-	const envSessionModeRaw = process.env[PI_FLOW_SESSION_MODE_ENV];
-	if (envSessionModeRaw !== undefined) {
-		const envSessionMode = parseAgentSessionMode(envSessionModeRaw);
-		if (envSessionMode !== undefined) {
-			defaultSessionMode = envSessionMode;
+	// Resolve complexity: CLI flag > env var > settings.json > default
+	defaultComplexity = flowSettings.complexity ?? DEFAULT_COMPLEXITY;
+	const envComplexityRaw = process.env.PI_FLOW_COMPLEXITY;
+	if (envComplexityRaw !== undefined) {
+		const envComplexity = parseComplexity(envComplexityRaw);
+		if (envComplexity !== undefined) {
+			defaultComplexity = envComplexity;
 		} else {
-			logWarn(`[pi-agent-flow] Ignoring invalid ${PI_FLOW_SESSION_MODE_ENV}="${envSessionModeRaw}". Expected snap, fast, default, long, or extreme_long.`);
+			logWarn(`[pi-agent-flow] Ignoring invalid PI_FLOW_COMPLEXITY="${envComplexityRaw}". Expected snap, simple, moderate, complex, or intricate.`);
 		}
 	}
-	const cliSessionModeRaw = pi.getFlag("flow-session-mode");
-	if (typeof cliSessionModeRaw === "string") {
-		const cliSessionMode = parseAgentSessionMode(cliSessionModeRaw);
-		if (cliSessionMode !== undefined) {
-			defaultSessionMode = cliSessionMode;
+	const cliComplexityRaw = pi.getFlag("flow-complexity");
+	if (typeof cliComplexityRaw === "string") {
+		const cliComplexity = parseComplexity(cliComplexityRaw);
+		if (cliComplexity !== undefined) {
+			defaultComplexity = cliComplexity;
 		} else {
-			logWarn(`[pi-agent-flow] Ignoring invalid --flow-session-mode value "${cliSessionModeRaw}". Expected snap, fast, default, long, or extreme_long.`);
+			logWarn(`[pi-agent-flow] Ignoring invalid --flow-complexity value "${cliComplexityRaw}". Expected snap, simple, moderate, complex, or intricate.`);
 		}
-	} else if (inheritedCliArgs.flowSessionMode !== undefined) {
-		defaultSessionMode = inheritedCliArgs.flowSessionMode;
+	} else if (inheritedCliArgs.flowComplexity !== undefined) {
+		defaultComplexity = inheritedCliArgs.flowComplexity;
 	}
 
 	// Resolve maxConcurrency: CLI flag > env var > settings.json > default
@@ -292,11 +292,36 @@ export function resolveSettings(
 		}
 	}
 
+	// Resolve bodyVerbosity: CLI flag > env var > settings.json > default
+	let bodyVerbosity: "lite" | "full" = "lite";
+	if (typeof flowSettings.bodyVerbosity === "string") {
+		bodyVerbosity = flowSettings.bodyVerbosity;
+	}
+	const envBodyVerbosity = process.env["PI_FLOW_BODY_VERBOSITY"];
+	if (envBodyVerbosity === "full" || envBodyVerbosity === "lite") {
+		bodyVerbosity = envBodyVerbosity;
+	}
+
+	// Resolve bodyVerbosity: CLI flag > env var > settings.json > default
+	const cliBodyFull = pi.getFlag("body-full");
+	const cliBodyLite = pi.getFlag("body-lite");
+	if (cliBodyFull === true) {
+		bodyVerbosity = "full";
+	} else if (cliBodyLite === true) {
+		bodyVerbosity = "lite";
+	} else if (typeof cliBodyFull === "string") {
+		const parsed = cliBodyFull.trim();
+		if (parsed === "full" || parsed === "lite") bodyVerbosity = parsed as "full" | "lite";
+	} else if (typeof cliBodyLite === "string") {
+		const parsed = cliBodyLite.trim();
+		if (parsed === "full" || parsed === "lite") bodyVerbosity = parsed as "full" | "lite";
+	}
+
 	return {
 		toolOptimize,
 		structuredOutput,
 		maxConcurrency,
-		defaultSessionMode,
+		defaultComplexity,
 		steeringEnabled,
 		steeringCustomPrompt,
 		steeringStrategicHint,
@@ -307,6 +332,7 @@ export function resolveSettings(
 		discoveredFlows,
 		loadedFlowModelConfigs,
 		activeRuntimeFlowMode,
+		bodyVerbosity,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
 }

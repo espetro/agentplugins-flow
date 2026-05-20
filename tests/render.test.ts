@@ -13,6 +13,7 @@ import {
 	stripAnsi,
 } from "../src/tui/render-utils.js";
 import { renderFlowCall, renderFlowResult, renderSingleFlowResult, resetAnonymousFlowIdCounter, reconstructHeader } from "../src/tui/render.js";
+import { DEFAULT_FLOW_COLORS } from "../src/tui/flow-colors.js";
 import { scrambleManager, DynamicScrambleText } from "../src/tui/scramble/index.js";
 import { emptyFlowUsage, type SingleResult, type FlowDetails } from "../src/types/flow.js";
 import type { Text, TruncatedText } from "@earendil-works/pi-tui";
@@ -392,13 +393,13 @@ describe("lowerFirstWord", () => {
 
 describe("formatTps", () => {
 	it("returns dash for undefined", () => {
-		expect(formatTps(undefined)).toBe("-----");
+		expect(formatTps(undefined)).toBe("----- t/s");
 	});
 	it("returns dash for zero", () => {
-		expect(formatTps(0)).toBe("-----");
+		expect(formatTps(0)).toBe("----- t/s");
 	});
 	it("returns dash for negative", () => {
-		expect(formatTps(-5)).toBe("-----");
+		expect(formatTps(-5)).toBe("----- t/s");
 	});
 	it("shows one decimal when value < 100", () => {
 		expect(formatTps(76.2)).toBe(" 76.2 t/s");
@@ -422,37 +423,37 @@ describe("formatCompactStats", () => {
 	it("full usage → dashboard format", () => {
 		const usage = { input: 2000, output: 500, toolCalls: 4, contextTokens: 21000 };
 		const result = formatCompactStats(usage, "K2.6");
-		expect(result).toBe("▲  2.0k - ----- - 21.0k - k2.6");
+		expect(result).toBe("▲  2.0k - ----- t/s - 21.0k - k2.6");
 	});
 
 	it("minimal usage → shows 0 for all metrics", () => {
 		const usage = { input: 100 };
 		const result = formatCompactStats(usage);
-		expect(result).toBe("▲   100 - ----- -     0");
+		expect(result).toBe("▲   100 - ----- t/s -     0");
 	});
 
 	it("no usage → shows placeholders", () => {
-		expect(formatCompactStats({})).toBe("▲     0 - ----- -     0");
+		expect(formatCompactStats({})).toBe("▲     0 - ----- t/s -     0");
 	});
 
 	it("only model → placeholders + model", () => {
-		expect(formatCompactStats({}, "gpt-4o")).toBe("▲     0 - ----- -     0 - gpt-4o");
+		expect(formatCompactStats({}, "gpt-4o")).toBe("▲     0 - ----- t/s -     0 - gpt-4o");
 	});
 
 	it("strips provider prefix from model", () => {
 		expect(formatCompactStats({}, "github-copilot/gpt-5.5")).toBe(
-			"▲     0 - ----- -     0 - gpt-5.5",
+			"▲     0 - ----- t/s -     0 - gpt-5.5",
 		);
 	});
 
 	it("tokens only → all metrics shown", () => {
 		const usage = { input: 5000, output: 1000 };
-		expect(formatCompactStats(usage)).toBe("▲  5.0k - ----- -     0");
+		expect(formatCompactStats(usage)).toBe("▲  5.0k - ----- t/s -     0");
 	});
 
 	it("with context tokens", () => {
 		const usage = { input: 0, output: 0, toolCalls: 3, contextTokens: 6000 };
-		expect(formatCompactStats(usage)).toBe("▲     0 - ----- -  6.0k");
+		expect(formatCompactStats(usage)).toBe("▲     0 - ----- t/s -  6.0k");
 	});
 
 	it("with smoothedTps value", () => {
@@ -488,7 +489,7 @@ describe("formatCompactStats", () => {
 	it("with zero smoothedTps shows dash", () => {
 		const usage = { input: 1000, output: 500, smoothedTps: 0 };
 		const result = formatCompactStats(usage);
-		expect(result).toBe("▲  1.0k - ----- -     0");
+		expect(result).toBe("▲  1.0k - ----- t/s -     0");
 	});
 
 	it("with high smoothedTps shows one decimal", () => {
@@ -572,8 +573,7 @@ describe("activity panel rendering", () => {
 		const text = extractText(rendered);
 		expect(text).toContain("debug");
 		expect(text).toContain("aim ▸");
-		expect(text).toContain("├─ cmd ▸");
-		expect(text).toContain("msg ▸");
+		expect(text).toContain("└─ cmd ▸");
 	});
 
 	it("renders in-progress aim without countdown prefix", () => {
@@ -603,7 +603,7 @@ describe("activity panel rendering", () => {
 			usage: { input: 46_700, output: 4_600, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 50_000, turns: 2, toolCalls: 0 },
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		const headerLine = text.split("\n")[0];
 		expect(headerLine).toContain("scout");
@@ -626,7 +626,7 @@ describe("activity panel rendering", () => {
 			});
 			const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result, makeResult({ type: "debug" })] };
 			scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
-			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 			const text = extractText(rendered);
 			const firstHeaderLine = text.split("\n")[0];
 			expect(firstHeaderLine).toContain("scout");
@@ -655,7 +655,7 @@ describe("activity panel rendering", () => {
 			usage: { input: 5000, output: 800, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 6000, turns: 3, toolCalls: 3 },
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).toContain("cmd ▸");
 		expect(text).toContain("aim ▸");
@@ -676,7 +676,7 @@ describe("activity panel rendering", () => {
 		expect(text).toContain("aim ▸");
 		// Header stats are scrambled on first render, don't assert exact tps text
 		expect(text).not.toContain("ctx:");
-		expect(text).toContain("msg ▸");
+		expect(text).toContain("└─ cmd ▸");
 	});
 
 	it("hides acceptance line in collapsed view", () => {
@@ -686,7 +686,7 @@ describe("activity panel rendering", () => {
 			usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 500, turns: 1, toolCalls: 1 },
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).not.toContain("acceptance:");
 		expect(text).not.toContain("Done when tests pass");
@@ -744,7 +744,7 @@ describe("activity panel rendering", () => {
 			streamingText: streaming,
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result, makeResult({ type: "debug" })] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		const scoutBlock = text.split("debug")[0];
 		const expectedBudget = getTruncationBudget(visibleLength("│  └─ msg ▸ "));
@@ -769,7 +769,7 @@ describe("activity panel rendering", () => {
 			const expectedTail = tailText(longStreaming, expectedBudget);
 			const spy = vi.spyOn(scrambleManager, "updateMsg");
 
-			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 			extractText(rendered);
 
 			expect(spy).toHaveBeenCalledWith(expect.any(String), expectedTail, expect.any(Number), false, undefined, true);
@@ -806,7 +806,7 @@ describe("activity panel rendering", () => {
 			],
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		const exeLine = text.split("\n").find((l: string) => l.includes("├─ cmd ▸"));
 		expect(exeLine).toBeDefined();
@@ -823,7 +823,7 @@ describe("activity panel rendering", () => {
 			],
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		const exeLine = text.split("\n").find((l: string) => l.includes("├─ cmd ▸"));
 		expect(exeLine).toBeDefined();
@@ -838,10 +838,53 @@ describe("activity panel rendering", () => {
 			messages: [],
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).toContain("├─ cmd ▸ [n/a]");
 		expect(text).toContain("└─ msg ▸");
+	});
+
+	it("lite mode uses └─ for cmd and skips msg line", () => {
+		const result = makeResult({
+			type: "build",
+			intent: "test",
+			messages: [
+				makeToolCallMessage("bash", { command: "echo hello" }),
+				makeTextMessage("done"),
+			],
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		// Default config is lite mode
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		expect(text).toContain("└─ cmd ▸");
+		expect(text).not.toContain("msg ▸");
+		// In lite mode, aim uses ├─, cmd uses └─
+		const lines = text.split("\n");
+		const aimLine = lines.find((l: string) => l.includes("aim ▸"));
+		const cmdLine = lines.find((l: string) => l.includes("cmd ▸"));
+		expect(aimLine).toBeDefined();
+		expect(cmdLine).toBeDefined();
+		expect(aimLine).toContain("├─");
+		expect(cmdLine).toContain("└─");
+	});
+
+	it("full mode renders msg line with ├─ cmd ▸ and └─ msg ▸", () => {
+		const result = makeResult({
+			type: "build",
+			intent: "test",
+			messages: [
+				makeToolCallMessage("bash", { command: "echo hello" }),
+				makeTextMessage("done"),
+			],
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		const config = { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" };
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, config);
+		const text = extractText(rendered);
+		expect(text).toContain("├─ cmd ▸");
+		expect(text).toContain("└─ msg ▸");
+		expect(text).toContain("done");
 	});
 
 	it("passes full EXE text to TruncatedText in single flow collapsed", () => {
@@ -857,7 +900,7 @@ describe("activity panel rendering", () => {
 				],
 			});
 			const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+			const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 			const text = extractText(rendered);
 			const exeLine = text.split("\n").find((l: string) => l.includes("├─ cmd ▸"));
 			expect(exeLine).toBeDefined();
@@ -907,7 +950,7 @@ describe("activity panel rendering", () => {
 			const expectedTail = tailText(longStreaming, expectedBudget);
 			const spy = vi.spyOn(scrambleManager, "updateMsg");
 
-			const rendered = renderFlowResult({ content: [{ type: "text", text: longStreaming }], details }, false, makeTheme(), undefined);
+			const rendered = renderFlowResult({ content: [{ type: "text", text: longStreaming }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 			extractText(rendered);
 
 			expect(spy).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(Number), false, undefined, true);
@@ -951,7 +994,7 @@ describe("expanded view rendering", () => {
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
 		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, true, makeTheme(), undefined);
 		const text = extractText(rendered);
-		expect(text).toContain("▲  9.8k - ----- - 10.0k - mimo-v2.5-pro");
+		expect(text).toContain("▲  9.8k - ----- t/s - 10.0k - mimo-v2.5-pro");
 	});
 
 	it("context tokens on separate line", () => {
@@ -1085,7 +1128,7 @@ describe("formatFlowToolCall — batch", () => {
 			usage: emptyFlowUsage(),
 		});
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).toContain("batch");
 		expect(text).toContain("read");
@@ -1252,7 +1295,7 @@ describe("formatFlowToolCall — batch", () => {
 			},
 		});
 		const spy = vi.spyOn(scrambleManager, "updateMsg");
-		const rendered = renderSingleFlowResult(result, false, makeTheme(), "");
+		const rendered = renderSingleFlowResult(result, false, makeTheme(), "", undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		expect(spy).not.toHaveBeenCalled();
 		extractText(rendered as any);
 		expect(spy).toHaveBeenCalledWith(expect.any(String), "", expect.any(Number), false, undefined, true);
@@ -1293,7 +1336,7 @@ describe("formatFlowToolCall — batch", () => {
 			messages: [],
 			structuredOutput: undefined,
 		});
-		const rendered = renderSingleFlowResult(result, false, makeTheme(), streamingText);
+		const rendered = renderSingleFlowResult(result, false, makeTheme(), streamingText, undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).not.toContain(streamingText);
 		expect(text).toContain("└─ msg ▸");
@@ -1334,12 +1377,12 @@ describe("header ANSI style preservation during animation", () => {
 	it("reconstructHeader applies segment styles by length", () => {
 		const segments = [
 			{ text: "scout", style: (s: string) => `\x1b[accentm${s}\x1b[39m` },
-			{ text: "    openai/gpt-4o · ", style: (s: string) => `\x1b[mutedm${s}\x1b[39m` },
-			{ text: "▲  1.0k - ----- -  5.0k", style: (s: string) => `\x1b[mutedm${s}\x1b[39m` },
+			{ text: "  openai/gpt-4o · ", style: (s: string) => `\x1b[mutedm${s}\x1b[39m` },
+			{ text: "▲  1.0k - ----- t/s -  5.0k", style: (s: string) => `\x1b[mutedm${s}\x1b[39m` },
 		];
-		const result = reconstructHeader("scout    openai/gpt-4o · ▲  1.0k - ----- -  5.0k", segments);
+		const result = reconstructHeader("scout  openai/gpt-4o · ▲  1.0k - ----- t/s -  5.0k", segments);
 		expect(result).toBe(
-			"\x1b[accentmscout\x1b[39m\x1b[mutedm    openai/gpt-4o · \x1b[39m\x1b[mutedm▲  1.0k - ----- -  5.0k\x1b[39m",
+			"\x1b[accentmscout\x1b[39m\x1b[mutedm  openai/gpt-4o · \x1b[39m\x1b[mutedm▲  1.0k - ----- t/s -  5.0k\x1b[39m",
 		);
 	});
 
@@ -1376,8 +1419,8 @@ describe("header ANSI style preservation during animation", () => {
 			const headerLine = raw.split("\n")[0];
 
 			expect(headerLine).toContain("\x1b[accentmscout\x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm    openai/gpt-4o · \x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm5.0k · -----\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o · \x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm5.0k · ----- t/s\x1b[39m");
 		} finally {
 			spy.mockRestore();
 		}
@@ -1441,8 +1484,8 @@ describe("header ANSI style preservation during animation", () => {
 
 			expect(headerLine).toContain("\x1b[dimm├─ \x1b[39m");
 			expect(headerLine).toContain("\x1b[accentmdebug\x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm    openai/gpt-4o · \x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm5.0k · -----\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o · \x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm5.0k · ----- t/s\x1b[39m");
 		} finally {
 			spy.mockRestore();
 		}
@@ -1492,8 +1535,8 @@ describe("in-place mutation pattern", () => {
 			});
 			const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
 
-			const rendered1 = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), args);
-			const rendered2 = renderFlowResult({ content: [{ type: "text", text: "updated" }], details }, false, makeTheme(), args);
+			const rendered1 = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), args, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+			const rendered2 = renderFlowResult({ content: [{ type: "text", text: "updated" }], details }, false, makeTheme(), args, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 
 			expect(rendered1).toBe(rendered2);
 			const text = extractText(rendered2);
@@ -1501,7 +1544,7 @@ describe("in-place mutation pattern", () => {
 			expect(text).toContain("read");
 			expect(text).toContain("line 2");
 			// Verify all 4 children (header, aim, act, msg) were transferred to the reused root.
-			expect((rendered2 as any).children.length).toBe(4);
+			expect((rendered2 as any).children.length).toBe(4); // full mode: header + aim + cmd + msg
 		} finally {
 			Container.prototype.addChild = originalAddChild;
 		}
@@ -1551,9 +1594,9 @@ describe("in-place mutation pattern", () => {
 		renderFlowResult({ content: [{ type: "text", text: "" }], details: details1 }, false, makeTheme(), { state: state1 });
 		renderFlowResult({ content: [{ type: "text", text: "" }], details: details2 }, false, makeTheme(), { state: state2 });
 
-		expect(state1.__flowId).toBeDefined();
-		expect(state2.__flowId).toBeDefined();
-		expect(state1.__flowId).not.toBe(state2.__flowId);
+		expect(state1.__widgetId).toBeDefined();
+		expect(state2.__widgetId).toBeDefined();
+		expect(state1.__widgetId).not.toBe(state2.__widgetId);
 	});
 
 	it("reuses the same anonymous id on subsequent renders of the same tool call", () => {
@@ -1564,10 +1607,10 @@ describe("in-place mutation pattern", () => {
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
 
 		renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), args);
-		const firstId = state.__flowId;
+		const firstId = state.__widgetId;
 
 		renderFlowResult({ content: [{ type: "text", text: "updated" }], details }, false, makeTheme(), args);
-		const secondId = state.__flowId;
+		const secondId = state.__widgetId;
 
 		expect(secondId).toBe(firstId);
 	});
@@ -1582,7 +1625,7 @@ describe("in-place mutation pattern", () => {
 		renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), args);
 
 		// The resolved id is now stored in state so it stays stable across re-renders.
-		expect(state.__flowId).toBe("call_custom_123");
+		expect(state.__widgetId).toBe("call_custom_123");
 		// Verify scramble state was created under the custom id.
 		const textResult = scrambleManager.updateText("call_custom_123", "header", "test", Date.now(), true, true);
 		expect(textResult.isAnimating).toBe(false);
@@ -1596,7 +1639,7 @@ describe("in-place mutation pattern", () => {
 
 		renderFlowResult({ content: [{ type: "text", text: "" }], details, _toolCallId: "call_prod_456" } as any, false, makeTheme(), args);
 
-		expect(state.__flowId).toBe("call_prod_456");
+		expect(state.__widgetId).toBe("call_prod_456");
 		const textResult = scrambleManager.updateText("call_prod_456", "header", "test", Date.now(), true, true);
 		expect(textResult.isAnimating).toBe(false);
 	});
@@ -1609,7 +1652,7 @@ describe("in-place mutation pattern", () => {
 
 		renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), args);
 
-		expect(state.__flowId).toBe("fallback_id_999");
+		expect(state.__widgetId).toBe("fallback_id_999");
 		const textResult = scrambleManager.updateText("fallback_id_999", "header", "test", Date.now(), true, true);
 		expect(textResult.isAnimating).toBe(false);
 	});
@@ -1620,19 +1663,19 @@ describe("in-place mutation pattern", () => {
 
 		// First render: no details (ghost state)
 		renderFlowResult({ content: [{ type: "text", text: "Starting..." }] }, false, makeTheme(), args);
-		const ghostId = state.__flowId;
+		const ghostId = state.__widgetId;
 		expect(ghostId).toBeDefined();
 		expect(ghostId).toMatch(/^flow-\d+$/);
 
 		// Second render: still ghost
 		renderFlowResult({ content: [{ type: "text", text: "Still going..." }] }, false, makeTheme(), args);
-		expect(state.__flowId).toBe(ghostId);
+		expect(state.__widgetId).toBe(ghostId);
 
 		// Third render: real result arrives — must keep same id to avoid scramble reset
 		const result = makeResult();
 		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
 		renderFlowResult({ content: [{ type: "text", text: "Done" }], details }, false, makeTheme(), args);
-		expect(state.__flowId).toBe(ghostId);
+		expect(state.__widgetId).toBe(ghostId);
 	});
 
 	it("assigns distinct scramble ids to parallel flows in a batch", () => {
@@ -1649,5 +1692,293 @@ describe("in-place mutation pattern", () => {
 		const id1Result = scrambleManager.updateText("call_batch_789#1", "header", "test", Date.now(), true, true);
 		expect(id0Result.isAnimating).toBe(false);
 		expect(id1Result.isAnimating).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Flow status dot rendering
+// ---------------------------------------------------------------------------
+describe("flow status dot rendering", () => {
+	it("group header has no trailing status dots", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+		const text = extractText(rendered);
+		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
+		expect(groupHeader).toBeDefined();
+		expect(groupHeader).not.toContain("●");
+		expect(groupHeader).not.toContain("○");
+	});
+
+	it("collapsed flow header has inline status dot before name", () => {
+		const result = makeResult({ type: "scout", status: "running", exitCode: -1 });
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toMatch(/[●○] scout/);
+	});
+
+	it("expanded flow header has inline status dot before name", () => {
+		const result = makeResult({ type: "scout", status: "done", exitCode: 0 });
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, true, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toMatch(/● scou/);
+	});
+
+	it("group child flow headers have inline status dots", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const dateSpy = vi.spyOn(Date, "now").mockReturnValue(0);
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		dateSpy.mockRestore();
+		const lines = text.split("\n");
+		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
+		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
+		expect(buildHeader).toMatch(/[●○] build/);
+		expect(auditHeader).toMatch(/[●○] audit/);
+	});
+
+	it("awaiting collapsed flow shows model context and ----- t/s", () => {
+		const result = makeResult({
+			type: "audit",
+			status: "awaiting",
+			exitCode: -1,
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toContain("0.12M/0.26M");
+		expect(headerLine).toContain("----- t/s");
+		expect(headerLine).toContain("openai/gpt-4o");
+	});
+
+	it("awaiting group child shows model context and ----- t/s", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+			model: "openai/gpt-4o",
+			usage: { input: 1000, output: 200, contextTokens: 120_000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const lines = text.split("\n");
+		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
+		expect(auditHeader).toContain("0.12M/0.26M");
+		expect(auditHeader).toContain("----- t/s");
+		expect(auditHeader).toContain("openai/gpt-4o");
+	});
+
+	it("awaiting capstone audit shows [awaiting...] aim and [n/a] cmd", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+			aim: "build tree-directory batch rendering",
+			model: "openai/gpt-4o",
+			usage: { input: 55100, output: 0, contextTokens: 120_000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+			aim: "Audit 1 build outputs",
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const lines = text.split("\n");
+		const auditHeaderIdx = lines.findIndex((l) => l.includes("○ audit") || l.includes("● audit"));
+		expect(auditHeaderIdx).toBeGreaterThan(-1);
+		const auditAimLine = lines.slice(auditHeaderIdx).find((l) => l.includes("aim ▸"));
+		const auditCmdLine = lines.slice(auditHeaderIdx).find((l) => l.includes("cmd ▸"));
+		expect(auditAimLine).toContain("[awaiting...]");
+		expect(auditCmdLine).toContain("[n/a]");
+		expect(auditAimLine).not.toContain("Audit 1 build outputs");
+	});
+
+	it("done flow freezes metrics and shows ● dot", () => {
+		const result = makeResult({
+			type: "build",
+			status: "done",
+			exitCode: 0,
+			model: "openai/gpt-4o",
+			usage: { input: 1000, output: 200, contextTokens: 5000, turns: 1, toolCalls: 0, smoothedTps: 130.0 },
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toContain("●");
+		expect(headerLine).toContain("5.0k");
+		expect(headerLine).toContain("130.0 t/s");
+	});
+
+	it("scintillates with irregular spark bursts for running flows", () => {
+		vi.useFakeTimers();
+		try {
+			const result = makeResult({ type: "scout", status: "running", exitCode: -1, toolCallId: "test-flow" });
+			const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+			scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+
+			// At t=0, before any burst starts, dot is steady ●
+			vi.setSystemTime(new Date(0));
+			const rendered1 = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+			const text1 = extractText(rendered1);
+			const header1 = text1.split("\n")[0];
+			expect(header1).toContain("●");
+
+			// Scan across the first 2.5-second bucket densely to verify the stutter structure
+			const sparkleChars = "△○☐⠂⠄⠈⠐⠠⡀⢀⠃⠆⠉⠘⠰⡁⢂";
+			const phases: string[] = [];
+			for (let t = 30; t < 5000; t += 5) {
+				vi.setSystemTime(new Date(t));
+				const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+				const text = extractText(rendered);
+				const header = text.split("\n")[0];
+				if (header.includes("○") || [...sparkleChars].some((c) => header.includes(c))) {
+					phases.push("o");
+				} else if (header.includes("●")) {
+					phases.push("b");
+				}
+			}
+			// Verify we see multiple ○ dips (at least 2, proving multiple stutters or multi-dip stutters)
+			const oCount = phases.filter((p) => p === "o").length;
+			expect(oCount).toBeGreaterThanOrEqual(2);
+			// Verify the ○●○●○ 5-tick stutter structure: ○→●→○→●→○ within one cycle (~60-110ms)
+			let foundStutter = false;
+			for (let i = 0; i < phases.length; i++) {
+				if (phases[i] === "o") {
+					// Scan for: dip ○ → flash ● → dip ○ → flash ● → dip ○ within ~25 samples (250ms)
+					const path: string[] = ["o"];
+					for (let j = i + 1; j < Math.min(phases.length, i + 25); j++) {
+						const last = path[path.length - 1];
+						if (phases[j] !== last) path.push(phases[j]);
+						if (path.join("") === "obobob" || path.join("") === "obobobo") {
+							foundStutter = true;
+							break;
+						}
+					}
+					if (foundStutter) break;
+				}
+			}
+			expect(foundStutter).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("group preceded by sibling uses outer tree continuation (isLastRoot=false)", () => {
+		const scoutResult = makeResult({
+			type: "scout",
+			exitCode: 0,
+			status: "done",
+			model: "openai/gpt-4o",
+			usage: { input: 5000, output: 500, contextTokens: 5000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+			model: "openai/gpt-4o",
+			usage: { input: 1000, output: 200, contextTokens: 120_000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const afterResult = makeResult({
+			type: "scout",
+			exitCode: -1,
+			status: "running",
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [scoutResult, buildResult, auditResult, afterResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const lines = text.split("\n");
+
+		const groupHeader = lines.find((l) => l.includes("audit-loop"));
+		expect(groupHeader).toBeDefined();
+		expect(groupHeader).toContain("├─ audit-loop");
+		expect(groupHeader).not.toContain("│");
+
+		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
+		expect(buildHeader).toBeDefined();
+		expect(buildHeader).toContain("│  ├─");
+
+		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
+		expect(auditHeader).toBeDefined();
+		expect(auditHeader).toContain("│  └─");
+
+		// Blank lines between builds and before audit capstone removed for compact tree
+		// (previously: const blankLine = lines.find((l) => l === "│  │" || l.trim() === "│  │"); expect(blankLine).toBeDefined();)
 	});
 });

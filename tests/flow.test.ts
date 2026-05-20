@@ -51,6 +51,7 @@ describe("runFlow case-insensitive lookup", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "SCOUT",
 			intent: "Test intent",
@@ -81,12 +82,13 @@ describe("runFlow case-insensitive lookup", () => {
 		expect(result.exitCode).toBe(0);
 	});
 
-	it("includes long session mode and 900s budget in the child prompt", async () => {
+	it("uses complexity to set timeout and does not include old session mode text", async () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+			complexity: "complex",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -96,7 +98,6 @@ describe("runFlow case-insensitive lookup", () => {
 			parentFlowStack: [],
 			maxDepth: 3,
 			preventCycles: true,
-			sessionMode: "long",
 			makeDetails: (results) => ({
 				mode: "flow",
 				flowStyle: "fork",
@@ -122,6 +123,7 @@ describe("runFlow case-insensitive lookup", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -157,6 +159,7 @@ describe("runFlow case-insensitive lookup", () => {
 		try {
 			const opts: RunFlowOptions = {
 				cwd: "/tmp",
+		complexity: "moderate",
 				flows: [mockFlow],
 				flowName: "scout",
 				intent: "Hello",
@@ -199,6 +202,7 @@ describe("runFlow case-insensitive lookup", () => {
 		try {
 			const opts: RunFlowOptions = {
 				cwd: "/tmp",
+		complexity: "moderate",
 				flows: [mockFlow],
 				flowName: "scout",
 				intent: "Hello",
@@ -243,6 +247,7 @@ describe("runFlow case-insensitive lookup", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [flowWithThinking],
 			flowName: "scout",
 			intent: "Test intent",
@@ -280,6 +285,7 @@ describe("runFlow case-insensitive lookup", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -322,6 +328,7 @@ describe("runFlow case-insensitive lookup", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -354,6 +361,7 @@ describe("runFlow case-insensitive lookup", () => {
 	it("returns error for unknown flow regardless of casing", async () => {
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "UNKNOWN",
 			intent: "Test intent",
@@ -484,6 +492,7 @@ describe("agent_end grace period behavior", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [{ name: "scout", description: "Explore", systemPrompt: "You are scout.", source: "bundled", filePath: "/agents/scout.md" }],
 			flowName: "scout",
 			intent: "Test",
@@ -525,6 +534,7 @@ describe("agent_end grace period behavior", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [{ name: "scout", description: "Explore", systemPrompt: "You are scout.", source: "bundled", filePath: "/agents/scout.md" }],
 			flowName: "scout",
 			intent: "Test",
@@ -590,6 +600,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -642,6 +653,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -679,7 +691,7 @@ describe("child flow harness tools", () => {
 		expect(toolsValue).toContain("flow");
 	});
 
-	it("defaults to batch+bash+flow+web when flow.tools is undefined, toolOptimize is true, and canFlow", async () => {
+	it("defaults to batch+bash+flow when flow.tools is undefined, toolOptimize is true, and canFlow", async () => {
 		const mockFlow: FlowConfig = {
 			name: "build",
 			description: "Code flow",
@@ -694,6 +706,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -728,13 +741,13 @@ describe("child flow harness tools", () => {
 		expect(toolsValue).toContain("batch");
 		expect(toolsValue).toContain("bash");
 		expect(toolsValue).toContain("flow");
-		expect(toolsValue).toContain("web");
+		expect(toolsValue).not.toContain("web");
 		expect(toolsValue).not.toContain("read");
 		expect(toolsValue).not.toContain("write");
 		expect(toolsValue).not.toContain("edit");
 	});
 
-	it("defaults to batch+bash+web without flow when canFlow is false and toolOptimize is true", async () => {
+	it("defaults to batch+bash without flow when canFlow is false and toolOptimize is true", async () => {
 		const mockFlow: FlowConfig = {
 			name: "build",
 			description: "Code flow",
@@ -748,6 +761,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -781,7 +795,7 @@ describe("child flow harness tools", () => {
 		const toolsValue = args[toolsIndex + 1];
 		expect(toolsValue).toContain("batch");
 		expect(toolsValue).toContain("bash");
-		expect(toolsValue).toContain("web");
+		expect(toolsValue).not.toContain("web");
 		expect(toolsValue).not.toContain("flow");
 	});
 
@@ -800,6 +814,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -835,7 +850,7 @@ describe("child flow harness tools", () => {
 		expect(toolsValue).toContain("batch");
 		expect(toolsValue).toContain("bash");
 		expect(toolsValue).toContain("flow");
-		expect(toolsValue).toContain("web");
+		expect(toolsValue).not.toContain("web");
 	});
 
 	it("falls back to defaultTools when toolOptimize is false and tools list is empty", async () => {
@@ -853,6 +868,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -888,7 +904,7 @@ describe("child flow harness tools", () => {
 		expect(toolsValue).toContain("batch");
 		expect(toolsValue).toContain("bash");
 		expect(toolsValue).toContain("flow");
-		expect(toolsValue).toContain("web");
+		expect(toolsValue).not.toContain("web");
 	});
 
 	it("merges defaultTools when flow.tools has only non-essential tools (e.g. just web)", async () => {
@@ -906,6 +922,7 @@ describe("child flow harness tools", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "build",
 			intent: "Test intent",
@@ -942,9 +959,7 @@ describe("child flow harness tools", () => {
 		expect(toolsValue).toContain("bash");
 		expect(toolsValue).toContain("flow");
 		expect(toolsValue).toContain("web");
-		// The original "web" tool is preserved (not dropped)
-		const toolsList = toolsValue.split(",");
-		expect(toolsList.filter((t) => t === "web")).toHaveLength(1);
+		// The original "web" tool is preserved (not dropped) when flow explicitly lists it
 	});
 });
 
@@ -985,6 +1000,7 @@ describe("PI_FLOW_SPAWN_COMMAND env override", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -1049,7 +1065,7 @@ describe("timeout two-stage behavior", () => {
 			parentFlowStack: [],
 			maxDepth: 3,
 			preventCycles: true,
-			sessionMode: "fast",
+			complexity: "simple",
 			onUpdate: (partial) => updates.push(partial),
 			makeDetails: (results) => ({ mode: "flow", flowStyle: "fork", projectAgentsDir: null, results }),
 		};
@@ -1084,7 +1100,7 @@ describe("timeout two-stage behavior", () => {
 			parentFlowStack: [],
 			maxDepth: 3,
 			preventCycles: true,
-			sessionMode: "fast",
+			complexity: "simple",
 			makeDetails: (results) => ({ mode: "flow", flowStyle: "fork", projectAgentsDir: null, results }),
 		};
 
@@ -1137,7 +1153,7 @@ describe("timeout two-stage behavior", () => {
 			parentFlowStack: [],
 			maxDepth: 3,
 			preventCycles: true,
-			sessionMode: "fast",
+			complexity: "simple",
 			makeDetails: (results) => ({ mode: "flow", flowStyle: "fork", projectAgentsDir: null, results }),
 		};
 
@@ -1183,7 +1199,7 @@ describe("timeout two-stage behavior", () => {
 			parentFlowStack: [],
 			maxDepth: 3,
 			preventCycles: true,
-			sessionMode: "fast",
+			complexity: "simple",
 			makeDetails: (results) => ({ mode: "flow", flowStyle: "fork", projectAgentsDir: null, results }),
 		};
 
@@ -1241,6 +1257,7 @@ describe("acceptance field propagation", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -1278,6 +1295,7 @@ describe("acceptance field propagation", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -1319,6 +1337,7 @@ describe("acceptance field propagation", () => {
 			const jsonl = '{"type":"session","systemPrompt":"test"}\n{"type":"message","message":{"role":"user","content":"hello"}}\n';
 			const opts: RunFlowOptions = {
 				cwd: "/tmp",
+		complexity: "moderate",
 				flows: [mockFlow],
 				flowName: "scout",
 				intent: "Test intent",
@@ -1378,6 +1397,7 @@ describe("acceptance field propagation", () => {
 			const jsonl = '{"type":"session","systemPrompt":"test"}\n';
 			const opts: RunFlowOptions = {
 				cwd: "/tmp",
+		complexity: "moderate",
 				flows: [mockFlow],
 				flowName: "scout",
 				intent: "Test intent",
@@ -1415,6 +1435,7 @@ describe("acceptance field propagation", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -1458,7 +1479,7 @@ describe("acceptance field propagation", () => {
 		};
 		const auditFlow: FlowConfig = {
 			name: "audit",
-			description: "Audit security, quality, correctness; fix safe issues.",
+			description: "Audit security, quality, correctness; provide feedback and verdict — no code edits.",
 			systemPrompt: "You are audit.",
 			source: "project",
 			filePath: "/agents/audit.md",
@@ -1466,6 +1487,7 @@ describe("acceptance field propagation", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow, buildFlow, auditFlow],
 			flowName: "scout",
 			intent: "Test intent",
@@ -1505,6 +1527,7 @@ describe("acceptance field propagation", () => {
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
+		complexity: "moderate",
 			flows: [mockFlow],
 			flowName: "scout",
 			intent: "Test intent",

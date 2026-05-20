@@ -6,6 +6,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BatchTheme, FileOpInput, BatchOnUpdate } from "./constants.js";
 import { SAFE_FULL_READ_LIMIT, TARGETED_READ_LINE_LIMIT, BASH_SOFT_TIMEOUT_MS, MAX_LINES, MAX_BYTES, MAX_BASH_OUTPUT_LINES, MAX_BASH_OUTPUT_BYTES } from "./constants.js";
 import { executeOperations, suggestSimilarFiles } from "./execute.js";
@@ -14,6 +15,7 @@ import {
 	renderBatchCall,
 	renderBatchReadCall,
 	renderBatchResult,
+	renderBatchReadResult,
 } from "./render.js";
 import {
 	type BashProcessTracker,
@@ -22,9 +24,10 @@ import {
 	executeBatchBash,
 } from "./batch-bash.js";
 import { appendDirectiveOnce } from "../steering/tool-utils.js";
+import { runWebOps } from "../tools/web-ops.js";
 
 // Re-export polling tool factory and tracker from batch-bash
-export { BashProcessTracker, createBatchBashPollTool, pollBatchBashResults } from "./batch-bash.js";
+export { BashProcessTracker, createBatchBashPollTool, pollBatchBashResults, runBashWithLimits } from "./batch-bash.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -127,11 +130,33 @@ const FileOp = Type.Object({
 	),
 });
 
+const WebOp = Type.Union([
+	Type.Object({
+		o: Type.Literal("search"),
+		q: Type.String({ minLength: 1, description: "Search query" }),
+	}),
+	Type.Object({
+		o: Type.Literal("fetch"),
+		u: Type.String({ minLength: 1, description: "URL to fetch" }),
+		f: Type.Optional(
+			Type.Union([Type.Literal("markdown"), Type.Literal("text"), Type.Literal("html")], {
+				description: "Output format (default: markdown). Content is saved to a temp file — use read ops to access.",
+			}),
+		),
+	}),
+]);
+
 export const WeavePatchParams = Type.Object({
 	o: Type.Array(FileOp, {
 		description:
 			"Ordered list of operations. File ops (read/write/edit/delete) execute sequentially — each operation executes independently; failures are reported per-operation without stopping remaining ops. Bash ops (bash) run in parallel after file ops complete and do not skip each other on failure.",
 	}),
+	w: Type.Optional(
+		Type.Array(WebOp, {
+			description:
+				"Web operations (search or fetch) to perform. Executed after file ops, before bash ops. Use w: [{ o: 'search', q: '...' }] or w: [{ o: 'fetch', u: '...', f: 'markdown' }]",
+		}),
+		),
 });
 
 const BatchReadOp = Type.Union([
@@ -252,7 +277,7 @@ function normalizeOp(raw: Record<string, unknown>): Record<string, unknown> {
 	return op;
 }
 
-function prepareArguments(input: unknown): { o: unknown[] } | unknown {
+function prepareArguments(input: unknown): { o: unknown[]; w?: unknown[] } | unknown {
 	if (!input || typeof input !== "object") return { o: [] };
 
 	const args = input as Record<string, unknown>;
@@ -288,22 +313,35 @@ function prepareArguments(input: unknown): { o: unknown[] } | unknown {
 		// Single-operation shorthand: { p: "...", o: "read" }
 		opsArray = [args];
 	} else {
-		return { o: [] };
+		opsArray = [];
 	}
 
 	// Normalize each operation to single-letter form
-	return {
+	const result: { o: unknown[]; w?: unknown[] } = {
 		o: opsArray.map((op: unknown) => {
 			if (!op || typeof op !== "object") return op;
 			return normalizeOp(op as Record<string, unknown>);
 		}),
 	};
+
+	// Extract web ops if present
+	if (Array.isArray(args.w)) {
+		result.w = args.w;
+	}
+
+	return result;
 }
 
 function prepareBatchReadArguments(input: unknown): { o: FileOpInput[] } | unknown {
 	const prepared = prepareArguments(input);
 	const ops = Array.isArray(prepared) ? prepared : (prepared as { o: unknown[] }).o;
 	if (!Array.isArray(ops)) return { o: [] };
+
+	// batch_read is local-only — reject web ops
+	const webOpsInRead = (prepared as { w?: unknown[] }).w;
+	if (webOpsInRead && webOpsInRead.length > 0) {
+		throw new Error("batch_read does not support web operations. Use the full `batch` tool with w: [...] for web ops.");
+	}
 
 	const allowedBatchReadOps = new Set(["read", "rg"]);
 	for (const op of ops) {
@@ -325,21 +363,11 @@ export function createBatchReadTool() {
 	return {
 		name: "batch_read",
 		label: "batch_read",
-		description: [
-			"Batch read-only file operations — run multiple read ops in a single call.",
-			"Each operation is independent and executes sequentially in array order; failures are reported per-operation without stopping remaining ops.",
-			`Full-file reads up to ${SAFE_FULL_READ_LIMIT} lines return raw content; larger full-file reads return a context map for code/infra files or total lines for plain text.`,
-			`Targeted reads with l over ${TARGETED_READ_LINE_LIMIT} are clamped with a continuation warning; a single line over the byte limit still errors.`,
-			"Use `o: \"read\"` with `s` (offset) and `l` (limit) for targeted reading. Prefer this over bash sed/head/tail.",
-			"Best for reading multiple files or sections in one call.",
-		].join("\n"),
+		description: "Batch read-only file operations. Useful for reading multiple files or sections at once.",
 		promptSnippet: "Batch read-only file operations — run multiple read ops in one call",
 		promptGuidelines: [
-			"Use `batch_read` to perform multiple file reads in a single call rather than separate tool calls.",
-			"Prefer `batch_read` when reading 2+ files or multiple sections of the same file.",
-			`Small full-file reads (<=${SAFE_FULL_READ_LIMIT} lines) return raw content; larger full-file reads return navigable context maps or line counts.`,
-			`Use targeted reads with s/l around context-map entries; targeted reads are capped at ${TARGETED_READ_LINE_LIMIT} lines.`,
-			"Do not retry the same full-file read when a context map is returned.",
+			"Use `batch_read` to perform multiple reads in one call.",
+			"Large files return a context map; use targeted `s` (offset) and `l` (limit) to read specific parts.",
 		],
 		parameters: BatchReadParams,
 		prepareArguments: prepareBatchReadArguments,
@@ -349,7 +377,7 @@ export function createBatchReadTool() {
 			input: unknown,
 			signal: AbortSignal | undefined,
 			onUpdate: BatchOnUpdate | undefined,
-			ctx: { cwd: string },
+			ctx: ExtensionContext,
 		) {
 			const prepared = prepareBatchReadArguments(input);
 
@@ -388,7 +416,7 @@ export function createBatchReadTool() {
 
 		renderCall: (args: Record<string, unknown>, theme: BatchTheme) => renderBatchReadCall(args, theme),
 		renderResult: (result: any, { expanded }: { expanded: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
-			renderBatchResult(result, expanded, theme, args),
+			renderBatchReadResult(result, expanded, theme, args),
 	};
 }
 
@@ -400,34 +428,18 @@ export function createBatchReadTool() {
  *   batch_bash_poll tool must share the same tracker instance.
  */
 export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?: boolean) {
-	const guidelines = [
-		"ALWAYS combine all pending file operations and shell commands into a single `batch` call. Never issue sequential `batch` calls when you can batch them.",
-		"Multiple edits to the same file go in one `e` array: e:[{f:'old1',r:'new1'},{f:'old2',r:'new2'}]. Multiple files go in separate ops in the same call.",
-		"Each edit matches the on-disk file, not prior ops in the same call — so order within a file's `e` array doesn't matter.",
-		"Bash ops run in parallel. Use i (id) to track them. Use `batch_bash_poll` to check on pending commands.",
-		"Before calling `batch`, plan: list every file you need to read, edit, or create, and every command you need to run — then put them ALL in one call.",
-		"Use o:'patch' with c:'<patch text>' for multi-file changes using the OpenAI apply_patch format. Patch ops run sequentially like other file ops.",
-		"For non-trivial scripts (Python, Node, shell), write the script to ./tmp/ first with o:'write', then execute it with o:'bash'. File ops always run before bash ops, so the write is guaranteed to complete before execution. This avoids escaping issues, produces better error traces, and leaves the script inspectable for debugging.",
-	];
-	if (toolOptimize) {
-		guidelines.push("In this mode batch is your ONLY edit tool — there is no separate edit command. Always use batch for every edit, even single-block single-file changes.");
-	}
 	return {
 		name: "batch",
 		label: "batch",
-		description: [
-			"Batch operations — run multiple file ops (read/write/edit/delete/patch) and bash commands in a single call.",
-			"Each file operation is independent: edits are matched against the current on-disk file, not against prior operations in the same call.",
-			"File operations execute sequentially in array order; each operation executes independently and failures are reported per-operation without stopping remaining ops.",
-			"Bash operations (o: 'bash') run in parallel after all file ops complete. Bash ops do NOT skip each other on failure.",
-			`Bash ops use c (command), i (id), t (timeout, default ${BASH_SOFT_TIMEOUT_MS}ms), h (cwd). Commands exceeding the soft timeout return "pending" status with last 50 lines of output; poll with batch_bash_poll.`,
-			`Bash output is truncated to ${MAX_BASH_OUTPUT_LINES} lines / ${(MAX_BASH_OUTPUT_BYTES / 1024).toFixed(0)} KB. File reads are truncated to ${MAX_LINES} lines / ${(MAX_BYTES / 1024).toFixed(0)} KB.`,
-			"Use `o: \"read\"` with `s` (offset) and `l` (limit) for targeted reading. Prefer this over bash sed/head/tail.",
-			"The primary tool for all file operations and shell commands. Always combine multiple ops into one call: reads, edits, creates, deletes, and bash can all coexist. Avoid: 3 separate batch calls for 3 edits. Do: 1 batch call with 3 ops in the o array.",
-			"Prefer write-then-execute for scripts: write code to ./tmp/ via o:'write', then run it via o:'bash'. File ops complete before bash ops, so this is guaranteed safe. Avoid bash python -c '...' or node -e '...' for anything beyond a simple one-liner.",
-		].join("\n"),
+		description: "Unified tool for file ops (read/write/edit/delete/patch), shell commands, and web operations.",
 		promptSnippet: "Batch operations — run multiple file ops and bash commands in one call",
-		promptGuidelines: guidelines,
+		promptGuidelines: [
+			"ALWAYS combine pending operations into a single `batch` call.",
+			"File ops run sequentially; bash ops run in parallel after file and web ops complete.",
+			"Use `o: 'write'` then `o: 'bash'` to run scripts.",
+			"Use `w: [...]` for web search/fetch.",
+			...(toolOptimize ? ["In this mode batch is your ONLY edit tool — there is no separate edit command."] : []),
+		],
 		parameters: WeavePatchParams,
 		prepareArguments: prepareArguments,
 
@@ -436,7 +448,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 			input: unknown,
 			signal: AbortSignal | undefined,
 			onUpdate: BatchOnUpdate | undefined,
-			ctx: { cwd: string },
+			ctx: ExtensionContext,
 		) {
 			const prepared = prepareArguments(input);
 			// prepareArguments always returns { o: [...] }, but handle
@@ -445,8 +457,13 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 				? prepared as FileOpInput[]
 				: (prepared as { o: FileOpInput[] }).o;
 
-			if (!Array.isArray(ops) || ops.length === 0) {
-				throw new Error("Error: o array is required and must not be empty.");
+			// Extract web ops (pass-through, no normalization needed)
+			const webOps = (prepared as { w?: unknown[] }).w;
+
+			const hasFileOps = Array.isArray(ops) && ops.length > 0;
+			const hasWebOps = Array.isArray(webOps) && webOps.length > 0;
+			if (!hasFileOps && !hasWebOps) {
+				throw new Error("Error: o or w array must not be empty.");
 			}
 
 			if (signal?.aborted) {
@@ -456,11 +473,13 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 			// Split ops into file ops and bash ops
 			const fileOps: FileOpInput[] = [];
 			const bashOps: FileOpInput[] = [];
-			for (const op of ops) {
-				if (op.o === "bash") {
-					bashOps.push(op);
-				} else {
-					fileOps.push(op);
+			if (hasFileOps) {
+				for (const op of ops) {
+					if (op.o === "bash") {
+						bashOps.push(op);
+					} else {
+						fileOps.push(op);
+					}
 				}
 			}
 
@@ -474,7 +493,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 				fileResults = fileOutput.results;
 			}
 
-			// Emit update after file ops before bash ops begin
+			// Emit update after file ops
 			if (onUpdate && fileOps.length > 0) {
 				onUpdate({
 					content: [{ type: "text", text: fileContentText }],
@@ -482,8 +501,33 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 				});
 			}
 
-			// Execute bash ops in parallel after file ops complete.
-			// Bash ops run regardless of file op failures.
+			// Execute web ops after file ops, before bash ops (sequential)
+			let webContentText = "";
+			let webResults: import("./constants.js").OpResult[] = [];
+
+			if (Array.isArray(webOps) && webOps.length > 0) {
+				try {
+					const webOutput = await runWebOps({ op: webOps as import("../tools/web-ops.js").WebOpInput[] }, ctx, signal);
+					webContentText = webOutput.content[0].text;
+					webResults = webOutput.details.ops as unknown as import("./constants.js").OpResult[];
+				} catch (err) {
+					// Catastrophic failure in runWebOps itself (should not happen with per-op handling)
+					const errorText = err instanceof Error ? err.message : String(err);
+					webContentText = `\n--- web error (unexpected) ---\n${errorText}`;
+					webResults = [];
+				}
+
+				// Emit update after web ops
+				if (onUpdate) {
+					onUpdate({
+						content: [{ type: "text", text: [fileContentText, webContentText].filter(Boolean).join("\n") }],
+						details: { results: [...fileResults, ...webResults] },
+					});
+				}
+			}
+
+			// Execute bash ops in parallel after file and web ops complete.
+			// Bash ops run regardless of file or web op failures.
 			let bashResults: import("./constants.js").OpResult[] = [];
 			let bashContentText = "";
 
@@ -536,11 +580,11 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 			}
 
 			// Combine results
-			const allResults = [...fileResults, ...bashResults];
-			const contentText = [fileContentText, bashContentText].filter(Boolean).join("\n");
+			const allResults = [...fileResults, ...webResults, ...bashResults];
+			const contentText = [fileContentText, webContentText, bashContentText].filter(Boolean).join("\n");
 
 			// Emit final update after bash ops complete
-			if (onUpdate && bashOps.length > 0) {
+			if (onUpdate && (bashOps.length > 0 || (Array.isArray(webOps) && webOps.length > 0))) {
 				onUpdate({
 					content: [{ type: "text", text: contentText }],
 					details: { results: allResults },

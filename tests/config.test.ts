@@ -389,25 +389,25 @@ describe("loadFlowSettings", () => {
 		expect(result).toEqual({ toolOptimize: false });
 	});
 
-	it("reads and merges sessionMode settings", () => {
+	it("reads and merges complexity settings", () => {
 		writeGlobalSettings({
 			flowSettings: {
-				sessionMode: "fast",
+				complexity: "simple",
 			},
 		});
 		writeProjectSettings(tmpDir, {
 			flowSettings: {
-				sessionMode: "long",
+				complexity: "complex",
 			},
 		});
 		const result = loadFlowSettings(tmpDir);
-		expect(result).toEqual({ sessionMode: "long" });
+		expect(result).toEqual({ complexity: "complex" });
 	});
 
-	it("ignores invalid sessionMode settings", () => {
+	it("ignores invalid complexity settings", () => {
 		writeGlobalSettings({
 			flowSettings: {
-				sessionMode: "extra-long",
+				complexity: "invalid",
 			},
 		});
 		const result = loadFlowSettings(tmpDir);

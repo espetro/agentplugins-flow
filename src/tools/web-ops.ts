@@ -1,63 +1,41 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@earendil-works/pi-coding-agent";
-import { Text, TruncatedText } from "@earendil-works/pi-tui";
-import { Type, type Static } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
-import { appendDirectiveOnce } from "../steering/tool-utils.js";
-import { scrambleManager, runScrambleTimer } from "../tui/scramble/index.js";
-import { stripAnsi } from "../tui/render-utils.js";
 import { logWarn } from "../config/log.js";
 
 // ---------------------------------------------------------------------------
-// Schema
+// Types
 // ---------------------------------------------------------------------------
 
-const searchOp = Type.Object({
-	o: Type.Literal("search"),
-	q: Type.String({ minLength: 1, description: "Search query" }),
-});
-
-const fetchOp = Type.Object({
-	o: Type.Literal("fetch"),
-	u: Type.String({ minLength: 1, description: "URL to fetch" }),
-	f: Type.Optional(
-		Type.Union([Type.Literal("markdown"), Type.Literal("text"), Type.Literal("html")], {
-			description: "Output format (default: markdown)",
-		}),
-	),
-});
-
-const webSchema = Type.Object({
-	op: Type.Array(Type.Union([searchOp, fetchOp]), {
-		minItems: 1,
-		description: "Array of web operations to perform",
-	}),
-});
-
-type WebParams = Static<typeof webSchema>;
-
-type SearchResult = {
+export type SearchResult = {
 	title: string;
 	url: string;
 	snippet: string;
 	source: "brave" | "duckduckgo";
 };
 
+export type WebOpInput =
+	| { o: "search"; q: string }
+	| { o: "fetch"; u: string; f?: string };
+
+export type WebOpsParams = {
+	op: WebOpInput[];
+};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_SEARCH_RESULTS = 4;
-const MAX_SEARCH_SNIPPET_CHARS = 160;
-const MAX_MARKDOWN_CHARS = 200_000;
-const MAX_FETCH_BYTES = 5_000_000;
-const PREVIEW_CHARS = 500;
-const ALLOWED_CONTENT_TYPES = [
+export const MAX_SEARCH_RESULTS = 4;
+export const MAX_SEARCH_SNIPPET_CHARS = 160;
+export const MAX_MARKDOWN_CHARS = 200_000;
+export const MAX_FETCH_BYTES = 5_000_000;
+export const PREVIEW_CHARS = 500;
+export const ALLOWED_CONTENT_TYPES = [
 	"text/html",
 	"application/xhtml+xml",
 	"text/plain",
@@ -66,105 +44,43 @@ const ALLOWED_CONTENT_TYPES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Tool factory
-// ---------------------------------------------------------------------------
-
-function formatWebOpsSummary(args: Record<string, unknown>): string {
-	const ops = (args as any)?.op as Array<{ o: string; q?: string; u?: string }> | undefined;
-	if (!ops || ops.length === 0) return "web";
-	if (ops.length === 1) {
-		const op = ops[0];
-		if (op.o === "search") return `search: "${op.q ?? ""}"`;
-		if (op.o === "fetch") return `fetch: ${op.u ?? ""}`;
-	}
-	const counts: Record<string, number> = {};
-	for (const op of ops) {
-		counts[op.o] = (counts[op.o] || 0) + 1;
-	}
-	const parts: string[] = [];
-	if (counts.search > 0) parts.push(`${counts.search} search`);
-	if (counts.fetch > 0) parts.push(`${counts.fetch} fetch`);
-	return `✔ ${parts.join(", ")}`;
-}
-
-export function createWebTool() {
-	return {
-		name: "web",
-		label: "Web",
-		description:
-			"Perform web operations: search or fetch pages. Pass an array of ops: [{ o: 'search', q: '...' }] or [{ o: 'fetch', u: '...', f: 'markdown' }].",
-		promptSnippet: "Search the web or fetch a webpage when local files are insufficient",
-		promptGuidelines: [
-			"Pass ops as an array: [{ o: 'search', q: '<query>' }] to find pages.",
-			"Pass ops as an array: [{ o: 'fetch', u: '<url>', f: 'markdown' }] to download a URL. Content is saved to a temp file — use the `read` tool to access it in chunks.",
-			"The `web` tool returns the file path, title, content length, and a short preview of the content when fetching.",
-			"Do NOT ask the `web` tool a question directly. Search or fetch first, then read the results or file to find what you need.",
-			`Results are truncated to ${DEFAULT_MAX_LINES} lines and ${DEFAULT_MAX_BYTES} bytes per Pi spec.`,
-		],
-		parameters: webSchema,
-
-		async execute(
-			_toolCallId: string,
-			params: WebParams,
-			signal: AbortSignal | undefined,
-			_onUpdate: unknown,
-			ctx: ExtensionContext,
-		) {
-			return runWebOps(params, ctx, signal);
-		},
-
-		renderCall(args: Record<string, unknown>, theme: { fg: (color: string, text: string) => string }): Text {
-			const summary = formatWebOpsSummary(args);
-			return new Text(theme.fg("muted", "web ") + theme.fg("accent", summary), 0, 0);
-		},
-
-		renderResult(
-			result: { content?: Array<{ type: string; text?: string }> },
-			{ expanded }: { expanded: boolean },
-			_theme: any,
-			args?: Record<string, unknown>,
-		): Text | TruncatedText {
-			const fullText = result.content?.find((c) => c.type === "text")?.text ?? "";
-			const canAnimate = !!(args as any)?.invalidate && !!(args as any)?.state;
-			if (!canAnimate) {
-				if (!expanded) {
-					const summary = fullText.split("\n")[0] ?? "";
-					return new TruncatedText(scrambleManager.renderStatic(summary), 0, 0);
-				}
-				return new Text(scrambleManager.renderStatic(fullText), 0, 0);
-			}
-			const now = Date.now();
-			const id = (args as any)?.toolCallId || (args as any)?.id || "web";
-			if (!expanded) {
-				const summary = fullText.split("\n")[0] ?? "";
-				const scrambled = scrambleManager.updateText(id, "result", stripAnsi(summary), now, false).content;
-				runScrambleTimer(args as Record<string, any> | undefined);
-				return new TruncatedText(scrambled, 0, 0);
-			}
-			const scrambled = scrambleManager.updateText(id, "result", stripAnsi(fullText), now, false).content;
-			runScrambleTimer(args as Record<string, any> | undefined);
-			return new Text(scrambled, 0, 0);
-		},
-	};
-}
-
-// ---------------------------------------------------------------------------
 // Core dispatch
 // ---------------------------------------------------------------------------
 
-async function runWebOps(params: WebParams, ctx: ExtensionContext, signal?: AbortSignal) {
+export async function runWebOps(
+	params: WebOpsParams,
+	ctx: { sessionManager: { getSessionDir(): string } },
+	signal?: AbortSignal,
+) {
 	const parts: string[] = [];
 	const details: Array<Record<string, unknown>> = [];
 
 	for (const op of params.op) {
 		if (op.o === "search") {
-			const result = await runWebSearch({ query: op.q }, ctx, signal);
-			parts.push(result.content[0].text);
-			details.push({ o: "search", q: op.q, ...result.details });
+			try {
+				const result = await runWebSearch({ query: op.q }, signal);
+				parts.push(result.content[0].text);
+				details.push({ op: "search", q: op.q, status: "ok", ...result.details });
+			} catch (err) {
+				const errorText = err instanceof Error ? err.message : String(err);
+				parts.push(`--- web error (search: "${op.q}") ---\n${errorText}`);
+				details.push({ op: "search", q: op.q, status: "error", error: errorText });
+			}
+		} else if (op.o === "fetch") {
+			try {
+				const result = await runWebFetch({ url: op.u, format: op.f }, ctx, signal);
+				parts.push(result.content[0].text);
+				details.push({ op: "fetch", u: op.u, f: op.f, status: "ok", ...result.details });
+			} catch (err) {
+				const errorText = err instanceof Error ? err.message : String(err);
+				parts.push(`--- web error (fetch: ${op.u}) ---\n${errorText}`);
+				details.push({ op: "fetch", u: op.u, f: op.f, status: "error", error: errorText });
+			}
 		} else {
-			const result = await runWebFetch({ url: op.u, format: op.f }, ctx, signal);
-			parts.push(result.content[0].text);
-			details.push({ o: "fetch", u: op.u, f: op.f, ...result.details });
+			const unknownOp = op as Record<string, unknown>;
+			const errorText = `Unknown web operation: ${unknownOp.o}`;
+			parts.push(`--- web error ---\n${errorText}`);
+			details.push({ op: String(unknownOp.o), status: "error", error: errorText });
 		}
 	}
 
@@ -174,21 +90,18 @@ async function runWebOps(params: WebParams, ctx: ExtensionContext, signal?: Abor
 		maxBytes: DEFAULT_MAX_BYTES,
 	}).content;
 
-	const webResult = {
+	return {
 		content: [{ type: "text" as const, text: truncated }],
 		details: { ops: details },
 	};
-	appendDirectiveOnce(webResult);
-	return webResult;
 }
 
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
 
-async function runWebSearch(
+export async function runWebSearch(
 	params: { query: string },
-	_ctx: ExtensionContext,
 	signal?: AbortSignal,
 ) {
 	const { results, errors } = await searchKeyless(params.query, signal);
@@ -219,7 +132,7 @@ async function runWebSearch(
 	};
 }
 
-async function searchKeyless(
+export async function searchKeyless(
 	query: string,
 	signal?: AbortSignal,
 ): Promise<{ results: SearchResult[]; errors: string[] }> {
@@ -372,9 +285,9 @@ async function duckDuckGoHtmlSearch(query: string, signal?: AbortSignal): Promis
 // Fetch
 // ---------------------------------------------------------------------------
 
-async function runWebFetch(
+export async function runWebFetch(
 	params: { url: string; format?: string },
-	ctx: ExtensionContext,
+	ctx: { sessionManager: { getSessionDir(): string } },
 	signal?: AbortSignal,
 ) {
 	validateFetchUrl(params.url);
@@ -524,7 +437,7 @@ function fetchWithCurl(url: string, signal?: AbortSignal): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Utilities (exported for testing)
+// Utilities
 // ---------------------------------------------------------------------------
 
 export function extractSnippet(raw: string, title: string): string {
@@ -642,7 +555,7 @@ export function stripMarkdownFormatting(markdown: string): string {
 		.replace(/^>\s+/gm, "") // blockquotes
 		.replace(/^---+$/gm, "") // horizontal rules
 		.replace(/^\|.*\|$/gm, (row) =>
-			/^[\s|:-]+$/.test(row)
+			/[\s|:-]+$/.test(row)
 				? ""
 				: row
 						.replace(/^\||\|$/g, "")
@@ -676,6 +589,19 @@ async function writeTempFile(
 	return filePath;
 }
 
+function browserHeaders(): HeadersInit {
+	return {
+		"User-Agent":
+			"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+		Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+		"Accept-Language": "en-US,en;q=0.9",
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Prompt steering helpers
+// ---------------------------------------------------------------------------
+
 export function looksLikeUrlPrompt(prompt: string | undefined): boolean {
 	if (!prompt) return false;
 	return /(https?:\/\/\S+|www\.\S+)/i.test(prompt);
@@ -699,13 +625,4 @@ export function looksLikeWebSearchPrompt(prompt: string | undefined): boolean {
 	];
 
 	return patterns.some((re) => re.test(text));
-}
-
-function browserHeaders(): HeadersInit {
-	return {
-		"User-Agent":
-			"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-		Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-		"Accept-Language": "en-US,en;q=0.9",
-	};
 }

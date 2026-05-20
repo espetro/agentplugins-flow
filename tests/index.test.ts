@@ -23,6 +23,13 @@ vi.mock("../src/flow/index.js", async (importOriginal) => {
 	};
 });
 
+vi.mock("../src/core2/snapshot.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/core2/snapshot.js")>();
+	return {
+		...actual,
+		buildCore2Snapshot: vi.fn((...args: any[]) => actual.buildCore2Snapshot(...args)),
+	};
+});
 
 
 function createMockPi() {
@@ -96,7 +103,7 @@ describe("flow tool execute", () => {
 		delete process.env.PI_FLOW_STACK;
 		process.env.PI_FLOW_MAX_DEPTH = "2";
 		delete process.env.PI_FLOW_PREVENT_CYCLES;
-		delete process.env.PI_FLOW_SESSION_MODE;
+		delete process.env.PI_FLOW_COMPLEXITY;
 		delete process.env.PI_CODING_AGENT_DIR;
 	});
 
@@ -155,7 +162,7 @@ describe("flow tool execute", () => {
 			},
 			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", toolCallId: "bash-call-1", arguments: { command: "echo normal" } }], timestamp: 3 } },
 			{ type: "message", message: { role: "toolResult", toolCallId: "bash-call-1", name: "bash", content: [{ type: "text", text: "normal bash output" }], timestamp: 4 } },
-			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: { flow: [{ type: "scout", intent: "Prior flow" }] } }], timestamp: 5 } },
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: { flow: [{ type: "scout", intent: "Prior flow", complexity: "moderate" }] } }], timestamp: 5 } },
 			{ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [{ type: "text", text: "prior flow result should be inherited" }], timestamp: 6 } },
 			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Implementation summary after transition — [build] flow completed with files modified" }], timestamp: 7 } },
 			{ type: "message", message: { role: "user", content: "Current request should be inherited from /src/config.ts and applied consistently", timestamp: 8 } },
@@ -164,7 +171,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -236,7 +243,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -300,7 +307,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -350,7 +357,7 @@ describe("flow tool execute", () => {
 					role: "assistant",
 					content: [
 						{ type: "text", text: "Text before transition." },
-						{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: { flow: [{ type: "debug", intent: "Prior debug" }] } },
+						{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: { flow: [{ type: "debug", intent: "Prior debug", complexity: "moderate" }] } },
 						{ type: "text", text: "Text after transition — [debug] completed." },
 					],
 					timestamp: 2,
@@ -363,7 +370,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -417,7 +424,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "SCOUT", intent: "Discover things" }], confirmProjectFlows: false },
+			{ flow: [{ type: "SCOUT", intent: "Discover things", complexity: "moderate" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -429,7 +436,7 @@ describe("flow tool execute", () => {
 		expect(runFlowArgs.flowName).toBe("scout");
 	});
 
-	it("exposes sessionMode in the tool schema and passes per-flow mode to runFlow", async () => {
+	it("exposes complexity in the tool schema and passes per-flow mode to runFlow", async () => {
 		setupFlowsDir([
 			{
 				fileName: "build.md",
@@ -438,12 +445,12 @@ describe("flow tool execute", () => {
 		]);
 
 		const pi = createMockPi();
-		pi.setFlag("flow-session-mode", "fast");
+		pi.setFlag("flow-complexity", "simple");
 		registerExtension(pi as any);
 		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
 
 		const tool = pi.getTool("flow");
-		expect(tool.parameters.properties.flow.items.properties.sessionMode).toBeDefined();
+		expect(tool.parameters.properties.flow.items.properties.complexity).toBeDefined();
 
 		vi.mocked(runFlow).mockResolvedValue({
 			type: "build",
@@ -458,17 +465,17 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Run full checks", aim: "Run checks", sessionMode: "long" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Run full checks", aim: "Run checks", complexity: "complex" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
 		);
 
-		expect(vi.mocked(runFlow).mock.calls[0][0].sessionMode).toBe("long");
+		expect(vi.mocked(runFlow).mock.calls[0][0].complexity).toBe("complex");
 	});
 
-	it("uses PI_FLOW_SESSION_MODE as the default flow session mode", async () => {
-		process.env.PI_FLOW_SESSION_MODE = "long";
+	it("uses PI_FLOW_COMPLEXITY as the default complexity", async () => {
+		process.env.PI_FLOW_COMPLEXITY = "complex";
 		setupFlowsDir([
 			{
 				fileName: "scout.md",
@@ -500,7 +507,7 @@ describe("flow tool execute", () => {
 			makeMockCtx(tmpDir),
 		);
 
-		expect(vi.mocked(runFlow).mock.calls[0][0].sessionMode).toBe("long");
+		expect(vi.mocked(runFlow).mock.calls[0][0].complexity).toBe("complex");
 	});
 
 	it("detects cycles case-insensitively", async () => {
@@ -523,7 +530,7 @@ describe("flow tool execute", () => {
 		await expect(
 			tool.execute(
 				"call-1",
-				{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+				{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 				new AbortController().signal,
 				undefined,
 				makeMockCtx(tmpDir),
@@ -559,7 +566,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			vi.fn(),
 			makeMockCtx(tmpDir),
@@ -732,7 +739,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			onUpdate,
 			makeMockCtx(tmpDir),
@@ -793,7 +800,7 @@ describe("flow tool execute", () => {
 		const onUpdateCalls: any[] = [];
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			(update: any) => onUpdateCalls.push(update),
 			makeMockCtx(tmpDir),
@@ -883,7 +890,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -937,7 +944,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -993,7 +1000,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1036,7 +1043,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1109,7 +1116,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", aim: "Fix bug" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1169,7 +1176,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", aim: "Fix bug" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1225,7 +1232,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", aim: "Fix bug" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1268,7 +1275,7 @@ describe("main agent tool restriction", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("restricts main agent to batch_read+flow+web+ask_user when toolOptimize is true", async () => {
+	it("restricts main agent to batch_read+flow+trace+ask_user when toolOptimize is true", async () => {
 		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
 
 		const pi = createMockPi();
@@ -1278,7 +1285,7 @@ describe("main agent tool restriction", () => {
 
 		expect(pi.setActiveTools).toHaveBeenCalled();
 		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls[0][0];
-		expect(calledWith).toEqual(["batch_read", "flow", "web", "ask_user"]);
+		expect(calledWith).toEqual(["batch_read", "flow", "trace", "ask_user"]);
 	});
 
 	it("restores legacy read+write+edit+batch when toolOptimize is false", async () => {
@@ -1297,7 +1304,7 @@ describe("main agent tool restriction", () => {
 		expect(calledWith).toContain("batch");
 		expect(calledWith).toContain("bash");
 		expect(calledWith).toContain("flow");
-		expect(calledWith).toContain("web");
+		expect(calledWith).not.toContain("web");
 	});
 
 	it("defers setActiveTools to session_start, not extension loading", async () => {
@@ -1315,7 +1322,7 @@ describe("main agent tool restriction", () => {
 		expect(pi.setActiveTools).toHaveBeenCalled();
 	});
 
-	it("re-applies batch_read+flow+web on turn_start when optimized", async () => {
+	it("re-applies batch_read+flow+trace+ask_user on turn_start when optimized", async () => {
 		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
 
 		const pi = createMockPi();
@@ -1329,7 +1336,7 @@ describe("main agent tool restriction", () => {
 
 		expect(pi.setActiveTools).toHaveBeenCalledTimes(afterSession + 1);
 		const lastCall = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls.at(-1)[0];
-		expect(lastCall).toEqual(["batch_read", "flow", "web", "ask_user"]);
+		expect(lastCall).toEqual(["batch_read", "flow", "trace", "ask_user"]);
 	});
 
 	it("restores legacy+batch tools on turn_start when toolOptimize is false", async () => {
@@ -1351,7 +1358,7 @@ describe("main agent tool restriction", () => {
 		expect(lastCall).toContain("batch");
 		expect(lastCall).toContain("bash");
 		expect(lastCall).toContain("flow");
-		expect(lastCall).toContain("web");
+		expect(lastCall).not.toContain("web");
 	});
 
 	it("parses env PI_FLOW_TOOL_OPTIMIZE via parseBoolean (yes/on/no/off)", async () => {
@@ -1364,7 +1371,7 @@ describe("main agent tool restriction", () => {
 
 		expect(pi.setActiveTools).toHaveBeenCalled();
 		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls[0][0];
-		expect(calledWith).toEqual(["batch_read", "flow", "web", "ask_user"]);
+		expect(calledWith).toEqual(["batch_read", "flow", "trace", "ask_user"]);
 	});
 
 	it("registers batch_read for main agent; batch/batch_bash_poll reserved for children", async () => {
@@ -1375,15 +1382,15 @@ describe("main agent tool restriction", () => {
 
 		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
 
-		// Main agent (depth 0): only batch_read is registered; batch/batch_bash_poll/timedBash reserved for child flows
+		// Main agent (depth 0): batch_read registered; batch/batch_bash_poll/timedBash reserved for child flows
 		expect(pi.getTool("batch_read")).toBeDefined();
 		expect(pi.getTool("batch")).toBeUndefined();
 		expect(pi.getTool("batch_bash_poll")).toBeUndefined();
 		expect(pi.getTool("bash")).toBeUndefined();
 
-		// Main agent active tools: batch_read + flow + web + ask_user (batch and batch_bash_poll registered but not active)
+		// Main agent active tools: batch_read + flow + trace + ask_user (batch and batch_bash_poll registered but not active)
 		const lastCall = pi.setActiveTools.mock.calls[pi.setActiveTools.mock.calls.length - 1][0];
-		expect(lastCall).toEqual(["batch_read", "flow", "web", "ask_user"]);
+		expect(lastCall).toEqual(["batch_read", "flow", "trace", "ask_user"]);
 	});
 
 	it("does NOT override active tools for child flows (depth > 0)", async () => {
@@ -1399,9 +1406,9 @@ describe("main agent tool restriction", () => {
 		// Child flow should NOT have setActiveTools called (no override)
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
 
-		// Child flow (depth > 0): batch, batch_bash_poll, and bash ARE registered.
-		// batch_read is NOT registered for children — they use batch for reads.
-		expect(pi.getTool("batch_read")).toBeUndefined();
+		// Child flow (depth > 0): batch, batch_bash_poll, bash, and batch_read ARE registered.
+		// batch_read is now registered at all depths for trace and read-only child operations.
+		expect(pi.getTool("batch_read")).toBeDefined();
 		expect(pi.getTool("batch")).toBeDefined();
 		expect(pi.getTool("batch_bash_poll")).toBeDefined();
 		expect(pi.getTool("bash")).toBeDefined();
@@ -1454,16 +1461,15 @@ describe("web tool integration", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("registers web tool during extension loading", async () => {
+	it("does not register standalone web tool during extension loading (merged into batch)", async () => {
 		const pi = createMockPi();
 		registerExtension(pi as any);
 
 		const tool = pi.getTool("web");
-		expect(tool).toBeDefined();
-		expect(tool.name).toBe("web");
+		expect(tool).toBeUndefined();
 	});
 
-	it("includes web tool in active tools on session_start when not optimized", async () => {
+	it("does not include web tool in active tools on session_start when not optimized (merged into batch)", async () => {
 		process.env.PI_FLOW_TOOL_OPTIMIZE = "0";
 
 		const pi = createMockPi();
@@ -1473,7 +1479,7 @@ describe("web tool integration", () => {
 
 		expect(pi.setActiveTools).toHaveBeenCalled();
 		const lastCall = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls.at(-1)[0];
-		expect(lastCall).toContain("web");
+		expect(lastCall).not.toContain("web");
 	});
 
 	it("adds URL steering when prompt contains a URL and toolOptimize is false", async () => {
@@ -1543,5 +1549,281 @@ describe("web tool integration", () => {
 		expect(modified.systemPrompt).not.toContain("Start from a clean slate with only the intent.");
 		expect(modified.systemPrompt).not.toContain("pi-web steering");
 	});
-});
 
+	it("registers trace tool at all depths", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		const trace = pi.getTool("trace");
+		expect(trace).toBeDefined();
+		expect(trace.name).toBe("trace");
+		expect(trace.parameters.properties).toHaveProperty("ids");
+		expect(trace.parameters.properties).toHaveProperty("remark");
+	});
+
+	it("registers trace tool for child flows (depth > 0)", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
+		process.env.PI_FLOW_DEPTH = "1";
+		process.env.PI_FLOW_STACK = JSON.stringify(["explore"]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		expect(pi.getTool("trace")).toBeDefined();
+	});
+
+	describe("trace tool execute", () => {
+		function makeBranch(messages: any[]) {
+			return messages.map((m, i) => ({ type: "message", message: { timestamp: i, ...m } }));
+		}
+
+		beforeEach(() => {
+			vi.mocked(runFlow).mockReset();
+			vi.mocked(runFlow).mockResolvedValue({
+				type: "trace",
+				agentSource: "bundled",
+				intent: "mocked",
+				aim: "mocked",
+				exitCode: 0,
+				messages: [{ role: "assistant", content: [{ type: "text", text: "Trace synthesis" }] }],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			} as any);
+		});
+
+		it("spawns trace flow with replayed results as preDispatch", async () => {
+			const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			const trace = pi.getTool("trace");
+			const branch = makeBranch([
+				{ role: "tool", toolCallId: "call-a", content: "Result A" },
+				{ role: "toolResult", tool_call_id: "call-b", content: [{ type: "text", text: "Result B" }] },
+			]);
+
+			await trace.execute(
+				"trace-call-1",
+				{ ids: ["call-b", "call-a"], remark: "Summary" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => branch,
+						getSessionId: () => "test",
+					},
+				},
+			);
+
+			expect(vi.mocked(runFlow).mock.calls.length).toBe(1);
+			const args = vi.mocked(runFlow).mock.calls[0][0];
+			expect(args.flowName).toBe("trace");
+			expect(args.complexity).toBe("snap");
+			expect(args.maxDepth).toBe(0);
+			expect(args.intent).toBe("Summary");
+			expect(args.preDispatchResults).toContain("Result B");
+			expect(args.preDispatchResults).toContain("Result A");
+		});
+
+		it("passes default intent when remark is empty", async () => {
+			const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			const trace = pi.getTool("trace");
+			await trace.execute(
+				"trace-call-2",
+				{ ids: [], remark: "" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => [],
+						getSessionId: () => "test",
+					},
+				},
+			);
+
+			const args = vi.mocked(runFlow).mock.calls[0][0];
+			expect(args.intent).toBe("trace and reflect on prior tool results");
+			expect(args.preDispatchResults).toBeUndefined();
+		});
+
+		it("silently skips missing ids in preDispatch", async () => {
+			const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			const trace = pi.getTool("trace");
+			const branch = makeBranch([
+				{ role: "tool", toolCallId: "call-a", content: "Result A" },
+			]);
+
+			await trace.execute(
+				"trace-call-3",
+				{ ids: ["call-missing", "call-a"], remark: "Done" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => branch,
+						getSessionId: () => "test",
+					},
+				},
+			);
+
+			const args = vi.mocked(runFlow).mock.calls[0][0];
+			expect(args.preDispatchResults).toContain("Result A");
+			expect(args.preDispatchResults).not.toContain("call-missing");
+		});
+
+		it("returns runFlow result as tool result", async () => {
+			const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			vi.mocked(runFlow).mockResolvedValue({
+				type: "trace",
+				agentSource: "bundled",
+				intent: "test",
+				aim: "test",
+				exitCode: 0,
+				messages: [{ role: "assistant", content: [{ type: "text", text: "Synthesis output" }] }],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			} as any);
+
+			const trace = pi.getTool("trace");
+			const result = await trace.execute(
+				"trace-call-4",
+				{ ids: ["call-a"], remark: "" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => makeBranch([{ role: "tool", toolCallId: "call-a", content: "Result A" }]),
+						getSessionId: () => "test",
+					},
+				},
+			);
+
+			expect(result.content[0].text).toContain("Synthesis output");
+			expect(result.content[0].text).toContain("[Directive:");
+		});
+
+		it("includes marks annotations in preDispatch", async () => {
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		const trace = pi.getTool("trace");
+		const branch = makeBranch([
+			{ role: "tool", toolCallId: "call-a", content: "Result A" },
+		]);
+
+		await trace.execute(
+			"trace-call-marks",
+			{ ids: ["call-a"], remark: "Verify marks", marks: [{ id: "call-a", useful: false, note: "stale result" }] },
+			undefined,
+			undefined,
+			{
+				...makeMockCtx(tmpDir),
+				sessionManager: {
+					getHeader: () => ({}),
+					getBranch: () => branch,
+					getSessionId: () => "test",
+				},
+			},
+		);
+
+		const args = vi.mocked(runFlow).mock.calls[0][0];
+		expect(args.preDispatchResults).toContain("<!-- mark: STALE — stale result -->");
+		expect(args.preDispatchResults).toContain("<!-- tool_call_id: call-a -->");
+	});
+
+	it("throws when buildCore2Snapshot returns null", async () => {
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		const { buildCore2Snapshot } = await import("../src/core2/snapshot.js");
+		vi.mocked(buildCore2Snapshot).mockReturnValue(null);
+
+		const trace = pi.getTool("trace");
+		await expect(
+			trace.execute(
+				"trace-call-null",
+				{ ids: ["call-a"], remark: "Test" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => makeBranch([{ role: "tool", toolCallId: "call-a", content: "Result A" }]),
+						getSessionId: () => "test",
+					},
+				},
+			),
+		).rejects.toThrow("Trace failed: invalid session snapshot");
+	});
+
+	it("includes child tool results in the output", async () => {
+		const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			vi.mocked(runFlow).mockResolvedValue({
+				type: "trace",
+				agentSource: "bundled",
+				intent: "test",
+				aim: "test",
+				exitCode: 0,
+				messages: [
+					{ role: "assistant", content: [{ type: "text", text: "Let me check the files." }] },
+					{ role: "tool", toolCallId: "batch-1", content: [{ type: "text", text: "--- read: src/tools/trace.ts ---\nline1\nline2\nline3" }] },
+					{ role: "assistant", content: [{ type: "text", text: "The trace tool looks correct." }] },
+				],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			} as any);
+
+			const trace = pi.getTool("trace");
+			const result = await trace.execute(
+				"trace-call-5",
+				{ ids: [], remark: "Review" },
+				undefined,
+				undefined,
+				{
+					...makeMockCtx(tmpDir),
+					sessionManager: {
+						getHeader: () => ({}),
+						getBranch: () => [],
+						getSessionId: () => "test",
+					},
+				},
+			);
+
+			expect(result.content[0].text).toContain("## Tool Results");
+			expect(result.content[0].text).toContain("tool_call_id: batch-1");
+			expect(result.content[0].text).toContain("--- read: src/tools/trace.ts");
+			expect(result.content[0].text).toContain("## Synthesis");
+			expect(result.content[0].text).toContain("The trace tool looks correct.");
+			expect(result.content[0].text).not.toContain("[Directive: Dispatch the same");
+		});
+	});
+});

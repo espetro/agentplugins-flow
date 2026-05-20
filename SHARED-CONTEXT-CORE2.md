@@ -62,8 +62,8 @@ The session header's `cwd` field is compressed to save ~50–100 bytes:
 
 | Condition | Result | Example |
 |-----------|--------|---------|
-| `cwd === process.cwd()` | `"."` | `/Users/alice/project` → `"."` |
-| `cwd` starts with `process.cwd() + "/"` | Relative path | `/Users/alice/project/src` → `"src"` |
+| `cwd === process.cwd()` | `"."` | `/Users/dev/project` → `"."` |
+| `cwd` starts with `process.cwd() + "/"` | Relative path | `/Users/dev/project/src` → `"src"` |
 | `cwd` starts with `process.cwd() + "\\"` | Relative path (Windows) | `C:\project\src` → `"src"` |
 | Otherwise | Basename only | `/tmp/some-dir` → `"some-dir"` |
 
@@ -281,3 +281,16 @@ If `isBatchSectionHeader` or `isKnownSectionHeader` regexes change:
 | **JSONL** | JSON Lines format — one JSON object per line, newline-delimited |
 | **Section header** | A line matching `isBatchSectionHeader()` or `isKnownSectionHeader()`, formatted as `--- <path> (<detail>) ---` |
 | **Cold-start dump** | A dump where the session has no history — contains only the HTML header and Activation Prompt, no Session Snapshot section |
+
+## §9 Compaction Awareness
+
+The native `/compact` command in `pi` summarizes conversation history. Core-2 handles this by treating the resulting summary as a verbatim history entry.
+
+### 9.1 Summarization Injection
+To prevent information loss during compaction, `pi-agent-flow` implements a `session_before_compact` hook that injects the current **Goal Objective**, **Acceptance Criteria**, and **Recent Flow History** into the summarization prompt. This ensures that the native "compaction summary" is flow-aware and maintains situational awareness for the current mission.
+
+### 9.2 Post-Compaction Re-anchoring
+After a compaction completes, `pi-agent-flow` sends a non-displaying "orientation" message to the tail of the new history. This message restates the current goal to ensure the agent (and any future child flows) remains anchored to the objective, even if the generic summary is brief.
+
+### 9.3 Goal Persistence in Snapshots
+Regardless of compaction, every child flow's activation prompt (`-p`) includes a `<flow>` block containing the current goal's objective and a summary of completed steps. This provides a "double-entry" safety mechanism ensuring that child flows never lose sight of the higher-level mission, even in heavily compacted sessions.

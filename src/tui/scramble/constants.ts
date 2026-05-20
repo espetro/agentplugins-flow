@@ -62,7 +62,7 @@ export const SPARK_CHARS = '△○☐⠂⠄⠈⠐⠠⡀⢀⠃⠆⠉⠘⠰⡁⢂'
 /** Backward-compat alias */
 export const THIN_BRAILLE_SPARK = SPARK_CHARS;
 
-export const DECORATIVE_ICON_RE = /[✔✅✖❌◐✓]/g;
+export const DECORATIVE_ICON_RE = /[✔✅✖❌◐●]/g;
 export const DIM_ON = '\x1b[2m';
 export const DIM_OFF = '\x1b[22m';
 

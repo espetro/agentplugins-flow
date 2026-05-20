@@ -38,17 +38,18 @@ pi-agent-flow/
 │   ├── settings-resolver.ts   # Runtime settings resolution
 │   ├── depth.ts               # Transition depth & cycle prevention
 │   ├── cli-args.ts            # CLI arg inheritance for child processes
-│   ├── session-mode.ts        # Session timeout mode definitions
+│   ├── complexity.ts          # Complexity & timeout definitions
 │   ├── types.ts               # Shared type definitions
 │   ├── snapshot.ts            # Session snapshot sanitization & compression
 │   ├── flow-prompt.ts         # System prompt augmentation before_agent_start
 │   ├── runner-events.ts       # Pi JSON mode event parser & flow summarizer
 │   ├── structured-output.ts   # JSON structured output extraction
-│   ├── transitions.ts         # Post-flow advisory transition matrix
+│   
 │   ├── render.ts              # TUI rendering for flow calls/results
 │   ├── render-utils.ts        # Text formatting helpers
 │   ├── scramble.ts            # Text animation engine
-│   ├── web-tool.ts            # Web search/fetch tool
+│   ├── web-ops.ts             # Web search/fetch tool
+│   ├── trace.ts               # Replay prior tool results by ID
 │   ├── ask-user.ts            # ask_user interactive prompt tool
 │   ├── batch.ts               # Batch tool barrel re-export
 │   ├── batch/
@@ -85,7 +86,7 @@ pi-agent-flow/
 **Role:** Pi extension plugin registered via `pi.registerTool()`, `pi.registerFlag()`, `pi.on("session_start")`, `pi.on("turn_start")`, `pi.on("before_agent_start")`, `pi.on("context")`.
 
 **Pipeline:**
-1. `pi.registerFlag(...)` — registers 9 CLI flags (flow-max-depth, flow-prevent-cycles, flow-model-config, flow-mode, flow-lite-model, flow-flash-model, flow-full-model, flow-max-concurrency, flow-session-mode, tool-optimize).
+1. `pi.registerFlag(...)` — registers 9 CLI flags (flow-max-depth, flow-prevent-cycles, flow-model-config, flow-mode, flow-lite-model, flow-flash-model, flow-full-model, flow-max-concurrency, flow-complexity, tool-optimize).
 2. `pi.on("session_start")` → `resolveSettings()` → discovers flows, resolves model configs, sets active tools, registers tools based on depth.
 3. `pi.on("turn_start")` → re-applies active tools (survives registry refreshes), resets directive tracker (legacy name: strategic hint tracker).
 4. `pi.on("before_agent_start")` → injects flow list + transition guide into system prompt (root state only).
@@ -130,7 +131,7 @@ pi-agent-flow/
 - Parallel execution via `mapFlowConcurrent()` (bounded by `maxConcurrency`, capped to CPU count)
 - Telemetry (`onFlowMetrics` callback)
 - Result caching (`flowResultCache` with eviction)
-- Post-flow transition advisories (`getTransitionAdvice`)
+
 
 ### 2.5 Depth System
 **File:** `src/flow/depth.ts` (210 lines)  

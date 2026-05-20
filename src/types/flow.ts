@@ -47,8 +47,16 @@ export interface SingleResult {
 	status?: "pending" | "awaiting" | "running" | "done" | "error" | "skipped";
 	/** If this result was auto-spawned as an audit, the type of the parent flow it audited. */
 	auditParentType?: string;
-	/** Which ping-pong cycle this result belongs to (0-indexed). */
-	cycle?: number;
+
+	/** Explicit group ID assigned by the executor so the renderer can group audit-loop builds with their capstone audit regardless of array contiguity. */
+	auditLoopGroupId?: number;
+
+	/** Ping-pong loop metadata — added by executor when auditLoop is used. */
+	pingPongMeta?: {
+		cycles: number;
+		verdicts: Array<{ cycle: number; verdict: string; feedback?: string }>;
+		finalVerdict: string;
+	};
 }
 
 /** Metadata attached to every tool result for rendering. */

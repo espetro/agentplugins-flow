@@ -21,7 +21,7 @@ import { compressOutput } from "./shell-compress.js";
  * per-process AbortControllers, and background lifecycle.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { Type } from "@sinclair/typebox";
 import {
 	type BashOpResult,
@@ -246,6 +246,43 @@ function tailLines(text: string, n: number): string {
 }
 
 /** Generate a short random ID for bash ops that don't provide one. */
+/**
+ * Run a single bash command with output truncation and optional timeout.
+ * Returns a promise that resolves with stdout, stderr, and exitCode.
+ * Uses execFile (synchronous completion) with truncateBashOutput applied.
+ */
+export function runBashWithLimits(
+	command: string,
+	cwd: string,
+	timeoutMs?: number,
+	signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	return new Promise((resolve) => {
+		const child = execFile("bash", ["-c", command], { cwd, timeout: timeoutMs }, (error, stdout, stderr) => {
+			const out = truncateBashOutput(stdout);
+			const err = truncateBashOutput(stderr);
+			if (error) {
+				resolve({ stdout: out, stderr: err, exitCode: error.code as number ?? 1 });
+			} else {
+				resolve({ stdout: out, stderr: err, exitCode: 0 });
+			}
+		});
+		child.stdout?.setEncoding("utf-8");
+		child.stderr?.setEncoding("utf-8");
+		if (signal) {
+			const onAbort = () => {
+				child.kill("SIGTERM");
+				resolve({ stdout: "", stderr: "[aborted]", exitCode: -1 });
+			};
+			if (signal.aborted) {
+				onAbort();
+			} else {
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
+	});
+}
+
 export function generateBashId(): string {
 	return Math.random().toString(36).slice(2, 10);
 }

@@ -2,6 +2,13 @@ export function getMarkdownTheme() {
 	return {};
 }
 
+export const DEFAULT_MAX_BYTES = 102400;
+export const DEFAULT_MAX_LINES = 3000;
+
+export function truncateHead(text: string, _options?: { maxBytes?: number; maxLines?: number }): { content: string } {
+	return { content: text };
+}
+
 let bashToolExecuteImpl: (...args: any[]) => Promise<any> = async () => ({ content: [{ type: "text", text: "" }] });
 export const bashToolExecuteCalls: any[][] = [];
 

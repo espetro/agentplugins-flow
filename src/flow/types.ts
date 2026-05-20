@@ -64,4 +64,5 @@ export interface GoalContext {
   acceptance?: string;
   flowCount?: number;
   maxFlows?: number;
+  completedFlows?: Array<{ type: string; aim: string }>;
 }
