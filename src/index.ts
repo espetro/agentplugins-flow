@@ -109,7 +109,7 @@ const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatc
 
 const FlowItem = Type.Object({
 	type: Type.String({
-		description: "Flow type (scout, debug, build, craft, audit, ideas).",
+		description: "Flow type (scout, debug, build, craft, audit, ideas, override).",
 	}),
 	intent: Type.String({
 		description: "Detailed mission for this flow.",

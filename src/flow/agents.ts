@@ -45,6 +45,7 @@ export function getFlowTier(flowName: string): FlowTier {
 	switch (normalized) {
 		case "scout":
 		case "debug":
+		case "override":
 			return "lite";
 		case "build":
 		case "audit":

@@ -410,6 +410,11 @@ export async function executeOperations(
 						throw new Error("c (content) is required for write operations.");
 					}
 					await withFileMutationQueue(resolvedPath, async () => {
+						let writeStat;
+						try { writeStat = await fs.lstat(resolvedPath); } catch { /* path does not exist yet — safe to write */ }
+						if (writeStat?.isDirectory()) {
+							throw new Error(`Cannot write to directory: ${op.p}. Provide a file path instead.`);
+						}
 						await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
 						await fs.writeFile(resolvedPath, op.c!, "utf-8");
 					});
