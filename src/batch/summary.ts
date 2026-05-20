@@ -9,7 +9,19 @@ function shortenPath(p: string): string {
 	return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 }
 
-function extractBatchOps(args: Record<string, unknown>): Array<{ o: string; p: string; e?: unknown[]; c?: string; s?: number; l?: number; q?: string; t?: string }> {
+export interface PlannedOp {
+	o: string;
+	p: string;
+	e?: unknown[];
+	c?: string;
+	s?: number;
+	l?: number;
+	q?: string;
+	t?: string;
+	u?: string;
+}
+
+export function extractBatchOps(args: Record<string, unknown>): PlannedOp[] {
 	let rawOps: unknown[];
 	if (Array.isArray(args.o)) rawOps = args.o;
 	else if (Array.isArray(args.op)) rawOps = args.op;
@@ -32,7 +44,7 @@ function extractBatchOps(args: Record<string, unknown>): Array<{ o: string; p: s
 		});
 }
 
-function extractWebOps(args: Record<string, unknown>): Array<{ o: string; q?: string; u?: string }> {
+export function extractWebOps(args: Record<string, unknown>): Array<{ o: string; q?: string; u?: string }> {
 	const rawOps = (args as any)?.w;
 	if (!Array.isArray(rawOps)) return [];
 	return rawOps
@@ -88,6 +100,20 @@ function formatOpSummary(op: { o: string; p?: string; e?: unknown[]; c?: string;
 		default:
 			return op.p ? `${op.o} ${shortPath}` : `${op.o}`;
 	}
+}
+
+/** Planned ops in execution order: file ops, web ops, then bash (matches batch execute). */
+export function buildPlannedOps(args: Record<string, unknown>): PlannedOp[] {
+	const all = extractBatchOps(args);
+	const fileOps = all.filter((op) => op.o !== "bash");
+	const bashOps = all.filter((op) => op.o === "bash");
+	const webOps = extractWebOps(args).map((w) => ({
+		o: w.o,
+		p: w.u ?? w.q ?? "",
+		q: w.q,
+		u: w.u,
+	}));
+	return [...fileOps, ...webOps, ...bashOps];
 }
 
 export function formatBatchOpsSummary(args: Record<string, unknown>): string {

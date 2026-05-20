@@ -415,8 +415,8 @@ export function createBatchReadTool() {
 		},
 
 		renderCall: (args: Record<string, unknown>, theme: BatchTheme) => renderBatchReadCall(args, theme),
-		renderResult: (result: any, { expanded }: { expanded: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
-			renderBatchReadResult(result, expanded, theme, args),
+		renderResult: (result: any, { expanded, isPartial }: { expanded: boolean; isPartial?: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
+			renderBatchReadResult(result, { expanded, isPartial: isPartial ?? false }, theme, args),
 	};
 }
 
@@ -600,7 +600,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 		},
 
 		renderCall: (args: Record<string, unknown>, theme: BatchTheme) => renderBatchCall(args, theme),
-		renderResult: (result: any, { expanded }: { expanded: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
-			renderBatchResult(result, expanded, theme, args),
+		renderResult: (result: any, { expanded, isPartial }: { expanded: boolean; isPartial?: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
+			renderBatchResult(result, { expanded, isPartial: isPartial ?? false }, theme, args),
 	};
 }

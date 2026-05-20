@@ -11,7 +11,33 @@ import { Container, Text, TruncatedText } from "@earendil-works/pi-tui";
 import { scrambleManager, runScrambleTimer } from "../tui/scramble/index.js";
 import { stripAnsi } from "../tui/render-utils.js";
 import type { BatchTheme, OpResult } from "./constants.js";
+import { buildPlannedOps, type PlannedOp } from "./summary.js";
 import { italic } from "../tui/render-utils.js";
+
+export interface BatchRenderOptions {
+	expanded: boolean;
+	isPartial?: boolean;
+}
+
+/** Display-only status for ops not yet finished during partial updates. */
+type DisplayOp =
+	| OpResult
+	| {
+			op: OpResult["op"];
+			path?: string;
+			status: "running";
+			command?: string;
+			q?: string;
+			query?: string;
+			url?: string;
+	  };
+
+function normalizeRenderOptions(options: BatchRenderOptions | boolean): BatchRenderOptions {
+	if (typeof options === "boolean") {
+		return { expanded: options, isPartial: false };
+	}
+	return { expanded: options.expanded, isPartial: options.isPartial ?? false };
+}
 /** Reuse a cached root container from args.state so the TUI host's reference stays valid. */
 function reuseRootContainer(
 	args: Record<string, unknown> | undefined,
@@ -48,7 +74,10 @@ function shortenPath(p: string): string {
 	return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 }
 
-function statusIcon(status: OpResult["status"]): string {
+function statusIcon(status: DisplayOp["status"], isPartial: boolean): string {
+	if (isPartial && (status === "ok" || status === "running")) {
+		return "●";
+	}
 	switch (status) {
 		case "ok":
 			return "✓";
@@ -58,12 +87,17 @@ function statusIcon(status: OpResult["status"]): string {
 			return "⊘";
 		case "pending":
 			return "○";
+		case "running":
+			return "●";
 		default:
 			return "?";
 	}
 }
 
-function statusColor(status: OpResult["status"]): string {
+function statusColor(status: DisplayOp["status"], isPartial: boolean): string {
+	if (isPartial && (status === "ok" || status === "running")) {
+		return "warning";
+	}
 	switch (status) {
 		case "ok":
 			return "accent";
@@ -73,12 +107,31 @@ function statusColor(status: OpResult["status"]): string {
 			return "muted";
 		case "pending":
 			return "warning";
+		case "running":
+			return "warning";
 		default:
 			return "muted";
 	}
 }
 
-function formatOpTarget(op: OpResult): string {
+function plannedToDisplayOp(p: PlannedOp): DisplayOp {
+	const op = p.o as OpResult["op"];
+	if (op === "search") return { op, status: "running", q: p.q };
+	if (op === "fetch") return { op, status: "running", url: p.u };
+	if (op === "bash") return { op, status: "running", path: p.p, command: p.c };
+	return { op, path: p.p, status: "running" };
+}
+
+function mergeWithPlanned(results: OpResult[], ctx: Record<string, unknown> | undefined, isPartial: boolean): DisplayOp[] {
+	const toolArgs = (ctx as { args?: Record<string, unknown> } | undefined)?.args;
+	const planned = toolArgs ? buildPlannedOps(toolArgs) : [];
+	if (!isPartial || planned.length === 0 || planned.length <= results.length) {
+		return results;
+	}
+	return planned.map((p, i) => results[i] ?? plannedToDisplayOp(p));
+}
+
+function formatOpTarget(op: DisplayOp): string {
 	switch (op.op) {
 		case "read":
 			return shortenPath(op.path ?? "?");
@@ -103,7 +156,8 @@ function formatOpTarget(op: OpResult): string {
 	}
 }
 
-function formatOpMeta(op: OpResult): string {
+function formatOpMeta(op: DisplayOp): string {
+	if (op.status === "running") return "";
 	const parts: string[] = [];
 	switch (op.op) {
 		case "read": {
@@ -171,7 +225,7 @@ function formatOpMeta(op: OpResult): string {
 	return " · " + parts.join(" · ");
 }
 
-function buildResultHeader(results: OpResult[]): string {
+function buildResultHeader(results: DisplayOp[]): string {
 	const total = results.length;
 	const ok = results.filter((r) => r.status === "ok").length;
 	const err = results.filter((r) => r.status === "error").length;
@@ -212,7 +266,7 @@ function buildResultHeader(results: OpResult[]): string {
 	return parts.join(" · ");
 }
 
-function buildOpContentPreview(op: OpResult, childPrefix: string): string | null {
+function buildOpContentPreview(op: DisplayOp, _childPrefix: string): string | null {
 	if (op.status !== "ok") return null;
 
 	switch (op.op) {
@@ -276,27 +330,29 @@ function extractContainerText(node: any): string {
 
 function renderTreeResult(
 	results: OpResult[],
-	expanded: boolean,
+	options: BatchRenderOptions,
 	theme: BatchTheme,
 	args?: Record<string, unknown>,
 	isBatchRead: boolean = false,
 ): any {
+	const { expanded, isPartial = false } = options;
+	const displayResults = mergeWithPlanned(results, args, isPartial);
 	const container = new Container();
 	const label = isBatchRead ? "batch_read" : "batch";
 
 	// Header line
-	const header = `${label}  ·  ${buildResultHeader(results)}`;
+	const header = `${label}  ·  ${buildResultHeader(displayResults)}`;
 	container.addChild(new Text(theme.fg("muted", header), 0, 0));
 
 	// Tree lines
-	for (let i = 0; i < results.length; i++) {
-		const op = results[i];
-		const isLast = i === results.length - 1;
+	for (let i = 0; i < displayResults.length; i++) {
+		const op = displayResults[i];
+		const isLast = i === displayResults.length - 1;
 		const treePrefix = isLast ? "└─" : "├─";
 		const childPrefix = isLast ? "   " : "│  ";
 
-		const icon = statusIcon(op.status);
-		const iconColored = theme.fg(statusColor(op.status), icon);
+		const icon = statusIcon(op.status, isPartial);
+		const iconColored = theme.fg(statusColor(op.status, isPartial), icon);
 		const target = formatOpTarget(op);
 		const meta = formatOpMeta(op);
 
@@ -375,28 +431,30 @@ function renderLegacyResult(
 
 export function renderBatchResult(
 	result: { content?: Array<{ type: string; text?: string }>; details?: { results?: OpResult[] } },
-	expanded: boolean,
+	options: BatchRenderOptions | boolean,
 	theme: BatchTheme,
 	args?: Record<string, unknown>,
 ): any {
+	const opts = normalizeRenderOptions(options);
 	const results = result.details?.results;
 	if (results && results.length > 0) {
-		return renderTreeResult(results, expanded, theme, args, false);
+		return renderTreeResult(results, opts, theme, args, false);
 	}
-	return renderLegacyResult(result, expanded, args);
+	return renderLegacyResult(result, opts.expanded, args);
 }
 
 export function renderBatchReadResult(
 	result: { content?: Array<{ type: string; text?: string }>; details?: { results?: OpResult[] } },
-	expanded: boolean,
+	options: BatchRenderOptions | boolean,
 	theme: BatchTheme,
 	args?: Record<string, unknown>,
 ): any {
+	const opts = normalizeRenderOptions(options);
 	const results = result.details?.results;
 	if (results && results.length > 0) {
-		return renderTreeResult(results, expanded, theme, args, true);
+		return renderTreeResult(results, opts, theme, args, true);
 	}
-	return renderLegacyResult(result, expanded, args);
+	return renderLegacyResult(result, opts.expanded, args);
 }
 
 export function renderBatchReadCall(_args: Record<string, unknown>, _theme: BatchTheme): Container {

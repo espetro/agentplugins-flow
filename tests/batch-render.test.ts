@@ -322,6 +322,81 @@ describe("renderBatchResult — tree mode", () => {
 		const text = extractText(rendered);
 		expect(text).toContain("This is a very long error message tha...");
 	});
+
+	it("complete state shows ✓ for ok ops", () => {
+		const result = {
+			details: {
+				results: [
+					{ op: "read" as const, path: "a.ts", status: "ok" as const, content: "x" },
+					{ op: "rg" as const, path: ".", status: "ok" as const, content: "match\n" },
+				],
+			},
+		};
+		const rendered = renderBatchResult(result, { expanded: false, isPartial: false }, makeTheme());
+		const text = extractText(rendered);
+		expect(text).toContain("✓");
+		expect(text).not.toContain("●");
+	});
+
+	it("partial state shows ● for ok ops", () => {
+		const result = {
+			details: {
+				results: [
+					{ op: "read" as const, path: "docs/a.md", status: "ok" as const, totalLines: 47, content: "line\n".repeat(46) + "line" },
+					{ op: "rg" as const, path: ".", status: "ok" as const, content: "m\n".repeat(21) },
+					{ op: "rg" as const, path: ".", status: "ok" as const, content: "x\n".repeat(3) },
+				],
+			},
+		};
+		const rendered = renderBatchResult(result, { expanded: false, isPartial: true }, makeTheme());
+		const text = extractText(rendered);
+		expect(text).toContain("●");
+		expect(text).not.toContain("✓");
+		expect(text).toContain("47 lines");
+	});
+
+	it("partial ok uses warning color; complete ok uses accent", () => {
+		const theme = makeTheme();
+		const result = {
+			details: {
+				results: [{ op: "read" as const, path: "a.ts", status: "ok" as const, content: "x" }],
+			},
+		};
+		const partialRaw = extractRawText(renderBatchResult(result, { expanded: false, isPartial: true }, theme));
+		const completeRaw = extractRawText(renderBatchResult(result, { expanded: false, isPartial: false }, theme));
+		expect(partialRaw).toContain(theme.fg("warning", "●"));
+		expect(completeRaw).toContain(theme.fg("accent", "✓"));
+	});
+
+	it("partial update pads tree with planned ops from ctx.args", () => {
+		const result = {
+			details: {
+				results: [
+					{ op: "read" as const, path: "docs/a.md", status: "ok" as const, totalLines: 5, content: "a\nb\nc\nd\ne" },
+				],
+			},
+		};
+		const ctx = {
+			args: {
+				o: [
+					{ o: "read", p: "docs/a.md" },
+					{ o: "rg", p: ".", q: "foo" },
+					{ o: "rg", p: ".", q: "bar" },
+				],
+			},
+		};
+		const rendered = renderBatchReadResult(result, { expanded: false, isPartial: true }, makeTheme(), ctx);
+		const text = extractText(rendered);
+		const treeLines = text.split("\n").filter((l) => l.includes("├─") || l.includes("└─"));
+		expect(treeLines).toHaveLength(3);
+		expect(treeLines[0]).toContain("read:");
+		expect(treeLines[0]).toContain("5 lines");
+		expect(treeLines[1]).toContain("●");
+		expect(treeLines[1]).toContain("rg:");
+		expect(treeLines[2]).toContain("●");
+		expect(treeLines[2]).toContain("rg:");
+		expect(text).toContain("3 ops");
+	});
 });
 
 describe("renderBatchReadResult", () => {
