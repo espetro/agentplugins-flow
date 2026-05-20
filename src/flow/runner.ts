@@ -926,6 +926,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 					}, 1000);
 					countdownTimer.unref();
 				}
+				emitUpdate();
 			}
 
 			proc.on("close", (code) => {

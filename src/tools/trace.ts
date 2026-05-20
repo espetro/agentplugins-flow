@@ -15,6 +15,7 @@ import { discoverFlows } from "../flow/agents.js";
 import { buildCore2Snapshot } from "../core2/snapshot.js";
 import { renderFlowCall, renderFlowResult } from "../tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
+import { setLiveText } from "../tui/scramble/index.js";
 import { getFlowOutput, type SingleResult, type FlowDetails } from "../types/flow.js";
 import { executeOperations } from "../batch/execute.js";
 import { runBashWithLimits } from "../batch/batch-bash.js";
@@ -219,7 +220,16 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				preDispatchResults,
 				makeDetails,
 				signal,
-				onUpdate,
+				onUpdate: onUpdate
+					? (partial: any) => {
+						const text = partial?.content?.[0]?.text;
+						if (text !== undefined) {
+							setLiveText(toolCallId, text);
+							setLiveText("collapsed", text);
+						}
+						onUpdate(partial);
+					}
+					: undefined,
 			});
 
 			const outputText = getFlowOutput(result.messages) || "Trace completed.";
@@ -236,7 +246,20 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 		renderCall: (args: any, theme: any) =>
 			renderFlowCall(args, theme, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" }),
 
-		renderResult: (result: any, { expanded }: any, theme: any, args: any) =>
-			renderFlowResult(result, expanded, theme, args, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" }),
+		renderResult: (result: any, { expanded }: any, theme: any, args: any) => {
+			const enrichedArgs = args?.flow?.[0]
+				? args
+				: {
+						...(args || {}),
+						flow: [
+							{
+								type: "trace",
+								intent: args?.intent || "Trace mode",
+								aim: "Trace mode",
+							},
+						],
+					};
+			return renderFlowResult(result, expanded, theme, enrichedArgs, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" });
+		},
 	};
 }

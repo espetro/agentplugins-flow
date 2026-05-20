@@ -316,9 +316,9 @@ describe("runFlow case-insensitive lookup", () => {
 		}, 10);
 
 		await promise;
-		expect(updates).toEqual(["Hel", "Hello"]);
-		expect(outputUpdates).toEqual([0, 1]);
-		expect(detailStreamingText).toEqual(["Hel", "Hello"]);
+		expect(updates).toEqual(["(running...)", "Hel", "Hello"]);
+		expect(outputUpdates).toEqual([0, 0, 1]);
+		expect(detailStreamingText).toEqual([undefined, "Hel", "Hello"]);
 	});
 
 	it("accumulates estimated output tokens across streaming updates", async () => {
@@ -355,7 +355,7 @@ describe("runFlow case-insensitive lookup", () => {
 		}, 10);
 
 		await promise;
-		expect(outputUpdates).toEqual([2, 4]);
+		expect(outputUpdates).toEqual([0, 2, 4]);
 	});
 
 	it("returns error for unknown flow regardless of casing", async () => {
