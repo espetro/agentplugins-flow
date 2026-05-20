@@ -58,17 +58,6 @@ batch  ·  1 op  ·  1 ok  ·  1 file
 
 ---
 
-## 3. Trace Scenarios
-
-Trace is a minimalist version of flow, now featuring the consistent dot style.
-
-```text
-trace    analyze prior failure
-└─ cmd ▸ read logs/error.log
-```
-
----
-
 ## Visual Mockup
 Below is a high-fidelity design mockup showing the intended aesthetic for these scenarios.
 

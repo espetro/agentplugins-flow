@@ -49,7 +49,6 @@ pi-agent-flow/
 │   ├── render-utils.ts        # Text formatting helpers
 │   ├── scramble.ts            # Text animation engine
 │   ├── web-ops.ts             # Web search/fetch tool
-│   ├── trace.ts               # Replay prior tool results by ID
 │   ├── ask-user.ts            # ask_user interactive prompt tool
 │   ├── batch.ts               # Batch tool barrel re-export
 │   ├── batch/

@@ -39,7 +39,7 @@ import { registerFlow, getGoal, getGoalForSession, getLoop, recordFlowCompletion
 import * as sessionRegistry from "./flow/session-registry.js";
 
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
-import { createTraceTool } from "./tools/trace.js";
+
 import { createOverrideTool } from "./tools/override.js";
 import { executeOperations } from "./batch/execute.js";
 import { runWebOps } from "./tools/web-ops.js";
@@ -352,7 +352,7 @@ export default function (pi: ExtensionAPI) {
 		// Register tools based on depth.
 		// Depth 0 (main root state): batch_read + no bash ops.
 		// Depth > 0 (child flows): batch (with bash), batch_bash_poll — they need bash ops.
-		// batch_read is registered at all depths for trace and read-only child operations.
+		// batch_read is registered at all depths for read-only child operations.
 		// The bashProcessTracker is shared between the batch tool (launches bash ops)
 		// and the batch_bash_poll tool (checks on pending bash ops).
 		if (resolved.toolOptimize) {
@@ -510,12 +510,6 @@ export default function (pi: ExtensionAPI) {
 
 	// Register the ask_user tool
 	pi.registerTool(createAskUserTool());
-
-	// Register the trace tool (available at all depths — spawns a lightweight child reflection flow)
-	pi.registerTool(createTraceTool({
-		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
-		getDepthConfig: () => depthConfig,
-	}));
 
 	// Register the override tool (available at all depths — quick verbatim reads)
 	pi.registerTool(createOverrideTool({

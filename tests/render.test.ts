@@ -12,7 +12,7 @@ import {
 	getTruncationBudget,
 	stripAnsi,
 } from "../src/tui/render-utils.js";
-import { renderFlowCall, renderFlowResult, renderTraceResult, renderSingleFlowResult, resetAnonymousFlowIdCounter, reconstructHeader } from "../src/tui/render.js";
+import { renderFlowCall, renderFlowResult, renderSingleFlowResult, resetAnonymousFlowIdCounter, reconstructHeader } from "../src/tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "../src/tui/flow-colors.js";
 import { scrambleManager, DynamicScrambleText } from "../src/tui/scramble/index.js";
 import { emptyFlowUsage, type SingleResult, type FlowDetails } from "../src/types/flow.js";
@@ -1987,104 +1987,3 @@ describe("flow status dot rendering", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Trace / Override rendering
-// ---------------------------------------------------------------------------
-
-describe("renderTraceResult", () => {
-	beforeEach(() => {
-		resetAnonymousFlowIdCounter();
-		scrambleManager.clear();
-		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
-	});
-
-	it("always renders exactly 2 lines", () => {
-		const result = makeResult({ type: "override", exitCode: -1 });
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		const lines = text.split("\n").filter((l) => l.trim());
-		expect(lines.length).toBe(2);
-	});
-
-	it("uses flow type for header name (override → overr)", () => {
-		const result = makeResult({ type: "override", exitCode: -1 });
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		expect(text).toContain("overr");
-		expect(text).not.toContain("trace");
-	});
-
-	it("shows context tokens and tps in header", () => {
-		const result = makeResult({
-			type: "trace",
-			exitCode: -1,
-			usage: { input: 1000, output: 200, contextTokens: 31700, turns: 1, toolCalls: 0 },
-			maxContextTokens: 260000,
-		});
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		const lines = text.split("\n");
-		expect(lines[0]).toContain("31.7k/0.26M");
-		expect(lines[0]).toContain("t/s");
-	});
-
-	it("shows awaiting when no messages", () => {
-		const result = makeResult({ type: "trace", exitCode: -1, messages: [] });
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		expect(text).toContain("[awaiting...]");
-	});
-
-	it("shows pre-dispatch when latest assistant message has tool calls", () => {
-		const result = makeResult({
-			type: "override",
-			exitCode: -1,
-			messages: [
-				makeToolCallMessage("batch", { o: [{ o: "read", p: "a.ts" }, { o: "read", p: "b.ts" }, { o: "read", p: "c.ts" }, { o: "read", p: "d.ts" }] }),
-			],
-		});
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		expect(text).toContain("pre-dispatch");
-		expect(text).toContain("4 ops");
-	});
-
-	it("shows cmd line when latest assistant message has no tool calls", () => {
-		const result = makeResult({
-			type: "trace",
-			exitCode: -1,
-			messages: [
-				makeToolCallMessage("read", { file_path: "src/main.ts" }),
-				makeTextMessage("Found the issue."),
-			],
-		});
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		expect(text).toContain("cmd ▸");
-		expect(text).toContain("read src/main.ts");
-		expect(text).not.toContain("pre-dispatch");
-	});
-
-	it("shows cmd (not pre-dispatch) after tool results arrive", () => {
-		const result = makeResult({
-			type: "override",
-			exitCode: -1,
-			messages: [
-				makeToolCallMessage("batch", { o: [{ o: "read", p: "src/main.ts" }, { o: "read", p: "src/lib.ts" }] }),
-				makeToolResultMessage("content of files"),
-			],
-		});
-		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
-		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
-		const text = extractText(rendered);
-		expect(text).toContain("cmd ▸");
-		expect(text).toContain("batch");
-		expect(text).not.toContain("pre-dispatch");
-	});
-});
