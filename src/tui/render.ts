@@ -1333,7 +1333,7 @@ function renderFlowHeader(
 			}
 		}
 
-		const modelSegment = modelLabel ? ` · ${modelLabel}` : "";
+		const modelSegment = modelLabel ? `  ${modelLabel}` : "";
 		const statsSegment = ` · ${displayStats}`;
 		const statsPlain = stripAnsi(statsSegment);
 		headerLine = `${applyRole("treeChars", headerPrefix, theme, config)} ${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", statsSegment, theme, config)}`;
