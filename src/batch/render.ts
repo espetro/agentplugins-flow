@@ -74,13 +74,13 @@ function shortenPath(p: string): string {
 	return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 }
 
-function statusIcon(status: DisplayOp["status"], isPartial: boolean): string {
+function statusIcon(status: DisplayOp["status"], op: DisplayOp["op"], isPartial: boolean): string {
 	if (isPartial && (status === "ok" || status === "running")) {
 		return "●";
 	}
 	switch (status) {
 		case "ok":
-			return "✓";
+			return op === "rg" ? "●" : "✓";
 		case "error":
 			return "✗";
 		case "skipped":
@@ -351,7 +351,7 @@ function renderTreeResult(
 		const treePrefix = isLast ? "└─" : "├─";
 		const childPrefix = isLast ? "   " : "│  ";
 
-		const icon = statusIcon(op.status, isPartial);
+		const icon = statusIcon(op.status, op.op, isPartial);
 		const iconColored = theme.fg(statusColor(op.status, isPartial), icon);
 		const target = formatOpTarget(op);
 		const meta = formatOpMeta(op);
