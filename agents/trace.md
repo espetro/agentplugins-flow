@@ -1,6 +1,6 @@
 ---
-name: override
-description: Activate override mode — read files verbatim, run checks, explore codebase
+name: trace
+description: Activate trace mode — read files verbatim, run checks, explore codebase
 tools: batch bash find grep ls web
 maxDepth: 0
 tier: lite

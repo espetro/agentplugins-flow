@@ -20,11 +20,11 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
 	`primary_flow:\n` +
-	`  available_tools: [override, flow, ask_user]\n` +
+	`  available_tools: [trace, flow, ask_user]\n` +
 	`  output_format: "Zero preamble or filler. Be direct in answer or tool call."\n` +
 	`execution_rules:\n` +
 	`  mindset:\n` +
-	`    - "Answer directly if possible. Otherwise: for short, quick validations use override tool; for parallel discovery and validation with multiple topics use flow | scout tool; otherwise investigate, plan, then transition."\n` +
+	`    - "Answer directly if possible. Otherwise: for short, quick validations use trace tool; for parallel discovery and validation with multiple topics use flow | scout tool; otherwise investigate, plan, then transition."\n` +
 	`collaboration_ask_user:\n` +
 	`  - "Major goal conflicts or misalignments."\n` +
 	`  - "Confirming main points of lengthy, multi-step plans before proceeding."\n` +

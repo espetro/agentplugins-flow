@@ -40,7 +40,7 @@ import * as sessionRegistry from "./flow/session-registry.js";
 
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 
-import { createOverrideTool } from "./tools/override.js";
+import { createTraceTool } from "./tools/trace.js";
 import { executeOperations } from "./batch/execute.js";
 import { runWebOps } from "./tools/web-ops.js";
 import type { FileOpInput } from "./batch/constants.js";
@@ -110,7 +110,7 @@ const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatc
 
 const FlowItem = Type.Object({
 	type: Type.String({
-		description: "Flow type (scout, debug, build, craft, audit, ideas). Use the separate `override` tool for quick verbatim reads.",
+		description: "Flow type (scout, debug, build, craft, audit, ideas). Use the separate `trace` tool for quick verbatim reads.",
 	}),
 	intent: Type.String({
 		description: "Detailed mission for this flow.",
@@ -263,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 		type: "string",
 	});
 	pi.registerFlag("flow-lite-model", {
-		description: "Model for lite-tier flows (scout, debug, override).",
+		description: "Model for lite-tier flows (scout, debug, trace).",
 		type: "string",
 	});
 	pi.registerFlag("flow-flash-model", {
@@ -511,8 +511,8 @@ export default function (pi: ExtensionAPI) {
 	// Register the ask_user tool
 	pi.registerTool(createAskUserTool());
 
-	// Register the override tool (available at all depths — quick verbatim reads)
-	pi.registerTool(createOverrideTool({
+	// Register the trace tool (available at all depths — quick verbatim reads)
+	pi.registerTool(createTraceTool({
 		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
 		getDepthConfig: () => depthConfig,
 	}));
@@ -527,7 +527,7 @@ export default function (pi: ExtensionAPI) {
 				"Combine multiple tasks into a single `flow` array call.",
 				"Each task requires `type`, `intent`, `aim`, and `complexity`.",
 				"All tasks MUST be nested inside the `flow` array.",
-				"Use the separate `override` tool (not `flow`) for quick verbatim reads and checks.",
+				"Use the separate `trace` tool (not `flow`) for quick verbatim reads and checks.",
 			],
 			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",
 			parameters: FlowParams,

@@ -1,9 +1,9 @@
 /**
- * Override tool — standalone quick verbatim reads and checks.
+ * Trace tool — standalone quick verbatim reads and checks.
  *
  * Split from the `flow` tool to eliminate the confusion where the agent
  * nested dispatch ops as siblings in the `flow[]` array instead of inside
- * a task object. Override is self-defining (agents/override.md already
+ * a task object. Trace is self-defining (agents/trace.md already
  * contains the full mission), so it needs zero required fields.
  */
 
@@ -122,12 +122,12 @@ async function executeDispatchOps(
 // Override tool params — zero required fields
 // ---------------------------------------------------------------------------
 
-export const OverrideParams = Type.Object({
+export const TraceParams = Type.Object({
 	intent: Type.Optional(Type.String({
-		description: "Optional mission override. Defaults to the override agent's built-in description.",
+		description: "Optional mission override. Defaults to the trace agent's built-in description.",
 	})),
 	dispatch: Type.Optional(Type.Array(DispatchOpSchema, {
-		description: "Tools to run before the override starts (results injected into prompt).",
+		description: "Tools to run before the trace starts (results injected into prompt).",
 	})),
 	cwd: Type.Optional(Type.String({ description: "Working directory override." })),
 	complexity: Type.Optional(Type.Union([
@@ -138,35 +138,35 @@ export const OverrideParams = Type.Object({
 		Type.Literal("intricate"),
 	], { description: "Budget level. Default: simple." })),
 }, {
-	title: "OverrideToolParams",
-	description: "Activate override mode — read files verbatim, run checks, explore codebase. All fields optional.",
+	title: "TraceToolParams",
+	description: "Activate trace mode — read files verbatim, run checks, explore codebase. All fields optional.",
 	examples: [
 		{},
 		{ dispatch: [{ tool: "batch", ops: [{ o: "read", p: "src/main.ts" }] }] },
 	],
 });
 
-export interface OverrideToolOptions {
+export interface TraceToolOptions {
 	getSettings?: () => { toolOptimize: boolean; structuredOutput: boolean; bodyVerbosity: "lite" | "full" } | undefined;
 	getDepthConfig?: () => { currentDepth: number; maxDepth: number; ancestorFlowStack: string[]; preventCycles: boolean } | undefined;
 }
 
-export function createOverrideTool(opts: OverrideToolOptions = {}) {
+export function createTraceTool(opts: TraceToolOptions = {}) {
 	return {
-		name: "override",
-		label: "Override",
-		promptSnippet: "Activate override mode — read files verbatim, run checks, explore codebase. Optional dispatch for pre-flight reads. No boilerplate required.",
+		name: "trace",
+		label: "Trace",
+		promptSnippet: "Activate trace mode — read files verbatim, run checks, explore codebase. Optional dispatch for pre-flight reads. No boilerplate required.",
 		promptGuidelines: [
-			"Use `override` for quick verbatim file reads, bash checks, and codebase exploration.",
+			"Use `trace` for quick verbatim file reads, bash checks, and codebase exploration.",
 			"No `intent`, `aim`, or `complexity` required — the agent knows its mission.",
-			"Optional `dispatch` runs tools before the override starts.",
+			"Optional `dispatch` runs tools before the trace starts.",
 		],
-		description: "Activates override mode to read files verbatim, run checks, and explore the codebase. Minimal schema — all fields optional.",
-		parameters: OverrideParams,
+		description: "Activates trace mode to read files verbatim, run checks, and explore the codebase. Minimal schema — all fields optional.",
+		parameters: TraceParams,
 
 		async execute(
 			toolCallId: string,
-			params: Static<typeof OverrideParams>,
+			params: Static<typeof TraceParams>,
 			signal: AbortSignal | undefined,
 			onUpdate: any,
 			ctx: ExtensionContext,
@@ -178,14 +178,14 @@ export function createOverrideTool(opts: OverrideToolOptions = {}) {
 			const depthConfig = opts.getDepthConfig?.();
 			const parentDepth = depthConfig?.currentDepth ?? 0;
 			const parentFlowStack = depthConfig?.ancestorFlowStack ?? [];
-			const maxDepth = 0; // override is a leaf — never transitions further
+			const maxDepth = 0; // trace is a leaf — never transitions further
 			const preventCycles = depthConfig?.preventCycles ?? true;
 
 			const discovery = discoverFlows(ctx.cwd, "all");
-			const overrideFlow = discovery.flows.find(f => f.name === "override");
+			const traceFlow = discovery.flows.find(f => f.name === "trace");
 
-			if (!overrideFlow) {
-				throw new Error("Override agent not found. Expected agents/override.md to be present.");
+			if (!traceFlow) {
+				throw new Error("Trace agent not found. Expected agents/trace.md to be present.");
 			}
 
 			const makeDetails = (results: SingleResult[]): FlowDetails => ({
@@ -204,9 +204,9 @@ export function createOverrideTool(opts: OverrideToolOptions = {}) {
 			const result = await runFlow({
 				cwd: ctx.cwd,
 				flows: discovery.flows,
-				flowName: "override",
-				intent: params.intent ?? overrideFlow.description,
-				aim: "Override mode",
+				flowName: "trace",
+				intent: params.intent ?? traceFlow.description,
+				aim: "Trace mode",
 				taskCwd: params.cwd,
 				forkSessionSnapshotJsonl,
 				parentDepth,
@@ -222,7 +222,7 @@ export function createOverrideTool(opts: OverrideToolOptions = {}) {
 				onUpdate,
 			});
 
-			const outputText = getFlowOutput(result.messages) || "Override completed.";
+			const outputText = getFlowOutput(result.messages) || "Trace completed.";
 			const success = result.exitCode === 0;
 
 			return {
