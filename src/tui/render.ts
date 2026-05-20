@@ -680,9 +680,7 @@ export function renderTraceResult(
 					plain = stripAnsi(lowerFirstWord(actStr));
 				} else {
 					plain = "[awaiting...]";
-					if (r && isFlowAwaiting(r)) {
-						contentRole = "prefixLabel";
-					}
+					contentRole = "prefixLabel";
 				}
 			}
 

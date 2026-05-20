@@ -556,6 +556,10 @@ function makeTextMessage(text: string) {
 	return { role: "assistant" as const, content: [{ type: "text" as const, text }] };
 }
 
+function makeToolResultMessage(text: string) {
+	return { role: "tool" as const, content: [{ type: "text" as const, text }], toolCallId: "1" };
+}
+
 describe("activity panel rendering", () => {
 	it("renders single flow with DIR, EXE, LOG lines", () => {
 		const result = makeResult({
@@ -2064,6 +2068,23 @@ describe("renderTraceResult", () => {
 		const text = extractText(rendered);
 		expect(text).toContain("cmd ▸");
 		expect(text).toContain("read src/main.ts");
+		expect(text).not.toContain("pre-dispatch");
+	});
+
+	it("shows cmd (not pre-dispatch) after tool results arrive", () => {
+		const result = makeResult({
+			type: "override",
+			exitCode: -1,
+			messages: [
+				makeToolCallMessage("batch", { o: [{ o: "read", p: "src/main.ts" }, { o: "read", p: "src/lib.ts" }] }),
+				makeToolResultMessage("content of files"),
+			],
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result] };
+		const rendered = renderTraceResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		expect(text).toContain("cmd ▸");
+		expect(text).toContain("batch");
 		expect(text).not.toContain("pre-dispatch");
 	});
 });
