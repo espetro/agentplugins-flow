@@ -48,6 +48,7 @@ The child's `<context-seal>` prompt tells it: *"The conversation above is sealed
 |------|---------|-------|------|
 | `[scout]` | Discover files, trace code paths, map architecture | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `lite` |
 | `[debug]` | Investigate logs, errors, stack traces, root causes, and fix bugs | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `lite` |
+| `[override]` | Read files verbatim, run checks, explore codebase | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `lite` |
 | `[build]` | Implement features, fix bugs, write tests, deploy, and ship | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `flash` |
 | `[craft]` | Plan structure, break down requirements, design solutions | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `full` |
 | `[audit]` | Audit security, quality, correctness; provide feedback and verdict — no code edits | `batch`, `bash`, `find`, `grep`, `ls`, `web` | `flash` |
