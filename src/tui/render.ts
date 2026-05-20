@@ -24,6 +24,8 @@ import {
 	getFlowDisplayItems,
 	getLastToolCall,
 	getLastAssistantText,
+	countPendingToolCalls,
+	countPendingOps,
 } from "../types/ui.js";
 import { formatBatchOpsSummary } from "../batch/summary.js";
 import { scrambleManager, runScrambleTimer, DynamicScrambleText, getLiveText, hashNoise, THIN_BRAILLE_SPARK } from "./scramble/index.js";
@@ -603,33 +605,33 @@ export function renderTraceResult(
 
 	const isComplete = r ? isFlowStatusComplete(r) : false;
 
-	// Header line: ● trace · <aim> · <stats>
-	const typeName = formatFlowTypeName("trace");
-	const aimText = r?.aim || r?.intent || streamingText || "trace";
+	// Header line: ● <type>  <ctx>/<max> · <tps> t/s
+	const typeName = formatFlowTypeName(r?.type || "trace");
 	const initialDot = r ? flowStatusIcon(r, theme) : theme.fg("success", "●");
 	const dotPlaceholder = stripAnsi(initialDot) + " ";
 
-	const statsParts: string[] = [];
+	let statsPlain = "";
 	if (r) {
-		if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
-			statsParts.push(formatContextLabel(r.usage.contextTokens, r.maxContextTokens));
+		const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
+		const tpsLabel = formatTps(r.usage.smoothedTps);
+		if (ctxLabel && tpsLabel) {
+			statsPlain = `${ctxLabel} · ${tpsLabel}`;
 		}
-		statsParts.push(formatTps(r.usage.smoothedTps));
 	}
-	const displayStats = statsParts.length > 0 ? " · " + statsParts.join(" · ") : "";
-	const statsPlain = stripAnsi(displayStats);
 
-	const headerPlain = `${dotPlaceholder}${typeName}${statsPlain}`;
+	const headerPlain = `${dotPlaceholder}${typeName}${statsPlain ? "  " + statsPlain : ""}`;
 	const headerSegments: HeaderSegment[] = [
 		{ text: dotPlaceholder, style: (_s) => (r ? getScintillatingStatusDot(r, theme, Date.now(), id) : initialDot) + " " },
 		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
 	];
 	if (statsPlain) {
-		headerSegments.push({ text: displayStats, style: (s) => applyRole("stats", s, theme, config) });
+		headerSegments.push({ text: "  " + statsPlain, style: (s) => applyRole("stats", s, theme, config) });
 	}
 
+	const headerInitial = `${initialDot} ${applyRole("flowName", typeName, theme, config)}${statsPlain ? applyRole("stats", "  " + statsPlain, theme, config) : ""}`;
+
 	(container as Container).addChild(new DynamicScrambleText(
-		`${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("stats", displayStats, theme, config)}`,
+		headerInitial,
 		() => {
 			const now2 = Date.now();
 			const result2 = scrambleManager.updateText(id, "header", headerPlain, now2, isComplete, true);
@@ -638,45 +640,58 @@ export function renderTraceResult(
 		true,
 	));
 
-	// Cmd line: └─ cmd ▸ <last tool call>
+
+	// Second line: always present — switches between pre-dispatch / cmd / awaiting
 	const actTree = "└─";
-	const actLabel = ` cmd ▸ `;
 
-	if (r?.messages && r.messages.length > 0) {
-		const lastTool = getLastToolCall(r.messages);
-		const actStr = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
-		const actFullText = stripAnsi(lowerFirstWord(actStr));
+	const secondLineInitial = (() => {
+		const pendingCount = r?.messages ? countPendingOps(r.messages) : 0;
+		if (pendingCount > 0 && !isComplete) {
+			const label = " pre-dispatch ▸ ";
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", label, theme, config)}${applyRole("actContent", italic(`${pendingCount} ops`), theme, config)}`;
+		}
+		const lastTool = r?.messages ? getLastToolCall(r.messages) : undefined;
+		if (lastTool) {
+			const actStr = formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme));
+			const actFullText = stripAnsi(lowerFirstWord(actStr));
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", " cmd ▸ ", theme, config)}${applyRole("actContent", italic(actFullText), theme, config)}`;
+		}
+		return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", " cmd ▸ ", theme, config)}${applyRole("prefixLabel", "[awaiting...]", theme, config)}`;
+	})();
 
-		const actInitial = `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(actFullText), theme, config)}`;
+	(container as Container).addChild(new DynamicScrambleText(
+		secondLineInitial,
+		() => {
+			const now2 = Date.now();
+			const pendingCount = r?.messages ? countPendingOps(r.messages) : 0;
 
-		(container as Container).addChild(new DynamicScrambleText(
-			actInitial,
-			() => {
-				const now2 = Date.now();
-				const freshAct = lastTool ? formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme)) : "[n/a]";
-				const freshPlain = stripAnsi(lowerFirstWord(freshAct));
-				const result2 = scrambleManager.updateAct(id, freshPlain, now2, isComplete, true);
-				const content = result2.content;
-				return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(content), theme, config)}`;
-			},
-			true,
-		));
-	} else {
-		// No messages yet — show awaiting
-		const actInitial = `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("prefixLabel", "[awaiting...]", theme, config)}`;
+			let plain: string;
+			let label: string;
+			let contentRole: "actContent" | "prefixLabel" = "actContent";
 
-		(container as Container).addChild(new DynamicScrambleText(
-			actInitial,
-			() => {
-				const now2 = Date.now();
-				const plain = "[awaiting...]";
-				const result2 = scrambleManager.updateAct(id, plain, now2, isComplete, true);
-				const content = result2.content;
-				return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole((r && isFlowAwaiting(r)) ? "prefixLabel" : "actContent", italic(content), theme, config)}`;
-			},
-			true,
-		));
-	}
+			if (pendingCount > 0 && !isComplete) {
+				label = " pre-dispatch ▸ ";
+				plain = `${pendingCount} ops`;
+			} else {
+				label = " cmd ▸ ";
+				const lastTool = r?.messages ? getLastToolCall(r.messages) : undefined;
+				if (lastTool) {
+					const actStr = formatFlowToolCall(lastTool.name, lastTool.args, theme.fg.bind(theme));
+					plain = stripAnsi(lowerFirstWord(actStr));
+				} else {
+					plain = "[awaiting...]";
+					if (r && isFlowAwaiting(r)) {
+						contentRole = "prefixLabel";
+					}
+				}
+			}
+
+			const result2 = scrambleManager.updateAct(id, plain, now2, isComplete, true);
+			const content = result2.content;
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", label, theme, config)}${applyRole(contentRole, italic(content), theme, config)}`;
+		},
+		true,
+	));
 
 	// Expanded view: add full output
 	if (expanded) {
