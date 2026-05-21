@@ -163,6 +163,9 @@ export interface TraceToolOptions {
 }
 
 export function createTraceTool(opts: TraceToolOptions = {}) {
+	let lastResolvedModel: string | undefined;
+	let lastResolvedMaxCtx: number | undefined;
+
 	return {
 		name: "trace",
 		label: "Trace",
@@ -232,6 +235,10 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			const resolvedModel = candidates[0];
 			const maxContextTokens = resolveModelContextWindow(resolvedModel);
 
+			// Persist for renderResult ghost fallback
+			lastResolvedModel = resolvedModel;
+			lastResolvedMaxCtx = maxContextTokens;
+
 			const result = await runFlow({
 				cwd: ctx.cwd,
 				flows: discovery.flows,
@@ -259,7 +266,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 							setLiveText(toolCallId, text);
 							setLiveText("collapsed", text);
 						}
-						onUpdate(partial);
+						onUpdate({ ...partial, _toolCallId: toolCallId });
 					}
 					: undefined,
 			});
@@ -288,8 +295,8 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 								type: "trace",
 								intent: args?.intent || "Trace mode",
 								aim: "Trace mode",
-								model: args?.model,
-								maxContextTokens: args?.maxContextTokens,
+								model: lastResolvedModel,
+								maxContextTokens: lastResolvedMaxCtx,
 							},
 						],
 					};
