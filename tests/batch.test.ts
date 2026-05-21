@@ -2699,7 +2699,7 @@ describe("edge cases", () => {
 				content: [{ type: "text", text: "mixed" }],
 				details: {
 					results: [
-						{ op: "read", path: "ok.ts", status: "ok", totalLines: 10 },
+						{ op: "write", path: "ok.ts", status: "ok" },
 						{ op: "read", path: "err.ts", status: "error", error: "ENOENT" },
 						{ op: "read", path: "skip.ts", status: "skipped", error: "aggregate limit" },
 					],

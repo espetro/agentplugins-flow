@@ -80,7 +80,7 @@ function statusIcon(status: DisplayOp["status"], op: DisplayOp["op"], isPartial:
 	}
 	switch (status) {
 		case "ok":
-			return op === "rg" ? "●" : "✓";
+			return op === "rg" || op === "read" ? "●" : "✓";
 		case "error":
 			return "✗";
 		case "skipped":

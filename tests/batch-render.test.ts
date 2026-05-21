@@ -87,7 +87,7 @@ describe("renderBatchResult — tree mode", () => {
 		const result = {
 			details: {
 				results: [
-					{ op: "read" as const, path: "a.ts", status: "ok" as const, content: "x" },
+					{ op: "write" as const, path: "a.ts", status: "ok" as const },
 					{ op: "bash" as const, command: "npm test", status: "error" as const, exitCode: 1, stdout: "" },
 					{ op: "write" as const, path: "b.ts", status: "skipped" as const },
 					{ op: "edit" as const, path: "c.ts", status: "pending" as const },
@@ -117,7 +117,7 @@ describe("renderBatchResult — tree mode", () => {
 		const rendered = renderBatchResult(result, false, theme);
 		const raw = extractRawText(rendered);
 		// accent (ok), error, muted (skipped), warning (pending)
-		expect(raw).toContain(theme.fg("accent", "✓"));
+		expect(raw).toContain(theme.fg("accent", "●"));
 		expect(raw).toContain(theme.fg("error", "✗"));
 		expect(raw).toContain(theme.fg("muted", "⊘"));
 		expect(raw).toContain(theme.fg("warning", "○"));
@@ -323,19 +323,20 @@ describe("renderBatchResult — tree mode", () => {
 		expect(text).toContain("This is a very long error message tha...");
 	});
 
-	it("complete state shows ✓ for ok ops", () => {
+	it("complete state shows ● for read/rg and ✓ for other ok ops", () => {
 		const result = {
 			details: {
 				results: [
 					{ op: "read" as const, path: "a.ts", status: "ok" as const, content: "x" },
 					{ op: "rg" as const, path: ".", status: "ok" as const, content: "match\n" },
+					{ op: "write" as const, path: "b.ts", status: "ok" as const },
 				],
 			},
 		};
 		const rendered = renderBatchResult(result, { expanded: false, isPartial: false }, makeTheme());
 		const text = extractText(rendered);
+		expect(text).toContain("●");
 		expect(text).toContain("✓");
-		expect(text).not.toContain("●");
 	});
 
 	it("partial state shows ● for ok ops", () => {
@@ -365,7 +366,7 @@ describe("renderBatchResult — tree mode", () => {
 		const partialRaw = extractRawText(renderBatchResult(result, { expanded: false, isPartial: true }, theme));
 		const completeRaw = extractRawText(renderBatchResult(result, { expanded: false, isPartial: false }, theme));
 		expect(partialRaw).toContain(theme.fg("warning", "●"));
-		expect(completeRaw).toContain(theme.fg("accent", "✓"));
+		expect(completeRaw).toContain(theme.fg("accent", "●"));
 	});
 
 	it("partial update pads tree with planned ops from ctx.args", () => {
