@@ -349,10 +349,11 @@ describe('computeGlitchFrame', () => {
 		expect(stripAnsi(result)).toBe('cdefgh');
 	});
 
-	it('strips decorative icons from currentText for index alignment', () => {
+	it('preserves decorative icons in currentText', () => {
 		const queue = buildGlitchQueue('ab', 'cd');
-		const result = computeGlitchFrame(queue, 999, () => 'X', `${String.fromCodePoint(0x2714)}c${String.fromCodePoint(0x2705)}d`);
-		expect(stripAnsi(result)).toBe('cd');
+		const input = `${String.fromCodePoint(0x2714)}c${String.fromCodePoint(0x2705)}d`;
+		const result = computeGlitchFrame(queue, 999, () => 'X', input);
+		expect(stripAnsi(result)).toBe(input);
 	});
 });
 

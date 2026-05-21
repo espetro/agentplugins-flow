@@ -1488,8 +1488,8 @@ describe("header ANSI style preservation during animation", () => {
 
 			expect(headerLine).toContain("\x1b[dimm├─ \x1b[39m");
 			expect(headerLine).toContain("\x1b[accentmdebug\x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o · \x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm5.0k · ----- t/s\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm · 5.0k · ----- t/s\x1b[39m");
 		} finally {
 			spy.mockRestore();
 		}
@@ -1889,7 +1889,7 @@ describe("flow status dot rendering", () => {
 			expect(header1).toContain("●");
 
 			// Scan across the first 2.5-second bucket densely to verify the stutter structure
-			const sparkleChars = "△○☐⠂⠄⠈⠐⠠⡀⢀⠃⠆⠉⠘⠰⡁⢂";
+			const sparkleChars = "△○☐⠂⠄⠈·⠠⡀∙⠃⠆⠉⠘⠰⡁⢂";
 			const phases: string[] = [];
 			for (let t = 30; t < 5000; t += 5) {
 				vi.setSystemTime(new Date(t));

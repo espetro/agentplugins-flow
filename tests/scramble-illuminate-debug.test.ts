@@ -68,7 +68,7 @@ describe('Glitch debug — specific bug scenarios', () => {
 		expect(finalOutput).toBe(shortTail);
 	});
 
-	it('icon snap-back: glitch strips icons then they reappear after completion', () => {
+	it('icon snap-back: icons are preserved during glitch and after completion', () => {
 		const base = 200_000_000;
 		const textWithIcons = '✔ Success and ✖ Failure';
 
@@ -92,10 +92,9 @@ describe('Glitch debug — specific bug scenarios', () => {
 		console.log('After glitch:', afterGlitch);
 		console.log('Original:', textWithIcons);
 
-		// During glitch, icons should be stripped (cleanCurrent)
-		expect(duringGlitch).not.toContain('✔');
-		expect(duringGlitch).not.toContain('✖');
-		// After glitch, icons should be back
+		// Icons are preserved throughout the animation
+		expect(duringGlitch).toContain('✔');
+		expect(duringGlitch).toContain('✖');
 		expect(afterGlitch).toBe(textWithIcons);
 	});
 

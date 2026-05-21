@@ -49,15 +49,13 @@ export function buildGlitchQueue(
 	direction: TransitionDirection = 'neutral',
 ): GlitchQueueItem[] {
 	const queue: GlitchQueueItem[] = [];
-	const cleanOld = stripDecorativeIcons(oldText);
-	const cleanNew = stripDecorativeIcons(newText);
-	const oldLen = cleanOld.length;
-	const newLen = cleanNew.length;
+	const oldLen = oldText.length;
+	const newLen = newText.length;
 	const length = Math.max(oldLen, newLen);
 	const overlapLen = Math.min(oldLen, newLen);
 	for (let i = 0; i < length; i++) {
-		const from = cleanOld[i] || '';
-		const to = cleanNew[i] || '';
+		const from = oldText[i] || '';
+		const to = newText[i] || '';
 
 		if (direction !== 'neutral' && i < overlapLen) {
 			if (from === to) {
@@ -136,7 +134,6 @@ export function computeGlitchFrame(
 	currentText?: string,
 	seed: number = 0,
 ): string {
-	const cleanCurrent = currentText != null ? stripDecorativeIcons(currentText) : undefined;
 	let output = '';
 	let inDim = false;
 
@@ -151,8 +148,8 @@ export function computeGlitchFrame(
 		const entry = queue[i];
 		const fadeOutEnd = entry.fadeOutEnd;
 		const settleEnd = entry.settleEnd;
-		const resolvedChar = cleanCurrent?.[i] ?? entry.to;
-		const isOrphan = cleanCurrent != null && i >= cleanCurrent.length;
+		const resolvedChar = currentText?.[i] ?? entry.to;
+		const isOrphan = currentText != null && i >= currentText.length;
 
 		if (fadeOutEnd !== undefined && frame >= entry.end && frame < fadeOutEnd) {
 			if (!inDim) { output += DIM_ON; inDim = true; }
@@ -220,13 +217,13 @@ export function computeGlitchFrame(
 			if (isOrphan) {
 				// Position beyond current text — skip
 			} else {
-				output += cleanCurrent?.[i] ?? entry.from;
+				output += currentText?.[i] ?? entry.from;
 			}
 		}
 	}
-	if (cleanCurrent && cleanCurrent.length > queue.length) {
+	if (currentText && currentText.length > queue.length) {
 		if (inDim) { output += DIM_OFF; inDim = false; }
-		output += cleanCurrent.slice(queue.length);
+		output += currentText.slice(queue.length);
 	}
 	if (inDim) output += DIM_OFF;
 	return output;
