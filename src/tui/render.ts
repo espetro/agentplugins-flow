@@ -743,7 +743,7 @@ function renderFlowExpanded(
 
 	// Output: animate streaming text; show clean markdown when complete
 	if (isFlowAwaiting(r)) {
-		container.addChild(new Text(applyRole("prefixLabel", "[awaiting...]", theme, config), 0, 0));
+		container.addChild(new Text(applyRole("aimContent", italic("[awaiting...]"), theme, config), 0, 0));
 	} else if (!isComplete && streamingText != null) {
 		const msgBudget = getTruncationBudget(0);
 		const displayMsg = tailText(stripAnsi(streamingText), msgBudget);
@@ -875,7 +875,7 @@ function renderFlowCollapsed(
 		const budget = getTruncationBudget(visibleLength(aimPrefix));
 		const displayAim = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), budget);
 		container.addChild(new DynamicScrambleText(
-			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(displayAim), theme, config)}`,
+			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole("aimContent", italic(displayAim), theme, config)}`,
 			() => {
 				const now = Date.now();
 				const freshAimLabel = ` aim ▸ `;
@@ -883,7 +883,7 @@ function renderFlowCollapsed(
 				const freshBudget = getTruncationBudget(visibleLength(freshAimPrefix));
 				const freshText = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), freshBudget);
 				const result = scrambleManager.updateAim(id, freshText, now, isComplete, true);
-				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(result.content), theme, config)}`;
+				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole("aimContent", italic(result.content), theme, config)}`;
 			},
 			true,
 		));
@@ -900,7 +900,7 @@ function renderFlowCollapsed(
 	const actFullText = stripAnsi(lowerFirstWord(actStr));
 	const initialActContent = isFlowAwaiting(r) ? "[n/a]" : (actFullText.length > budget ? tailText(actFullText, budget) : actFullText);
 	container.addChild(new DynamicScrambleText(
-		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(initialActContent), theme, config)}`,
+		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(initialActContent), theme, config)}`,
 		() => {
 			const now = Date.now();
 			const actLabel = ` cmd ▸ `;
@@ -908,7 +908,7 @@ function renderFlowCollapsed(
 			const freshBudget = getTruncationBudget(visibleLength(actPrefix));
 			const displayAct = isFlowAwaiting(r) ? "[n/a]" : tailText(actFullText, freshBudget);
 			const actContent = scrambleManager.updateAct(id, displayAct, now, isComplete, true).content;
-			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(actContent), theme, config)}`;
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(actContent), theme, config)}`;
 		},
 		true,
 	));
@@ -1087,7 +1087,7 @@ function renderMultiFlowExpanded(
 
 		// Output: animate streaming text; show clean markdown when complete
 		if (isFlowAwaiting(r)) {
-			container.addChild(new Text(applyRole("prefixLabel", "[awaiting...]", theme, config), 0, 0));
+			container.addChild(new Text(applyRole("aimContent", italic("[awaiting...]"), theme, config), 0, 0));
 		} else if (!isComplete && r.streamingText != null) {
 			const streamingRaw = r.streamingText;
 			const msgBudget = getTruncationBudget(0);
@@ -1382,7 +1382,7 @@ function renderFlowBody(
 		const budget = getTruncationBudget(visibleLength(aimPrefix));
 		const displayAim = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), budget);
 		container.addChild(new DynamicScrambleText(
-			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(displayAim), theme, config)}`,
+			`${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", aimLabel, theme, config)}${applyRole("aimContent", italic(displayAim), theme, config)}`,
 			() => {
 				const now = Date.now();
 				const freshAimLabel = ` aim ▸ `;
@@ -1390,7 +1390,7 @@ function renderFlowBody(
 				const freshBudget = getTruncationBudget(visibleLength(freshAimPrefix));
 				const freshText = isFlowAwaiting(r) ? "[awaiting...]" : truncateChars(lowerFirstWord(r.aim), freshBudget);
 				const result = scrambleManager.updateAim(flowId, freshText, now, flowComplete, true);
-				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "aimContent", italic(result.content), theme, config)}`;
+				return `${applyRole("treeChars", aimTree, theme, config)}${applyRole("prefixLabel", freshAimLabel, theme, config)}${applyRole("aimContent", italic(result.content), theme, config)}`;
 			},
 			true,
 		));
@@ -1407,7 +1407,7 @@ function renderFlowBody(
 	const actFullText = stripAnsi(lowerFirstWord(actStr));
 	const initialActContent = isFlowAwaiting(r) ? "[n/a]" : (actFullText.length > budget ? tailText(actFullText, budget) : actFullText);
 	container.addChild(new DynamicScrambleText(
-		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(initialActContent), theme, config)}`,
+		`${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(initialActContent), theme, config)}`,
 		() => {
 			const now = Date.now();
 			const actLabel = ` cmd ▸ `;
@@ -1415,7 +1415,7 @@ function renderFlowBody(
 			const freshBudget = getTruncationBudget(visibleLength(actPrefix));
 			const displayAct = isFlowAwaiting(r) ? "[n/a]" : tailText(actFullText, freshBudget);
 			const actContent = scrambleManager.updateAct(flowId, displayAct, now, flowComplete, true).content;
-			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole(isFlowAwaiting(r) ? "prefixLabel" : "actContent", italic(actContent), theme, config)}`;
+			return `${applyRole("treeChars", actTree, theme, config)}${applyRole("prefixLabel", actLabel, theme, config)}${applyRole("actContent", italic(actContent), theme, config)}`;
 		},
 		true,
 	));
