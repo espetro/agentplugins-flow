@@ -528,7 +528,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createTraceTool({
 		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
 		getDepthConfig: () => depthConfig,
-		loadedFlowModelConfigs: resolved?.loadedFlowModelConfigs,
+		getLoadedFlowModelConfigs: () => resolved?.loadedFlowModelConfigs,
 		tierOverrideResolver: getTierOverride,
 		fallbackModel: inheritedCliArgs.fallbackModel,
 	}));

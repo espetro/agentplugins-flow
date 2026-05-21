@@ -575,6 +575,59 @@ describe("flow tool execute", () => {
 		expect(setIntervalSpy).not.toHaveBeenCalled();
 	});
 
+	describe("trace tool execute", () => {
+		it("resolves model via lazy getter after session_start", async () => {
+			setupFlowsDir([
+				{
+					fileName: "trace.md",
+					content: `---\nname: trace\ndescription: Read files\n---\nPrompt.`,
+				},
+			]);
+
+			const projectDir = path.join(tmpDir, ".pi");
+			fs.mkdirSync(projectDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(projectDir, "settings.json"),
+				JSON.stringify({
+					flowModelConfig: "test-strategy",
+					flowModelConfigs: {
+						"test-strategy": {
+							lite: { primary: "trace-lite-model" },
+						},
+					},
+				}),
+				"utf-8",
+			);
+
+			const pi = createMockPi();
+			registerExtension(pi as any);
+			await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+			const tool = pi.getTool("trace");
+			vi.mocked(runFlow).mockResolvedValue({
+				type: "trace",
+				agentSource: "project",
+				intent: "Read package.json",
+				aim: "Trace mode",
+				exitCode: 0,
+				messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			});
+
+			await tool.execute(
+				"call-1",
+				{ intent: "Read package.json" },
+				new AbortController().signal,
+				vi.fn(),
+				makeMockCtx(tmpDir),
+			);
+
+			expect(runFlow).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(runFlow).mock.calls[0][0].model).toBe("trace-lite-model");
+		});
+	});
+
 	describe("context event handler", () => {
 		it("inserts sliding system prompt before latest user message unconditionally", async () => {
 			const pi = createMockPi();

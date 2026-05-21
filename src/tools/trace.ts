@@ -157,7 +157,7 @@ export const TraceParams = Type.Object({
 export interface TraceToolOptions {
 	getSettings?: () => { toolOptimize: boolean; structuredOutput: boolean; bodyVerbosity: "lite" | "full" } | undefined;
 	getDepthConfig?: () => { currentDepth: number; maxDepth: number; ancestorFlowStack: string[]; preventCycles: boolean } | undefined;
-	loadedFlowModelConfigs?: LoadedFlowModelConfigs;
+	getLoadedFlowModelConfigs?: () => LoadedFlowModelConfigs | undefined;
 	tierOverrideResolver?: (tier: "lite" | "flash" | "full") => string | undefined;
 	fallbackModel?: string;
 }
@@ -218,10 +218,11 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)
 			const tier = traceFlow.tier ?? "lite";
 			let selectedStrategy: FlowModelStrategy | undefined;
-			if (opts.loadedFlowModelConfigs) {
+			const loadedFlowModelConfigs = opts.getLoadedFlowModelConfigs?.();
+			if (loadedFlowModelConfigs) {
 				const selectedFlowModelConfig = selectFlowModelStrategy(
-					opts.loadedFlowModelConfigs.configs,
-					opts.loadedFlowModelConfigs.selectedName,
+					loadedFlowModelConfigs.configs,
+					loadedFlowModelConfigs.selectedName,
 				);
 				selectedStrategy = selectedFlowModelConfig.strategy;
 			}
