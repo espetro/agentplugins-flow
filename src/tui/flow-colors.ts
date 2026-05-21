@@ -38,7 +38,7 @@ export const DEFAULT_FLOW_COLORS: FlowColorConfig = {
   actContent: { color: "dim", italic: true },
   msgContent: { color: "dim", italic: true },
   msgError: { color: "muted", italic: true },
-  placeholder: { color: "warning", italic: true },
+  placeholder: { color: "dim", italic: true },
 };
 
 export function applyRole(
