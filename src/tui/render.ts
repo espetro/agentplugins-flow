@@ -50,7 +50,7 @@ function getContentRole(
 	useError?: boolean,
 ): FlowColorRole {
 	if (useError) return "msgError";
-	if (["[awaiting...]", "[n/a]", "[skipped]", "[approved]", "[finished]"].includes(text)) {
+	if (["[awaiting...]", "[skipped]", "[approved]", "[finished]"].includes(text)) {
 		return "placeholder";
 	}
 	return baseRole;
