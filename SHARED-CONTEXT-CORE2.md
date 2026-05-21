@@ -218,7 +218,7 @@ When `PI_FLOW_DUMP_SNAPSHOT` is set, each flow produces two files:
 {reconstructed raw prompt}
 ```
 
-Note: `## Compression Stats` is **absent** — core-2 has no compression metrics.
+Note: `## Compression Stats` is present with zeroed values (`0 bytes / 0%`) when the session snapshot is empty. Core-2 does not run a measurable sanitization pipeline, so real pre/post deltas are not available.
 
 ### 5.2 Text Dump (`.txt`)
 
@@ -229,9 +229,9 @@ Verbatim copy of the reconstructed `-p` prompt only.
 | Feature | Core-1 | Core-2 |
 |---------|--------|--------|
 | `compression-stats` JSONL entry | Present | **Absent** |
-| `## Compression Stats` markdown section | Present | **Absent** |
+| `## Compression Stats` markdown section | Present | Present (zeroed values) |
 | `passesApplied` array | Present | **Absent** |
-| `preBytes` / `postBytes` metrics | Present | **Absent** |
+| `preBytes` / `postBytes` metrics | Present | Present (zeroed values) |
 
 Source: `src/flow/runner.ts:666–681`.
 

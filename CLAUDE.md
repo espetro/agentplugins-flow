@@ -266,7 +266,7 @@ suffix so parallel flows don't overwrite each other):
    - `## Activation Prompt (-p)` — the reconstructed raw prompt
    - `## Compression Stats` — Pre-sanitization bytes, Post-sanitization bytes, and Reduction percentage
 
-> **Cold-start dumps:** When there is no session history, the markdown file contains only the HTML header (`<!-- pi-agent-flow dump -->`) and `## Activation Prompt (-p)` sections — the `## Session Snapshot (JSONL)` and `## Compression Stats` sections are omitted.
+> **Cold-start dumps:** When there is no session history, the `## Session Snapshot (JSONL)` section is omitted, but `## Compression Stats` is still present with zeroed values.
 
 2. `<base>.<flowName>.<timestamp>.txt` — just the human-readable reconstructed prompt
 

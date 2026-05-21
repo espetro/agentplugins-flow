@@ -82,7 +82,6 @@ describe("dump mechanism — end-to-end", () => {
 			intent: "Test intent",
 			aim: "Test aim",
 			forkSessionSnapshotJsonl: jsonl,
-			compressionStats: { preBytes: 1000, postBytes: 500, reductionPercent: 50, passesApplied: ["forkMetadataInjection"] },
 			parentDepth: 0,
 			parentFlowStack: [],
 			maxDepth: 3,
@@ -126,6 +125,10 @@ describe("dump mechanism — end-to-end", () => {
 		expect(mdContent).toContain("Flow: scout");
 		expect(mdContent).toContain("## Session Snapshot (JSONL)");
 		expect(mdContent).toContain("## Activation Prompt (-p)");
+		expect(mdContent).toContain("## Compression Stats");
+		expect(mdContent).toContain("- Pre-sanitization: 0 bytes");
+		expect(mdContent).toContain("- Post-sanitization: 0 bytes");
+		expect(mdContent).toContain("- Reduction: 0%");
 
 		expect(mdContent).toContain('"type":"session"');
 		expect(mdContent).toContain("<activation flow=\"scout\"");

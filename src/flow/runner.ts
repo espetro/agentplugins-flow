@@ -700,6 +700,14 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				``,
 				prompt,
 			);
+			markdownParts.push(
+				``,
+				`## Compression Stats`,
+				``,
+				`- Pre-sanitization: 0 bytes`,
+				`- Post-sanitization: 0 bytes`,
+				`- Reduction: 0%`,
+			);
 			const markdown = markdownParts.join("\n");
 			const uniqueDumpPath = makeUniqueDumpPath(dumpPath, flow.name);
 			const uniqueTxtPath = makeUniqueDumpTxtPath(uniqueDumpPath);

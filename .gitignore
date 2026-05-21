@@ -24,3 +24,6 @@ pi-autoresearch/
 
 # TUI scenarios doc with local file paths
 tui_scenarios.md
+
+# Log files from test runs
+*.log
