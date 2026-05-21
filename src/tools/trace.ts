@@ -245,7 +245,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				flows: discovery.flows,
 				flowName: "trace",
 				intent: params.intent ?? traceFlow.description,
-				aim: "Trace mode",
+				aim: "",
 				taskCwd: params.cwd,
 				forkSessionSnapshotJsonl,
 				parentDepth,
@@ -295,7 +295,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 							{
 								type: "trace",
 								intent: args?.intent || "Trace mode",
-								aim: "Trace mode",
+								aim: "",
 								model: lastResolvedModel,
 								maxContextTokens: lastResolvedMaxCtx,
 							},

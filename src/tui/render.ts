@@ -485,7 +485,7 @@ export function renderFlowResult(
 				type: flowRequest.type || "unknown",
 				agentSource: "user",
 				intent: flowRequest.intent || "Processing...",
-				aim: flowRequest.aim || flowRequest.intent || "Processing...",
+				aim: flowRequest.aim ?? flowRequest.intent ?? "Processing...",
 				acceptance: flowRequest.acceptance,
 				exitCode: -1, // In progress
 				messages: [],

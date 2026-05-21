@@ -608,7 +608,7 @@ describe("flow tool execute", () => {
 				type: "trace",
 				agentSource: "project",
 				intent: "Read package.json",
-				aim: "Trace mode",
+				aim: "",
 				exitCode: 0,
 				messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }],
 				stderr: "",

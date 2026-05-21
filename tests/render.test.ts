@@ -683,6 +683,18 @@ describe("activity panel rendering", () => {
 		expect(text).toContain("└─ cmd ▸");
 	});
 
+	it("suppresses aim line in ghost when aim is empty string", () => {
+		const rendered = renderFlowResult(
+			{ content: [{ type: "text", text: "Starting..." }], details: undefined },
+			false,
+			makeTheme(),
+			{ flow: [{ type: "trace", intent: "Read file", aim: "" }] },
+		);
+		const text = extractText(rendered);
+		expect(text).not.toContain("aim ▸");
+		expect(text).toContain("└─ cmd ▸");
+	});
+
 	it("hides acceptance line in collapsed view", () => {
 		const result = makeResult({
 			acceptance: "Done when tests pass",
