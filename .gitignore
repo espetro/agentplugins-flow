@@ -27,3 +27,6 @@ tui_scenarios.md
 
 # Log files from test runs
 *.log
+
+# Dead artifact directory (no source files)
+demo-api/

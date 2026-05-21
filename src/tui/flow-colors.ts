@@ -9,7 +9,8 @@ export type FlowColorRole =
   | "aimContent"
   | "actContent"
   | "msgContent"
-  | "msgError";
+  | "msgError"
+  | "placeholder";
 
 export interface FlowColorConfig {
   bodyVerbosity?: "lite" | "full";
@@ -22,6 +23,7 @@ export interface FlowColorConfig {
   actContent: { color: string; bold?: boolean; italic?: boolean };
   msgContent: { color: string; bold?: boolean; italic?: boolean };
   msgError: { color: string; bold?: boolean; italic?: boolean };
+  placeholder: { color: string; bold?: boolean; italic?: boolean };
 }
 
 export type FlowTheme = { fg: (color: string, text: string) => string; bold: (s: string) => string };
@@ -36,6 +38,7 @@ export const DEFAULT_FLOW_COLORS: FlowColorConfig = {
   actContent: { color: "dim", italic: true },
   msgContent: { color: "dim", italic: true },
   msgError: { color: "muted", italic: true },
+  placeholder: { color: "warning", italic: true },
 };
 
 export function applyRole(

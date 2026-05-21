@@ -1436,7 +1436,8 @@ describe("header ANSI style preservation during animation", () => {
 
 			expect(headerLine).toContain("\x1b[accentmscout\x1b[39m");
 			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o · \x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm5.0k · ----- t/s\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm5.0k\x1b[39m");
+			expect(headerLine).not.toContain("----- t/s");
 		} finally {
 			spy.mockRestore();
 		}
@@ -1501,7 +1502,8 @@ describe("header ANSI style preservation during animation", () => {
 			expect(headerLine).toContain("\x1b[dimm├─ \x1b[39m");
 			expect(headerLine).toContain("\x1b[accentmdebug\x1b[39m");
 			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o\x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm · 5.0k · ----- t/s\x1b[39m");
+			expect(headerLine).toContain("\x1b[mutedm · 5.0k\x1b[39m");
+			expect(headerLine).not.toContain("----- t/s");
 		} finally {
 			spy.mockRestore();
 		}
@@ -1784,7 +1786,7 @@ describe("flow status dot rendering", () => {
 		expect(auditHeader).toMatch(/[●○] audit/);
 	});
 
-	it("awaiting collapsed flow shows model context and ----- t/s", () => {
+	it("awaiting collapsed flow shows model context and omits zero t/s", () => {
 		const result = makeResult({
 			type: "audit",
 			status: "awaiting",
@@ -1799,11 +1801,11 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const headerLine = text.split("\n")[0];
 		expect(headerLine).toContain("0.12M/0.26M");
-		expect(headerLine).toContain("----- t/s");
+		expect(headerLine).not.toContain("----- t/s");
 		expect(headerLine).toContain("openai/gpt-4o");
 	});
 
-	it("awaiting group child shows model context and ----- t/s", () => {
+	it("awaiting group child shows model context and omits zero t/s", () => {
 		const buildResult = makeResult({
 			type: "build",
 			exitCode: -1,
@@ -1829,7 +1831,7 @@ describe("flow status dot rendering", () => {
 		const lines = text.split("\n");
 		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
 		expect(auditHeader).toContain("0.12M/0.26M");
-		expect(auditHeader).toContain("----- t/s");
+		expect(auditHeader).not.toContain("----- t/s");
 		expect(auditHeader).toContain("openai/gpt-4o");
 	});
 
@@ -1996,6 +1998,82 @@ describe("flow status dot rendering", () => {
 
 		// Blank lines between builds and before audit capstone removed for compact tree
 		// (previously: const blankLine = lines.find((l) => l === "│  │" || l.trim() === "│  │"); expect(blankLine).toBeDefined();)
+	});
+
+
+	it("regular completed build in activity panel shows summary instead of [finished]", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: 0,
+			status: "done",
+			aim: "Fix the bug",
+			structuredOutput: {
+				version: "1.0",
+				status: "complete",
+				summary: "Bug fixed successfully.",
+				files: [],
+				actions: [],
+				notDone: [],
+				commands: [],
+				nextSteps: [],
+				reasoning: [],
+				notes: [],
+			},
+			messages: [makeTextMessage("Bug fixed successfully.")],
+			usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 1000, turns: 1, toolCalls: 0 },
+		});
+		const scoutResult = makeResult({
+			type: "scout",
+			exitCode: 0,
+			status: "done",
+			messages: [makeTextMessage("Map complete")],
+			usage: { input: 500, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 500, turns: 1, toolCalls: 0 },
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, scoutResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+		const text = extractText(rendered);
+		expect(text).toContain("Bug fixed successfully.");
+		expect(text).not.toContain("[finished]");
+	});
+
+	it("audit capstone in group shows [approved] when verdict is pass", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: 0,
+			status: "done",
+			pingPongMeta: { cycles: 1, verdicts: [{ cycle: 1, verdict: "pass" }], finalVerdict: "pass" },
+			messages: [makeTextMessage("Done")],
+			usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 1000, turns: 1, toolCalls: 0 },
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: 0,
+			status: "done",
+			auditParentType: "build",
+			structuredOutput: {
+				version: "1.0",
+				status: "complete",
+				summary: "Audit complete.",
+				files: [],
+				actions: [],
+				notDone: [],
+				commands: [],
+				nextSteps: [],
+				reasoning: [],
+				notes: [],
+				verdict: "pass",
+				feedback: "Looks good.",
+				builds: [],
+			},
+			messages: [makeTextMessage("Audit complete.")],
+			usage: { input: 500, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 500, turns: 1, toolCalls: 0 },
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+		const text = extractText(rendered);
+		expect(text).toContain("[approved]");
 	});
 });
 
