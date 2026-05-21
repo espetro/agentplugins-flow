@@ -511,10 +511,26 @@ export default function (pi: ExtensionAPI) {
 	// Register the ask_user tool
 	pi.registerTool(createAskUserTool());
 
+	const getTierOverride = (tier: "lite" | "flash" | "full"): string | undefined => {
+		const flagName =
+			tier === "lite"
+				? "flow-lite-model"
+				: tier === "flash"
+					? "flow-flash-model"
+					: "flow-full-model";
+		const runtimeValue = pi.getFlag(flagName);
+		if (typeof runtimeValue === "string" && runtimeValue.trim()) return runtimeValue.trim();
+		const inheritedValue = inheritedCliArgs.tieredModels?.[tier];
+		return typeof inheritedValue === "string" && inheritedValue.trim() ? inheritedValue.trim() : undefined;
+	};
+
 	// Register the trace tool (available at all depths — quick verbatim reads)
 	pi.registerTool(createTraceTool({
 		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
 		getDepthConfig: () => depthConfig,
+		loadedFlowModelConfigs: resolved?.loadedFlowModelConfigs,
+		tierOverrideResolver: getTierOverride,
+		fallbackModel: inheritedCliArgs.fallbackModel,
 	}));
 
 	// Register the flow tool
@@ -546,18 +562,7 @@ export default function (pi: ExtensionAPI) {
 				// bodies (keeping first 3 + last 3 lines as orientation).
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager);
 
-				const getTierOverride = (tier: "lite" | "flash" | "full"): string | undefined => {
-					const flagName =
-						tier === "lite"
-							? "flow-lite-model"
-							: tier === "flash"
-								? "flow-flash-model"
-								: "flow-full-model";
-					const runtimeValue = pi.getFlag(flagName);
-					if (typeof runtimeValue === "string" && runtimeValue.trim()) return runtimeValue.trim();
-					const inheritedValue = inheritedCliArgs.tieredModels?.[tier];
-					return typeof inheritedValue === "string" && inheritedValue.trim() ? inheritedValue.trim() : undefined;
-				};
+
 
 				let activeGoal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
 				if (!activeGoal) {

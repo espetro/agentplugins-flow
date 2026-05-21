@@ -13,6 +13,13 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { runFlow } from "../flow/runner.js";
 import { discoverFlows } from "../flow/agents.js";
 import { buildCore2Snapshot } from "../core2/snapshot.js";
+import {
+	resolveFlowModelCandidates,
+	resolveModelContextWindow,
+	selectFlowModelStrategy,
+	type LoadedFlowModelConfigs,
+	type FlowModelStrategy,
+} from "../config/config.js";
 import { renderFlowCall, renderFlowResult } from "../tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
 import { setLiveText } from "../tui/scramble/index.js";
@@ -150,6 +157,9 @@ export const TraceParams = Type.Object({
 export interface TraceToolOptions {
 	getSettings?: () => { toolOptimize: boolean; structuredOutput: boolean; bodyVerbosity: "lite" | "full" } | undefined;
 	getDepthConfig?: () => { currentDepth: number; maxDepth: number; ancestorFlowStack: string[]; preventCycles: boolean } | undefined;
+	loadedFlowModelConfigs?: LoadedFlowModelConfigs;
+	tierOverrideResolver?: (tier: "lite" | "flash" | "full") => string | undefined;
+	fallbackModel?: string;
 }
 
 export function createTraceTool(opts: TraceToolOptions = {}) {
@@ -202,6 +212,26 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 
 			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager);
 
+			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)
+			const tier = traceFlow.tier ?? "lite";
+			let selectedStrategy: FlowModelStrategy | undefined;
+			if (opts.loadedFlowModelConfigs) {
+				const selectedFlowModelConfig = selectFlowModelStrategy(
+					opts.loadedFlowModelConfigs.configs,
+					opts.loadedFlowModelConfigs.selectedName,
+				);
+				selectedStrategy = selectedFlowModelConfig.strategy;
+			}
+			const { candidates } = resolveFlowModelCandidates({
+				tier,
+				flowModel: traceFlow.model,
+				cliTierOverride: opts.tierOverrideResolver?.(tier),
+				strategy: selectedStrategy ?? {},
+				fallbackModel: opts.fallbackModel,
+			});
+			const resolvedModel = candidates[0];
+			const maxContextTokens = resolveModelContextWindow(resolvedModel);
+
 			const result = await runFlow({
 				cwd: ctx.cwd,
 				flows: discovery.flows,
@@ -217,6 +247,8 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				toolOptimize: opts.getSettings?.()?.toolOptimize,
 				structuredOutput: opts.getSettings?.()?.structuredOutput,
 				complexity: params.complexity ?? "simple",
+				model: resolvedModel,
+				maxContextTokens,
 				preDispatchResults,
 				makeDetails,
 				signal,
@@ -256,6 +288,8 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 								type: "trace",
 								intent: args?.intent || "Trace mode",
 								aim: "Trace mode",
+								model: args?.model,
+								maxContextTokens: args?.maxContextTokens,
 							},
 						],
 					};
