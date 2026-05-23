@@ -47,6 +47,48 @@ npm test -- tests/scramble.test.ts   # single file example
 
 Use this loop while refactoring core logic. Anything that only touches rendering inside **interactive** Pi still benefits from a PTY session (below).
 
+## Integration Testing Guide
+
+There are two levels of integration tests in this repository: **mocked integrations** (running under Vitest without calling actual APIs or invoking the global `pi` CLI) and **real-world end-to-end (E2E) integration tests** (which execute the global `pi` command against your local build).
+
+### 1. Mocked Integration Tests (Vitest)
+These test modules such as tool execution, loop/continuation logic, and snapshot compilation by mocking the underlying process runner (`runFlow`) but executing the full orchestration layers.
+
+- **Location**: Files ending in `*.test.ts` in `tests/` contain integration blocks (e.g., `tests/trace.test.ts` has `describe("Trace Tool Execution Integration", ...)`).
+- **Structure**:
+  - They create a temporary directory (`fs.mkdtempSync`) and setup mock agent definitions (e.g. creating `.pi/agents/trace.md`).
+  - They mock `src/flow/runner.ts` using Vitest's `vi.mock()` to prevent child processes from actually spawning, returning structured tool call responses instead.
+  - They invoke the tools via the tool interface `.execute(toolCallId, params, ...)` mimicking the actual loader.
+- **Running Mocked Integrations**:
+  ```bash
+  npm test -- tests/trace.test.ts
+  ```
+
+### 2. E2E / Live CLI Integration Tests
+These tests run the actual global `pi` executable using your compiled local build. They verify real LLM interaction and verbatim snapshot context construction.
+
+#### Setup / Prerequisites
+1. **Link to Local Build**: You must be linked to your local checkout:
+   ```bash
+   npm run build
+   ./scripts/switch.sh          # Toggle to LOCAL (or: npm run switch:local)
+   npm ls -g pi-agent-flow      # Verify link — should point to this repo
+   ```
+2. **Clean Background Instances**: If you want to check child flow snapshot boundaries cleanly without previous cached state, run:
+   ```bash
+   pkill -f pi                  # Terminate any stray background pi instances
+   ```
+
+#### Executing E2E Integration Tests
+Run `pi -p` with standard input redirected from `/dev/null` to execute non-interactively (headless):
+
+- **Verbatim Trace Integration Test** (verifies that child flows do not inherit active/pending tool calls and successfully return verbatim evidence):
+  ```bash
+  pi -p "Use only the trace tool exactly one time to read the file SHARED-CONTEXT-CORE2.md and print its content. Tell me: do you see file content verbatim in the tool output?" < /dev/null
+  ```
+  *Expected Output*: The agent should answer **Yes** and confirm seeing the verbatim content inside the output evidence block, rather than claiming that the trace tool output was `"No result provided"`.
+
+
 ## Why `pi -p "…"` often misses TUI bugs
 
 One-shot invocations and some non-TTY stdin modes **short-circuit or skip** the full interactive render loop. Problems involving:

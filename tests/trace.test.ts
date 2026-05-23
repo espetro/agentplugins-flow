@@ -1,0 +1,263 @@
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import registerExtension from "../src/index.js";
+import { runFlow } from "../src/flow/runner.js";
+import { emptyFlowUsage } from "../src/types/flow.js";
+import { extractTraceStructuredOutput, resolveToolEvidence } from "../src/snapshot/trace-output.js";
+
+vi.mock("../src/flow/runner.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/flow/runner.js")>();
+	return {
+		...actual,
+		runFlow: vi.fn(),
+	};
+});
+
+function createMockPi() {
+	const handlers: Record<string, Function[]> = {};
+	const tools: any[] = [];
+
+	return {
+		registerFlag: vi.fn(),
+		on: vi.fn((event, handler) => {
+			if (!handlers[event]) handlers[event] = [];
+			handlers[event].push(handler);
+		}),
+		registerTool: vi.fn((tool) => {
+			tools.push(tool);
+		}),
+		setActiveTools: vi.fn(),
+		getActiveTools: vi.fn(() => ["read", "write", "edit", "bash", "find", "grep", "ls", "flow", "web"]),
+		getFlag: vi.fn(),
+		emit: vi.fn(),
+		registerCommand: vi.fn(),
+		sendUserMessage: vi.fn(),
+		trigger: (event: string, ...args: any[]) =>
+			Promise.all((handlers[event] || []).map((h) => h(...args))),
+		getTool: (name: string) => tools.find((t) => t.name === name),
+	};
+}
+
+function makeMockCtx(cwd: string) {
+	return {
+		cwd,
+		sessionManager: {
+			getHeader: () => ({}),
+			getBranch: () => [],
+			getSessionId: () => 'test-session-id',
+		},
+		hasUI: false,
+		ui: { confirm: vi.fn() },
+	};
+}
+
+describe("Trace Structured Output Parser & Resolver", () => {
+	describe("extractTraceStructuredOutput", () => {
+		it("correctly parses valid trace structured output JSON block", () => {
+			const text = "Some assistant response before.\n```json\n{\n  \"note\": \"This is a note.\",\n  \"tool_ids\": [\"call_1\", \"call_2\"]\n}\n```";
+			const result = extractTraceStructuredOutput(text);
+			expect(result).toEqual({
+				note: "This is a note.",
+				tool_ids: ["call_1", "call_2"],
+			});
+		});
+
+		it("returns undefined for missing or malformed JSON blocks", () => {
+			expect(extractTraceStructuredOutput("no JSON block here")).toBeUndefined();
+			expect(extractTraceStructuredOutput("```json\ninvalid-json\n```")).toBeUndefined();
+		});
+
+		it("returns undefined for missing required fields or incorrect types", () => {
+			expect(extractTraceStructuredOutput("```json\n{\n  \"tool_ids\": [\"call_1\"]\n}\n```")).toBeUndefined();
+			expect(extractTraceStructuredOutput("```json\n{\n  \"note\": 123,\n  \"tool_ids\": [\"call_1\"]\n}\n```")).toBeUndefined();
+			expect(extractTraceStructuredOutput("```json\n{\n  \"note\": \"test\",\n  \"tool_ids\": \"not-an-array\"\n}\n```")).toBeUndefined();
+		});
+	});
+
+	describe("resolveToolEvidence", () => {
+		it("resolves evidence from pre-dispatch or live flow messages", () => {
+			const messages: any[] = [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							id: "call_abc",
+							name: "batch",
+							arguments: { o: [{ o: "read", p: "src/index.ts" }] },
+						},
+					],
+				},
+				{
+					role: "tool",
+					toolCallId: "call_abc",
+					content: [
+						{
+							type: "text",
+							text: "import foo from 'bar';",
+						},
+					],
+				},
+			];
+
+			const evidence = resolveToolEvidence(["call_abc"], messages, []);
+			expect(evidence).toContain("## Verbatim Evidence");
+			expect(evidence).toContain("### batch [call_abc]");
+			expect(evidence).toContain("**Args:**");
+			expect(evidence).toContain('"o": [');
+			expect(evidence).toContain("import foo from 'bar';");
+		});
+
+		it("resolves evidence from parent branch history", () => {
+			const parentBranch: any[] = [
+				{
+					type: "message",
+					message: {
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								toolCallId: "call_parent",
+								name: "bash",
+								arguments: { command: "git status" },
+							},
+						],
+					},
+				},
+				{
+					type: "message",
+					message: {
+						role: "tool",
+						toolCallId: "call_parent",
+						content: "On branch main\nnothing to commit, working tree clean",
+					},
+				},
+			];
+
+			const evidence = resolveToolEvidence(["call_parent"], [], parentBranch);
+			expect(evidence).toContain("### bash [call_parent]");
+			expect(evidence).toContain("git status");
+			expect(evidence).toContain("On branch main");
+		});
+
+		it("silently ignores missing tool IDs", () => {
+			const evidence = resolveToolEvidence(["non_existent"], [], []);
+			expect(evidence).toBe("");
+		});
+	});
+});
+
+describe("Trace Tool Execution Integration", () => {
+	let tmpDir: string;
+	let originalCwd: string;
+
+	beforeAll(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-trace-test-"));
+		originalCwd = process.cwd();
+		process.chdir(tmpDir);
+	});
+
+	afterAll(() => {
+		process.chdir(originalCwd);
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	function setupFlowsDir() {
+		const agentsDir = path.join(tmpDir, ".pi", "agents");
+		fs.mkdirSync(agentsDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(agentsDir, "trace.md"),
+			`---
+name: trace
+description: Verbatim trace mode
+tier: lite
+---
+Prompt`,
+			"utf-8"
+		);
+	}
+
+	it("executes trace tool, runs pre-dispatch, parses structured JSON, and returns resolved evidence", async () => {
+		setupFlowsDir();
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		// Mock runFlow to return assistant response with JSON structured output block
+		vi.mocked(runFlow).mockResolvedValue({
+			type: "trace",
+			agentSource: "project",
+			intent: "Read index",
+			aim: "",
+			exitCode: 0,
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							toolCallId: "call_live_read",
+							name: "batch",
+							arguments: { o: [{ o: "read", p: "src/index.ts" }] },
+						},
+					],
+				},
+				{
+					role: "tool",
+					toolCallId: "call_live_read",
+					content: "const a = 123;",
+				},
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "text",
+							text: "```json\n{\n  \"note\": \"We found the definition of a in src/index.ts.\",\n  \"tool_ids\": [\"pre_dispatch_batch_0\", \"call_live_read\", \"missing_id\"]\n}\n```",
+						},
+					],
+				},
+			],
+			stderr: "",
+			usage: emptyFlowUsage(),
+		});
+
+		const tool = pi.getTool("trace");
+		const result = await tool.execute(
+			"call-trace-1",
+			{
+				intent: "Read index",
+				dispatch: [
+					{
+						tool: "batch",
+						ops: [{ o: "read", p: "package.json" }],
+					},
+				],
+			},
+			new AbortController().signal,
+			vi.fn(),
+			makeMockCtx(tmpDir)
+		);
+
+		expect(result.failed).toBeFalsy();
+		expect(runFlow).toHaveBeenCalledTimes(1);
+
+		const responseText = result.content[0].text;
+		// Must start with the note
+		expect(responseText).toContain("We found the definition of a in src/index.ts.");
+		
+		// Must resolve the pre-dispatch batch call
+		expect(responseText).toContain("### batch [pre_dispatch_batch_0]");
+		// Must resolve the live batch call
+		expect(responseText).toContain("### batch [call_live_read]");
+		expect(responseText).toContain("const a = 123;");
+		// Must silently ignore missing_id
+		expect(responseText).not.toContain("missing_id");
+	});
+});

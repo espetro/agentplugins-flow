@@ -412,6 +412,45 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		expect(parsed).toHaveLength(2);
 		expect(parsed[0]).toMatchObject({ version: 1, id: "session-1", type: "session" });
 	});
+
+	it("strips activeToolCallId matching tool call and omits empty assistant message", () => {
+		const entries = [
+			{ type: "message", message: { role: "user", content: "Hi" } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "active-call-1", name: "trace" }
+					]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { activeToolCallId: "active-call-1" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(2); // header + 1 message (user)
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "user", content: "Hi" } });
+	});
+
+	it("keeps assistant message when it contains other substance/tool calls after filtering", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "some thought" },
+						{ type: "toolCall", id: "active-call-1", name: "trace" }
+					]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { activeToolCallId: "active-call-1" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(2); // header + assistant message
+		expect(parsed[1].message.content).toHaveLength(1);
+		expect(parsed[1].message.content[0]).toMatchObject({ type: "thinking", thinking: "some thought" });
+	});
 });
 
 // ---------------------------------------------------------------------------

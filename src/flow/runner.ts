@@ -423,7 +423,8 @@ function buildFlowArgs(
 	let directiveBody = flow.systemPrompt.trim();
 
 	// Append structured output instructions when enabled (unless opted out via env).
-	if (structuredOutput && directiveBody && !skipStructuredDirective) {
+	const isTrace = flow.name.toLowerCase() === "trace";
+	if (structuredOutput && directiveBody && !skipStructuredDirective && !isTrace) {
 		const isAudit = flow.name.toLowerCase() === "audit";
 		const auditFields = isAudit
 			? " Also include `verdict: 'pass' | 'rework'` and `feedback: string` (required when verdict is 'rework', optional when 'pass'). When auditing multiple builds, also include `builds: { index: number, verdict: 'pass' | 'rework', feedback?: string }[]` with per-build verdicts."

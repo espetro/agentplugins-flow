@@ -84,3 +84,12 @@ export interface FlowStructuredOutput {
 	extensions?: Record<string, unknown>;
 }
 
+/** Structured JSON output from a trace flow run. */
+export interface TraceStructuredOutput {
+	/** A 1–3 sentence orientation summary of what was looked at and why it matters (under 50 words). */
+	note: string;
+	/** The tool call IDs containing the verbatim evidence. */
+	tool_ids: string[];
+}
+
+

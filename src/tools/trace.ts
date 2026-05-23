@@ -10,6 +10,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import { runFlow } from "../flow/runner.js";
 import { discoverFlows } from "../flow/agents.js";
 import { buildCore2Snapshot } from "../core2/snapshot.js";
@@ -29,6 +30,7 @@ import { runBashWithLimits } from "../batch/batch-bash.js";
 import { runWebOps } from "./web-ops.js";
 import type { FileOpInput } from "../batch/constants.js";
 import type { WebOpInput } from "./web-ops.js";
+import { extractTraceStructuredOutput, resolveToolEvidence } from "../snapshot/trace-output.js";
 
 // ---------------------------------------------------------------------------
 // Dispatch schemas — mirror of the flow-tool dispatch (kept here to avoid
@@ -85,45 +87,85 @@ async function executeDispatchOps(
 	cwd: string,
 	ctx: ExtensionContext,
 	signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ promptString: string; messages: Message[] }> {
 	const parts: string[] = [];
+	const messages: Message[] = [];
 	let toolCallIndex = 0;
 
 	for (const group of dispatch) {
 		if (signal?.aborted) break;
 		const toolCallId = `pre_dispatch_${group.tool}_${toolCallIndex++}`;
 
+		let resultString = "";
 		try {
 			if (group.tool === "batch") {
 				const fileOps = group.ops.filter((op) => op.o !== "bash");
 				const bashOps = group.ops.filter((op) => op.o === "bash");
 
+				const subParts: string[] = [];
 				if (fileOps.length > 0) {
 					const fileOutput = await executeOperations(fileOps as FileOpInput[], cwd, signal, { includeLimitWarnings: true });
-					parts.push(`### batch (file ops)\n\ntool_call_id: ${toolCallId}\n\n${fileOutput.contentText}`);
+					subParts.push(fileOutput.contentText);
 				}
 
 				if (bashOps.length > 0) {
 					for (const op of bashOps) {
 						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? 30000, signal);
-						parts.push(`### batch (bash op)\n\ntool_call_id: ${toolCallId}\n\nstdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
+						subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
 					}
 				}
+				resultString = subParts.join("\n\n");
+				parts.push(`### batch (file ops)\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
 			} else if (group.tool === "bash") {
+				const subParts: string[] = [];
 				for (const cmd of group.ops) {
 					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? 30000, signal);
-					parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\nstdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
+					subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
 				}
+				resultString = subParts.join("\n\n");
+				parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
 			} else if (group.tool === "web") {
 				const webOutput = await runWebOps({ op: group.ops }, ctx, signal);
-				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${webOutput.content[0].text}`);
+				resultString = webOutput.content[0].text;
+				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
 			}
 		} catch (err) {
-			parts.push(`### ${group.tool}\n\ntool_call_id: ${toolCallId}\n\nError: ${err instanceof Error ? err.message : String(err)}`);
+			resultString = `Error: ${err instanceof Error ? err.message : String(err)}`;
+			parts.push(`### ${group.tool}\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
 		}
+
+		// Add mock messages
+		messages.push({
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					toolCallId,
+					name: group.tool,
+					arguments: group.tool === "batch"
+						? { o: group.ops }
+						: group.tool === "bash"
+							? { ops: group.ops }
+							: { op: group.ops },
+				} as any
+			]
+		});
+		messages.push({
+			role: "tool",
+			toolCallId,
+			content: [
+				{
+					type: "text",
+					text: resultString,
+				}
+			]
+		} as any);
 	}
 
-	return parts.join("\n\n");
+	return {
+		promptString: parts.join("\n\n"),
+		messages,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +251,15 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				results,
 			});
 
-			const preDispatchResults = params.dispatch?.length
+			const preDispatch = params.dispatch?.length
 				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
 				: undefined;
+			const preDispatchResults = preDispatch?.promptString;
+			const preDispatchMessages = preDispatch?.messages ?? [];
 
-			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager);
+			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
+				activeToolCallId: toolCallId,
+			});
 
 			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)
 			const tier = traceFlow.tier ?? "lite";
@@ -272,7 +318,19 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 					: undefined,
 			});
 
-			const outputText = getFlowOutput(result.messages) || "Trace completed.";
+			const rawOutput = getFlowOutput(result.messages) || "Trace completed.";
+			const traceOutput = extractTraceStructuredOutput(rawOutput) ?? { note: rawOutput, tool_ids: [] };
+
+			let outputText = traceOutput.note;
+			const evidence = resolveToolEvidence(
+				traceOutput.tool_ids,
+				[...preDispatchMessages, ...result.messages],
+				ctx.sessionManager.getBranch(),
+			);
+			if (evidence) {
+				outputText += "\n\n" + evidence;
+			}
+
 			const success = result.exitCode === 0;
 
 			return {

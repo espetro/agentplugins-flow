@@ -560,7 +560,9 @@ export default function (pi: ExtensionAPI) {
 				// Build the fork session snapshot. Core-2 preserves all conversation
 				// verbatim in chronological order, stripping only batch read/write/edit
 				// bodies (keeping first 3 + last 3 lines as orientation).
-				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager);
+				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
+					activeToolCallId: toolCallId,
+				});
 
 
 

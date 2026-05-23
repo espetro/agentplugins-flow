@@ -106,9 +106,10 @@ Once linked locally, your daily loop is just:
 > globally, which **overwrites and destroys your local symlink**. To get published updates,
 > run `./scripts/switch.sh` first to toggle to REMOTE, then run `pi update`.
 
-### Autonomous Pi testing (bash + PTY)
+### Autonomous Pi & Integration Testing (bash, PTY, E2E)
 
-For **`npm run lint` / `npm test`** plus scripted **`pi`** sessions over a pseudo-terminal (`expect`, optional `script` wrapper)—including why bare **`pi -p`** runs often skip full TUI behavior—see **[docs/autonomous-pi-testing.md](docs/autonomous-pi-testing.md)**. Template harness: `scripts/example-autonomous-pi.expect` (copy and tune `AFTER_MS`, optional `STARTUP_RE`, and `RESPONSE_RE` to match your Pi layout / mission).
+For **`npm run lint` / `npm test`**, mocked integration tests under Vitest, and executing real-world end-to-end (E2E) integration tests (like the verbatim trace tool test) against linked local builds, see **[docs/autonomous-pi-testing.md](docs/autonomous-pi-testing.md)**.
+Also covers scripted **`pi`** sessions over a pseudo-terminal (`expect`, template harness: `scripts/example-autonomous-pi.expect`).
 
 ## Write-Then-Execute Convention
 

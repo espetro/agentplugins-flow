@@ -16,11 +16,12 @@ export interface BuildCore2SnapshotOptions {
 	forkedAt?: string;
 	parentFlow?: string;
 	depth?: number;
+	activeToolCallId?: string;
 }
 
 export function buildCore2Snapshot(
 	sessionManager: SessionSnapshotSource,
-	_options?: BuildCore2SnapshotOptions,
+	options?: BuildCore2SnapshotOptions,
 ): string | null {
 	const header = sessionManager.getHeader();
 	if (!header || typeof header !== "object") return null;
@@ -70,8 +71,13 @@ export function buildCore2Snapshot(
 	}
 
 	for (const entry of branchEntries) {
-		const processedEntry = maybeStripCompaction(entry);
+		let processedEntry = maybeStripCompaction(entry);
 		if (!processedEntry) continue;
+
+		if (options?.activeToolCallId) {
+			processedEntry = stripActiveToolCall(processedEntry, options.activeToolCallId);
+			if (!processedEntry) continue;
+		}
 
 		const line = JSON.stringify(processedEntry);
 		// Strip batch read/write/edit bodies from tool result messages
@@ -250,3 +256,56 @@ function maybeStripBatchBodies(line: string): string {
 
 	return JSON.stringify(entry);
 }
+
+/**
+ * Filter out the active tool call from assistant messages in snapshot.
+ * If the assistant message becomes empty (e.g. no other tool calls, no text/thinking),
+ * it returns null to omit the message entirely from the snapshot.
+ */
+function stripActiveToolCall(entry: unknown, activeToolCallId: string | undefined): unknown | null {
+	if (!activeToolCallId || !entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") {
+		return entry;
+	}
+
+	const message = e.message as Record<string, unknown>;
+	if (message.role !== "assistant" || !Array.isArray(message.content)) {
+		return entry;
+	}
+
+	const newContent = message.content.filter((block: any) => {
+		if (block && block.type === "toolCall") {
+			const id = block.id || block.toolCallId || block.tool_call_id;
+			if (id === activeToolCallId) {
+				return false;
+			}
+		}
+		return true;
+	});
+
+	const hasSubstance = newContent.some((block: any) => {
+		if (!block) return false;
+		if (block.type === "text" && typeof block.text === "string" && block.text.trim() === "") {
+			return false;
+		}
+		if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim() === "") {
+			return false;
+		}
+		return true;
+	});
+
+	if (newContent.length === 0 || !hasSubstance) {
+		return null;
+	}
+
+	return {
+		...e,
+		message: {
+			...message,
+			content: newContent,
+		},
+	};
+}
+
