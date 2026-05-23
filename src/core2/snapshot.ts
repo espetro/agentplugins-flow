@@ -6,6 +6,8 @@
  * chronological order.
  */
 
+import { stripDirectives } from "../steering/tool-utils.js";
+
 export interface SessionSnapshotSource {
 	getHeader: () => unknown;
 	getBranch: () => unknown[];
@@ -29,7 +31,8 @@ export function buildCore2Snapshot(
 	// Compress cwd in session header: relative to repo root if under it,
 	// otherwise basename only. Saves ~50-100 bytes per snapshot.
 	const repoRoot = process.cwd();
-	let compressedHeader = header as Record<string, unknown>;
+	let compressedHeader = { ...(header as Record<string, unknown>) };
+	delete compressedHeader.timestamp;
 	if (typeof compressedHeader.cwd === "string") {
 		const cwd = compressedHeader.cwd;
 		let compressedCwd: string;
@@ -42,7 +45,7 @@ export function buildCore2Snapshot(
 			compressedCwd = lastSep >= 0 ? cwd.slice(lastSep + 1) : cwd;
 		}
 		if (compressedCwd !== cwd) {
-			compressedHeader = { ...compressedHeader, cwd: compressedCwd };
+			compressedHeader.cwd = compressedCwd;
 		}
 	}
 
@@ -107,14 +110,34 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 		return null;
 	}
 
+	const result = { ...e };
+	delete result.timestamp;
+	delete result.parentId; // Tree linkage irrelevant to linear replay
+
 	// 2. Process message entries
-	if (e.type === "message" && e.message && typeof e.message === "object") {
-		const msg = { ...e.message as Record<string, unknown> };
+	if (result.type === "message" && result.message && typeof result.message === "object") {
+		const msg = { ...result.message as Record<string, unknown> };
 
 		// Strip message-level reasoning/thinking fields
 		delete msg.thinking;
 		delete msg.reasoning;
 		delete msg.reasoningContent;
+
+		// Strip model execution metadata and noise fields
+		delete msg.api;
+		delete msg.provider;
+		delete msg.model;
+		delete msg.cost;
+		delete msg.details;
+		delete msg.responseId;
+		delete msg.responseModel;
+		delete msg.timestamp;
+		delete msg.isError;
+
+		// Strip tool correlation IDs — child flows replay linearly, no invocation by ID
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			delete msg.toolCallId;
+		}
 
 		// Strip block-level thinking/reasoning elements from content array
 		if (Array.isArray(msg.content)) {
@@ -151,13 +174,10 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 			}
 		}
 
-		return {
-			...e,
-			message: msg,
-		};
+		result.message = msg;
 	}
 
-	return entry;
+	return result;
 }
 
 /**
@@ -304,19 +324,20 @@ function maybeStripBatchBodies(line: string): string {
 	}
 
 	const stripped = stripBatchBodies(text);
-	if (stripped === text) {
+	const cleaned = stripDirectives(stripped);
+	if (cleaned === text) {
 		return line;
 	}
 
 	if (typeof message.content === "string") {
 		entry = {
 			...entry,
-			message: { ...message, content: stripped },
+			message: { ...message, content: cleaned },
 		};
 	} else if (textIndex !== undefined) {
 		const newContent = (message.content as Array<Record<string, unknown>>).map((part, idx) => {
 			if (idx === textIndex && part.type === "text" && typeof part.text === "string") {
-				return { ...part, text: stripped };
+				return { ...part, text: cleaned };
 			}
 			return part;
 		});

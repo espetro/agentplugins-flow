@@ -235,9 +235,9 @@ describe("flow tool execute", () => {
 		const changedAssistant = { type: "message", message: { role: "assistant", reasoning: "SECRET_REASONING", content: [{ type: "text", text: "Visible answer — [build] output shows success." }], timestamp: 3 } };
 		const droppedSystem = { type: "message", message: { role: "system", content: steeringHint, timestamp: 4 } };
 		const unchangedTool = { type: "message", message: { role: "toolResult", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }], timestamp: 5 } };
-		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project", timestamp: 1 } };
-		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }], timestamp: 2 } };
-		const unchangedToolExpected = JSON.stringify(unchangedTool);
+		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project" } };
+		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }] } };
+		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "Unchanged tool result" }] } });
 		const sessionBranch = [unchangedUser, unchangedAssistant, changedAssistant, droppedSystem, unchangedTool];
 
 		const tool = pi.getTool("flow");
@@ -269,10 +269,11 @@ describe("flow tool execute", () => {
 		expect(lines).toContain(unchangedToolExpected);
 		expect(lines).not.toContain(JSON.stringify({ type: "system", content: header.systemPrompt }));
 		// Core-2 strips assistant messages with reasoning.
-		const expectedChangedAssistant = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Visible answer — [build] output shows success." }], timestamp: 3 } };
+		const expectedChangedAssistant = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Visible answer — [build] output shows success." }] } };
 		expect(lines).toContain(JSON.stringify(expectedChangedAssistant));
 		// Core-2 preserves system messages verbatim.
-		expect(lines).toContain(JSON.stringify(droppedSystem));
+		const expectedDroppedSystem = { type: "message", message: { role: "system", content: steeringHint } };
+		expect(lines).toContain(JSON.stringify(expectedDroppedSystem));
 		expect(snapshot).toContain("Visible answer — [build] output shows success.");
 		expect(snapshot).not.toContain("SECRET_REASONING");
 		expect(snapshot).toContain("<pi-flow-steering-hint>");
@@ -323,7 +324,8 @@ describe("flow tool execute", () => {
 
 		const snapshot = vi.mocked(runFlow).mock.calls[0][0].forkSessionSnapshotJsonl;
 		// Core-2 preserves system messages verbatim.
-		expect(snapshot).toContain(JSON.stringify(droppedSystemArray));
+		const droppedSystemArrayExpected = { type: "message", message: { role: "system", content: [{ type: "text", text: steeringHint }] } };
+		expect(snapshot).toContain(JSON.stringify(droppedSystemArrayExpected));
 		expect(snapshot).toMatch(/<pi-flow-steering-hint\b/);
 	});
 

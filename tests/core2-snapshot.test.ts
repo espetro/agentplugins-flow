@@ -120,6 +120,37 @@ describe("buildCore2Snapshot — retention", () => {
 		expect(snapshot).toContain('"name":"flow"');
 	});
 
+	it("strips parentId from entries", () => {
+		const entry = { type: "message", id: "msg-1", parentId: "parent-abc", message: { role: "user", content: "hi" } };
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).toContain('"id":"msg-1"'); // id preserved (for now)
+		expect(snapshot).not.toContain("parentId");
+	});
+
+	it("strips toolCallId from tool and toolResult messages", () => {
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", toolCallId: "tc-1", content: [{ type: "text", text: "output" }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("tc-1");
+		expect(snapshot).not.toContain("toolCallId");
+		expect(snapshot).toContain("output");
+	});
+
+	it("strips directive blocks from tool result text", () => {
+		const text =
+			"✔ 1 read\n--- src/file.ts (3 lines) ---\na\nb\nc\n\n[Directive: Close what you start. Dispatch a [build] or [scout] flow to verify before advancing.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Directive:");
+		expect(snapshot).toContain("--- src/file.ts (3 lines) ---");
+		expect(snapshot).toContain("a");
+	});
+
 	it("preserves batch bash and rg sections verbatim", () => {
 		const batchText =
 			"✔ 1 bash\n\n" +
@@ -507,5 +538,70 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 				content: "[Context Compacted] Parent context was compacted. (500 tokens summarized)",
 			},
 		});
+	});
+
+	it("strips API metadata, usage, cost, details, timestamps, and other noise fields", () => {
+		const entries = [
+			{
+				type: "message",
+				id: "msg-1",
+				timestamp: "2026-05-23T15:35:19.588Z",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Hello" }],
+					api: "openai-completions",
+					provider: "fireworks.ai",
+					model: "kimi-k2p6-turbo",
+					usage: { input: 100, output: 200, totalTokens: 300 },
+					cost: { input: 0.001, output: 0.002, total: 0.003 },
+					stopReason: "stop",
+					responseId: "resp-123",
+					responseModel: "kimi-k2p6",
+					timestamp: 1779550519587,
+				},
+			},
+			{
+				type: "message",
+				id: "msg-2",
+				timestamp: "2026-05-23T15:35:21.164Z",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-1",
+					toolName: "bash",
+					content: [{ type: "text", text: "exit 0" }],
+					details: { results: [{ op: "run", status: "success" }] },
+					isError: false,
+					timestamp: 1779550521164,
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		// Header (first entry) should not contain timestamp
+		expect(parsed[0]).not.toHaveProperty("timestamp");
+
+		// Message 1 checks
+		const msg1 = parsed[1] as any;
+		expect(msg1).not.toHaveProperty("timestamp");
+		expect(msg1.message).not.toHaveProperty("api");
+		expect(msg1.message).not.toHaveProperty("provider");
+		expect(msg1.message).not.toHaveProperty("model");
+		expect(msg1.message).toHaveProperty("usage");
+		expect(msg1.message.usage).toEqual({ input: 100, output: 200, totalTokens: 300 });
+		expect(msg1.message).not.toHaveProperty("cost");
+		expect(msg1.message).toHaveProperty("stopReason", "stop");
+		expect(msg1.message).not.toHaveProperty("responseId");
+		expect(msg1.message).not.toHaveProperty("responseModel");
+		expect(msg1.message).not.toHaveProperty("timestamp");
+		expect(msg1.message.content[0].text).toBe("Hello");
+
+		// Message 2 checks
+		const msg2 = parsed[2] as any;
+		expect(msg2).not.toHaveProperty("timestamp");
+		expect(msg2.message).not.toHaveProperty("details");
+		expect(msg2.message).not.toHaveProperty("isError");
+		expect(msg2.message).not.toHaveProperty("timestamp");
+		expect(msg2.message.content[0].text).toBe("exit 0");
 	});
 });
