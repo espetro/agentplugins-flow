@@ -120,10 +120,10 @@ describe("buildCore2Snapshot — retention", () => {
 		expect(snapshot).toContain('"name":"flow"');
 	});
 
-	it("strips parentId from entries", () => {
+	it("strips id and parentId from entries", () => {
 		const entry = { type: "message", id: "msg-1", parentId: "parent-abc", message: { role: "user", content: "hi" } };
 		const snapshot = buildCore2Snapshot(makeSource([entry]));
-		expect(snapshot).toContain('"id":"msg-1"'); // id preserved (for now)
+		expect(snapshot).not.toContain('"id":"msg-1"');
 		expect(snapshot).not.toContain("parentId");
 	});
 
@@ -466,7 +466,8 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		const snapshot = buildCore2Snapshot(source);
 		const parsed = parseSnapshot(snapshot);
 		expect(parsed).toHaveLength(2);
-		expect(parsed[0]).toMatchObject({ version: 1, id: "session-1", type: "session" });
+		expect(parsed[0]).toMatchObject({ version: 1, type: "session" });
+		expect(parsed[0]).not.toHaveProperty("id");
 	});
 
 	it("strips activeToolCallId matching tool call and omits empty assistant message", () => {
@@ -565,7 +566,7 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		});
 	});
 
-	it("strips API metadata, usage, cost, details, timestamps, and other noise fields", () => {
+	it("strips API metadata and slims usage to context fields only", () => {
 		const entries = [
 			{
 				type: "message",
@@ -612,7 +613,13 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(msg1.message).not.toHaveProperty("api");
 		expect(msg1.message).not.toHaveProperty("provider");
 		expect(msg1.message).not.toHaveProperty("model");
-		expect(msg1.message).not.toHaveProperty("usage");
+		expect(msg1.message.usage).toEqual({
+			input: 100,
+			output: 200,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 300,
+		});
 		expect(msg1.message).not.toHaveProperty("cost");
 		expect(msg1.message).toHaveProperty("stopReason", "stop");
 		expect(msg1.message).not.toHaveProperty("responseId");

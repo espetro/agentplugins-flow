@@ -557,9 +557,9 @@ export default function (pi: ExtensionAPI) {
 				const { flows } = discovery;
 				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir);
 
-				// Build the fork session snapshot. Core-2 preserves all conversation
-				// verbatim in chronological order, stripping only batch read/write/edit
-				// bodies (keeping first 3 + last 3 lines as orientation).
+				// Build the fork session snapshot. Core-2 applies a 6-stage sanitization
+				// pipeline that strips metadata noise irrelevant to child flow orientation
+				// while preserving chronological conversation history.
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 					activeToolCallId: toolCallId,
 				});

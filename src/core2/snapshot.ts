@@ -95,6 +95,26 @@ export function buildCore2Snapshot(
 }
 
 /**
+ * Keep only the usage fields pi-coding-agent needs for context accounting.
+ * Full usage objects (~150+ chars) are stripped; deleting usage entirely breaks
+ * forked child sessions (calculateContextTokens reads usage.totalTokens).
+ */
+function slimAssistantUsage(usage: unknown): Record<string, number> | undefined {
+	if (!usage || typeof usage !== "object") return undefined;
+	const u = usage as Record<string, unknown>;
+	const input = typeof u.input === "number" ? u.input : 0;
+	const output = typeof u.output === "number" ? u.output : 0;
+	const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : 0;
+	const cacheWrite = typeof u.cacheWrite === "number" ? u.cacheWrite : 0;
+	const totalTokens =
+		typeof u.totalTokens === "number"
+			? u.totalTokens
+			: input + output + cacheRead + cacheWrite;
+	if (totalTokens <= 0 && input <= 0 && output <= 0) return undefined;
+	return { input, output, cacheRead, cacheWrite, totalTokens };
+}
+
+/**
  * Pattern-based sanitization of snapshot entries.
  * Strips out:
  * - config/model/thinking-level events (model_change, thinking_level_change)
@@ -113,6 +133,7 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 	const result = { ...e };
 	delete result.timestamp;
 	delete result.parentId; // Tree linkage irrelevant to linear replay
+	delete result.id;       // Entry IDs irrelevant to linear replay
 
 	// 2. Process message entries
 	if (result.type === "message" && result.message && typeof result.message === "object") {
@@ -133,7 +154,17 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 		delete msg.responseModel;
 		delete msg.timestamp;
 		delete msg.isError;
-		delete msg.usage; // Token telemetry irrelevant to child flow orientation
+		// Slim usage for assistant messages — pi child needs totalTokens for compaction.
+		if (msg.role === "assistant" && "usage" in msg) {
+			const slim = slimAssistantUsage(msg.usage);
+			if (slim) {
+				msg.usage = slim;
+			} else {
+				delete msg.usage;
+			}
+		} else {
+			delete msg.usage;
+		}
 
 		// Strip tool correlation IDs — child flows replay linearly, no invocation by ID
 		if (msg.role === "toolResult" || msg.role === "tool") {

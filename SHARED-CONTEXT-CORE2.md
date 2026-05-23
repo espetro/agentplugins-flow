@@ -55,7 +55,6 @@ The following content survives all six stages and is delivered to the child flow
 - **Web tool results** — preserved verbatim (unless they contain batch section headers).
 - **`ask_user` results** — preserved verbatim.
 - **Non-batch tool results** — any tool result not containing `\n--- ` section headers passes through untouched.
-- **Entry `id`** — preserved for now; may be required by the child session manager for deduplication. Pending live verification before stripping.
 - **Flow tool calls and results** — name, arguments, and output text are preserved (minus `toolCallId`).
 
 Test evidence: `tests/core2-snapshot.test.ts` retention suite (lines 29–110) and metadata-stripping suite (lines 500–632).
@@ -65,6 +64,7 @@ Test evidence: `tests/core2-snapshot.test.ts` retention suite (lines 29–110) a
 The following fields and content categories are removed by the pipeline:
 
 **From entries:**
+- `id` — session-manager deduplication IDs irrelevant to linear replay.
 - `parentId` — tree linkage is irrelevant to linear replay.
 - `timestamp` — on both the header and every entry.
 
@@ -136,6 +136,7 @@ If `entry.type === "model_change"` or `entry.type === "thinking_level_change"`, 
 **Step B — Strip entry-level fields:**
 - `delete result.timestamp`
 - `delete result.parentId`
+- `delete result.id`
 
 **Step C — Strip message metadata:**
 For `type === "message"` entries, a copy of `entry.message` is made and the following fields are deleted:
@@ -151,7 +152,7 @@ For `type === "message"` entries, a copy of `entry.message` is made and the foll
 - `msg.responseModel`
 - `msg.timestamp`
 - `msg.isError`
-- `msg.usage`
+- `msg.usage` (deleted for non-assistant roles; **slimmed** for `role === "assistant"` via `slimAssistantUsage` to `{input, output, cacheRead, cacheWrite, totalTokens}` — child `pi` needs `totalTokens` for compaction accounting)
 
 **Step D — Strip tool correlation IDs:**
 If `msg.role === "toolResult"` or `msg.role === "tool"`, delete `msg.toolCallId`.

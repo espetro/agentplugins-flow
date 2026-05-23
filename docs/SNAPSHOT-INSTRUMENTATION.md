@@ -37,7 +37,7 @@ After capturing a dump, verify stripping is working:
 
 ```bash
 # Should all print 0
-for field in parentId toolCallId usage api provider model cost details responseId responseModel timestamp isError; do
+for field in id parentId toolCallId api provider model cost details responseId responseModel timestamp isError; do
   echo -n "$field: "
   grep -c "\"$field\"" /tmp/pi-dump.*.md 2>/dev/null || echo 0
 done
@@ -60,18 +60,16 @@ grep -c '"role"' /tmp/pi-dump.*.md 2>/dev/null || echo 0
 echo -n "content: "
 grep -c '"content"' /tmp/pi-dump.*.md 2>/dev/null || echo 0
 
-echo -n "id: "
-grep -c '"id"' /tmp/pi-dump.*.md 2>/dev/null || echo 0
 ```
-
-> **Note:** `id` is preserved on entries while `parentId` is stripped. Entry IDs may be used by the child session manager for deduplication. Verify before stripping `id`.
 
 ### What was removed from dumps and prompts
 
 The following were removed in recent stripping passes:
 
-| Removed | Location | Rationale |
+| Removed / slimmed | Location | Rationale |
 |---|---|---|
+| `id` | Entry objects | Session-manager deduplication IDs irrelevant to linear replay |
+| `usage` (full object) | JSONL assistant messages | Slimmed to `{input, output, cacheRead, cacheWrite, totalTokens}` only — child `pi` needs `totalTokens` for context accounting |
 | `## Compression Stats` section | Markdown dump footer | Always showed zeroed values (0 bytes / 0%) |
 | `Transition: on/off (depth X/Y · stack: ...)` | Activation prompt | Duplicated info already in `<activation ... depth=... lineage=...>` XML |
 
