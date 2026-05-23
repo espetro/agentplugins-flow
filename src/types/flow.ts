@@ -105,6 +105,8 @@ export interface PiAgentFlowAPI {
 		steeringStrategicHint: boolean;
 		animationEnabled: boolean;
 		animationGlitch: boolean;
+		bodyVerbosity: "lite" | "full";
+		debugMode: boolean;
 	};
 }
 

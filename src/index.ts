@@ -315,6 +315,10 @@ export default function (pi: ExtensionAPI) {
 		description: "Use full collapsed body mode (aim + cmd + msg).",
 		type: "boolean",
 	});
+	pi.registerFlag("flow-debug", {
+		description: "Write full child flow activation prompt to a temp file on every spawn.",
+		type: "boolean",
+	});
 
 	// Wire up bundled notification channel
 	setupNotify(pi);

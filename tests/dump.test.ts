@@ -442,9 +442,17 @@ describe("protocol schema validation", () => {
 describe("debug mode — end-to-end", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Scrub pre-existing scout debug files from global /tmp to prevent flaky assertions.
+		for (const f of fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		}
 	});
 
 	afterEach(() => {
+		// Scrub any scout debug files left behind.
+		for (const f of fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		}
 		vi.restoreAllMocks();
 	});
 
