@@ -71,7 +71,10 @@ export function buildCore2Snapshot(
 	}
 
 	for (const entry of branchEntries) {
-		let processedEntry = maybeStripCompaction(entry);
+		let processedEntry = sanitizeSnapshotEntry(entry);
+		if (!processedEntry) continue;
+
+		processedEntry = maybeStripCompaction(processedEntry);
 		if (!processedEntry) continue;
 
 		if (options?.activeToolCallId) {
@@ -86,6 +89,75 @@ export function buildCore2Snapshot(
 	}
 
 	return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Pattern-based sanitization of snapshot entries.
+ * Strips out:
+ * - config/model/thinking-level events (model_change, thinking_level_change)
+ * - assistant thinking/reasoning content blocks and fields
+ * - empty messages resulting from stripping
+ */
+function sanitizeSnapshotEntry(entry: unknown): unknown | null {
+	if (!entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+
+	// 1. Drop config/control events that aren't needed by child flows
+	if (e.type === "model_change" || e.type === "thinking_level_change") {
+		return null;
+	}
+
+	// 2. Process message entries
+	if (e.type === "message" && e.message && typeof e.message === "object") {
+		const msg = { ...e.message as Record<string, unknown> };
+
+		// Strip message-level reasoning/thinking fields
+		delete msg.thinking;
+		delete msg.reasoning;
+		delete msg.reasoningContent;
+
+		// Strip block-level thinking/reasoning elements from content array
+		if (Array.isArray(msg.content)) {
+			const filteredContent = msg.content.filter((block: any) => {
+				return block && block.type !== "thinking" && block.type !== "reasoning";
+			});
+
+			// If the content array is now empty or only has empty text blocks,
+			// and there are no tool calls, check if we should discard the message
+			const hasSubstance = filteredContent.some((block: any) => {
+				if (!block) return false;
+				if (block.type === "text" && typeof block.text === "string" && block.text.trim() === "") {
+					return false;
+				}
+				if (block.type === "toolCall") {
+					return true;
+				}
+				return true;
+			});
+
+			const hasToolCalls = msg.toolCalls || msg.tool_calls || filteredContent.some(b => b && b.type === "toolCall");
+
+			if (filteredContent.length === 0 || !hasSubstance) {
+				// If assistant message has no substance and no tool calls, drop it
+				if (msg.role === "assistant" && !hasToolCalls) {
+					return null;
+				}
+			}
+			msg.content = filteredContent;
+		} else if (typeof msg.content === "string" && msg.content.trim() === "") {
+			const hasToolCalls = msg.toolCalls || msg.tool_calls;
+			if (msg.role === "assistant" && !hasToolCalls) {
+				return null;
+			}
+		}
+
+		return {
+			...e,
+			message: msg,
+		};
+	}
+
+	return entry;
 }
 
 /**

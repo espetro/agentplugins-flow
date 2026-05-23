@@ -196,11 +196,11 @@ describe("flow tool execute", () => {
 		// Core-2 preserves flow results verbatim (no compression placeholder).
 		expect(snapshot).toContain("prior flow result should be inherited");
 		expect(snapshot).toContain("Current request should be inherited from /src/config.ts and applied consistently");
-		// Core-2 preserves reasoning/thinking and steering hints verbatim.
-		expect(snapshot).toContain("SECRET_THINKING_FIELD");
-		expect(snapshot).toContain("SECRET_REASONING_FIELD");
-		expect(snapshot).toContain("SECRET_THINKING_PART");
-		expect(snapshot).toContain("SECRET_REASONING_PART");
+		// Core-2 strips reasoning/thinking fields and blocks.
+		expect(snapshot).not.toContain("SECRET_THINKING_FIELD");
+		expect(snapshot).not.toContain("SECRET_REASONING_FIELD");
+		expect(snapshot).not.toContain("SECRET_THINKING_PART");
+		expect(snapshot).not.toContain("SECRET_REASONING_PART");
 		expect(snapshot).toContain("<pi-flow-steering-hint>");
 		expect(snapshot).toContain("</pi-flow-steering-hint>");
 	});
@@ -268,12 +268,13 @@ describe("flow tool execute", () => {
 		expect(lines).toContain(JSON.stringify(unchangedAssistantExpected));
 		expect(lines).toContain(unchangedToolExpected);
 		expect(lines).not.toContain(JSON.stringify({ type: "system", content: header.systemPrompt }));
-		// Core-2 preserves assistant messages with reasoning verbatim.
-		expect(lines).toContain(JSON.stringify(changedAssistant));
+		// Core-2 strips assistant messages with reasoning.
+		const expectedChangedAssistant = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Visible answer — [build] output shows success." }], timestamp: 3 } };
+		expect(lines).toContain(JSON.stringify(expectedChangedAssistant));
 		// Core-2 preserves system messages verbatim.
 		expect(lines).toContain(JSON.stringify(droppedSystem));
 		expect(snapshot).toContain("Visible answer — [build] output shows success.");
-		expect(snapshot).toContain("SECRET_REASONING");
+		expect(snapshot).not.toContain("SECRET_REASONING");
 		expect(snapshot).toContain("<pi-flow-steering-hint>");
 	});
 
