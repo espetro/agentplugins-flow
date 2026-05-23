@@ -65,7 +65,14 @@ export interface FlowDetails {
 	flowStyle: "fork";
 	projectAgentsDir: string | null;
 	results: SingleResult[];
-	sharedContext?: { messageCount: number; preview: string };
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	};
 }
 
 /** Metrics emitted after each flow completes. */

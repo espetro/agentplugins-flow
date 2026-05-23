@@ -24,17 +24,23 @@ describe("parseSharedContext", () => {
 		const result = parseSharedContext(lines.join("\n"));
 		expect(result).toEqual({
 			messageCount: 3,
-			preview: "3 messages · do the thing",
+			userMessageCount: 1,
+			assistantMessageCount: 1,
+			toolCalls: {},
+			totalTokens: 0,
+			preview: "do the thing",
 		});
 	});
 
-	it("truncates user text at 60 chars and adds ellipsis", () => {
+	it("keeps full user text without truncation", () => {
 		const longText = "a".repeat(80);
 		const lines = [
 			JSON.stringify({ type: "message", message: { role: "user", content: longText } }),
 		];
 		const result = parseSharedContext(lines.join("\n"));
-		expect(result?.preview).toBe(`1 messages · ${"a".repeat(60)}...`);
+		expect(result?.preview).toBe(longText);
+		expect(result?.userMessageCount).toBe(1);
+		expect(result?.assistantMessageCount).toBe(0);
 	});
 
 	it("skips invalid JSONL lines gracefully", () => {
@@ -47,7 +53,11 @@ describe("parseSharedContext", () => {
 		const result = parseSharedContext(lines.join("\n"));
 		expect(result).toEqual({
 			messageCount: 1,
-			preview: "1 messages · valid",
+			userMessageCount: 1,
+			assistantMessageCount: 0,
+			toolCalls: {},
+			totalTokens: 0,
+			preview: "valid",
 		});
 	});
 
@@ -59,7 +69,11 @@ describe("parseSharedContext", () => {
 		const result = parseSharedContext(lines.join("\n"));
 		expect(result).toEqual({
 			messageCount: 2,
-			preview: "2 messages",
+			userMessageCount: 0,
+			assistantMessageCount: 1,
+			toolCalls: {},
+			totalTokens: 0,
+			preview: "",
 		});
 	});
 
@@ -70,7 +84,59 @@ describe("parseSharedContext", () => {
 		const result = parseSharedContext(lines.join("\r\n"));
 		expect(result).toEqual({
 			messageCount: 1,
-			preview: "1 messages · crlf test",
+			userMessageCount: 1,
+			assistantMessageCount: 0,
+			toolCalls: {},
+			totalTokens: 0,
+			preview: "crlf test",
 		});
+	});
+
+	it("aggregates tool calls from toolCalls array and content blocks", () => {
+		const lines = [
+			JSON.stringify({ type: "message", message: { role: "user", content: "run some tools" } }),
+			JSON.stringify({
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "text", text: "ok" },
+						{ type: "toolCall", name: "bash", toolCall: { name: "bash" } },
+					],
+					toolCalls: [{ name: "read", function: { name: "read" } }],
+					usage: { totalTokens: 42 },
+				},
+			}),
+			JSON.stringify({
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "batch", toolCall: { name: "batch" } }],
+					tool_calls: [{ name: "bash", function: { name: "bash" } }],
+					usage: { totalTokens: 18 },
+				},
+			}),
+		];
+		const result = parseSharedContext(lines.join("\n"));
+		expect(result).toEqual({
+			messageCount: 3,
+			userMessageCount: 1,
+			assistantMessageCount: 2,
+			toolCalls: { bash: 2, read: 1, batch: 1 },
+			totalTokens: 60,
+			preview: "run some tools",
+		});
+	});
+
+	it("sums totalTokens only from assistant messages", () => {
+		const lines = [
+			JSON.stringify({ type: "message", message: { role: "user", content: "hello" } }),
+			JSON.stringify({ type: "message", message: { role: "assistant", content: "ok", usage: { totalTokens: 15 } } }),
+			JSON.stringify({ type: "message", message: { role: "assistant", content: "done", usage: { totalTokens: 25 } } }),
+		];
+		const result = parseSharedContext(lines.join("\n"));
+		expect(result?.totalTokens).toBe(40);
+		expect(result?.userMessageCount).toBe(1);
+		expect(result?.assistantMessageCount).toBe(2);
 	});
 });

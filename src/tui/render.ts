@@ -584,7 +584,14 @@ export function renderSingleFlowResult(
 	streamingText?: string,
 	toolCallId?: string,
 	config?: FlowColorConfig,
-	sharedContext?: { messageCount: number; preview: string },
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container | Text {
 	const id = toolCallId || "single";
 	const error = isFlowError(r);
@@ -612,7 +619,14 @@ function renderFlowExpanded(
 	isComplete: boolean,
 	streamingText?: string,
 	config?: FlowColorConfig,
-	sharedContext?: { messageCount: number; preview: string },
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
@@ -622,6 +636,14 @@ function renderFlowExpanded(
 	if (sharedContext) {
 		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
 		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		const statsParts: string[] = [];
+		statsParts.push(`${sharedContext.userMessageCount} user`);
+		statsParts.push(`${sharedContext.assistantMessageCount} assistant`);
+		statsParts.push(`${sharedContext.totalTokens} tokens`);
+		for (const [name, count] of Object.entries(sharedContext.toolCalls)) {
+			statsParts.push(`${count}× ${name}`);
+		}
+		container.addChild(new Text(applyRole("stats", statsParts.join(" · "), theme, config), 0, 0));
 		container.addChild(new Spacer(1));
 		container.addChild(new Text(applyRole("prefixLabel", sectionHeader(typeName), theme, config), 0, 0));
 		container.addChild(new Spacer(1));
@@ -1020,7 +1042,14 @@ function renderMultiFlowResult(
 	theme: FlowTheme,
 	toolCallId?: string,
 	config?: FlowColorConfig,
-	sharedContext?: { messageCount: number; preview: string },
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container | Text {
 	const baseId = toolCallId || "multi";
 	const results = details.results;
@@ -1043,7 +1072,14 @@ function renderMultiFlowExpanded(
 	baseId: string,
 	now: number,
 	config?: FlowColorConfig,
-	sharedContext?: { messageCount: number; preview: string },
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
@@ -1051,6 +1087,14 @@ function renderMultiFlowExpanded(
 	if (sharedContext) {
 		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
 		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		const statsParts: string[] = [];
+		statsParts.push(`${sharedContext.userMessageCount} user`);
+		statsParts.push(`${sharedContext.assistantMessageCount} assistant`);
+		statsParts.push(`${sharedContext.totalTokens} tokens`);
+		for (const [name, count] of Object.entries(sharedContext.toolCalls)) {
+			statsParts.push(`${count}× ${name}`);
+		}
+		container.addChild(new Text(applyRole("stats", statsParts.join(" · "), theme, config), 0, 0));
 		container.addChild(new Spacer(1));
 	}
 
