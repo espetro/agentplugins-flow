@@ -8,7 +8,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
-import { discoverFlows, getFlowTier } from "./flow/agents.js";
+import { discoverFlows, getFlowTier, type FlowConfig, type FlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "./tui/flow-colors.js";
@@ -626,9 +626,21 @@ export default function (pi: ExtensionAPI) {
 				// Build the fork session snapshot. Core-2 applies a 6-stage sanitization
 				// pipeline that strips metadata noise irrelevant to child flow orientation
 				// while preserving chronological conversation history.
+				function resolveSnapshotTier(flows: FlowConfig[], flowParams: Array<Static<typeof FlowItem>>): FlowTier | undefined {
+					if (flowParams.length === 0) return undefined;
+					const tiers = flowParams.map((f) => {
+						const config = flows.find((flow) => flow.name === f.type.toLowerCase());
+						return config?.tier ?? getFlowTier(f.type);
+					});
+					// Most permissive: full > flash > lite
+					if (tiers.includes("full")) return "full";
+					if (tiers.includes("flash")) return "flash";
+					return tiers[0];
+				}
+
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 					activeToolCallId: toolCallId,
-					tier: params.flow[0]?.type ? getFlowTier(params.flow[0].type) : undefined,
+					tier: resolveSnapshotTier(flows, params.flow),
 				});
 
 				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);

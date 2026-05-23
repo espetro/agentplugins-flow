@@ -84,7 +84,6 @@ export function buildCore2Snapshot(
 		if (!processedEntry) continue;
 
 		processedEntry = compressSnapshotEntry(processedEntry, options?.tier);
-		if (!processedEntry) continue;
 
 		if (options?.activeToolCallId) {
 			processedEntry = stripActiveToolCall(processedEntry, options.activeToolCallId);
@@ -336,22 +335,37 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
 
 /**
  * Apply array-level compression for lite tier: keep only the last N messages.
- * Header/non-message entries are preserved; only `type: "message"` entries
- * count toward the limit.
+ * Header/session entries at the start of the branch are preserved; only
+ * `type: "message"` entries count toward the limit.
  */
 function applyLiteMessageLimit(entries: unknown[]): unknown[] {
 	const max = getLiteMaxMessages();
-	if (entries.length <= max) return entries;
+
+	// Extract leading header/session entries so they survive the slice
+	let headerEnd = 0;
+	for (; headerEnd < entries.length; headerEnd++) {
+		const e = entries[headerEnd];
+		if (e && typeof e === "object") {
+			const type = (e as Record<string, unknown>).type;
+			if (type === "session" || type === "header") continue;
+		}
+		break;
+	}
+
+	const headers = entries.slice(0, headerEnd);
+	const rest = entries.slice(headerEnd);
+
+	if (rest.length <= max) return entries;
 
 	let messageCount = 0;
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const e = entries[i];
+	for (let i = rest.length - 1; i >= 0; i--) {
+		const e = rest[i];
 		if (e && typeof e === "object" && (e as Record<string, unknown>).type === "message") {
 			messageCount++;
 		}
 		if (messageCount >= max) {
-			// Keep everything from this index onward
-			return entries.slice(i);
+			// Keep headers + everything from this index onward in rest
+			return [...headers, ...rest.slice(i)];
 		}
 	}
 	return entries;

@@ -785,4 +785,26 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).not.toContain("output");
 		expect(snapshot).toContain("[toolResult result omitted]");
 	});
+
+	it("lite limit preserves session header inside branchEntries", () => {
+		const entries: unknown[] = [
+			{ type: "session", id: "test-session", version: 1 },
+			...Array.from({ length: 50 }, (_, i) => ({
+				type: "message" as const,
+				message: { role: "user" as const, content: `msg-${i}` },
+			})),
+		];
+		const source = {
+			getHeader: () => ({ version: 1, id: "test-session" }),
+			getBranch: () => entries,
+		};
+		const snapshot = buildCore2Snapshot(source, { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		// Header inside branch + 30 messages = 31 total
+		expect(parsed).toHaveLength(31);
+		expect(parsed[0]).toMatchObject({ type: "session", id: "test-session" });
+		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
 });

@@ -604,7 +604,7 @@ export function renderSingleFlowResult(
 	if (expanded) {
 		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config, sharedContext);
 	}
-	return renderFlowCollapsed(r, icon, error, flowOutput, theme, streamingText, id, config);
+	return renderFlowCollapsed(r, icon, error, flowOutput, theme, streamingText, id, config, sharedContext);
 }
 
 function renderFlowExpanded(
@@ -674,7 +674,8 @@ function renderFlowExpanded(
 	}
 
 	// Stats: dashboard format
-	const inlineStats = formatCompactStats(r.usage, r.model);
+	const displayUsage = sharedContext ? { ...r.usage, input: sharedContext.totalTokens } : r.usage;
+	const inlineStats = formatCompactStats(displayUsage, r.model);
 	container.addChild(new DynamicScrambleText(
 		applyRole("stats", inlineStats, theme, config),
 		() => {
@@ -857,6 +858,14 @@ function renderFlowCollapsed(
 	streamingText?: string,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const id = toolCallId || "collapsed";
 	const now = Date.now();
@@ -870,8 +879,9 @@ function renderFlowCollapsed(
 
 	// Build header stats: ctxLabel · t/s
 	const statsParts: string[] = [];
-	if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
-		const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
+	const ctxTokens = sharedContext?.totalTokens ?? r.usage.contextTokens;
+	if (r.maxContextTokens !== undefined || ctxTokens > 0) {
+		const ctxLabel = formatContextLabel(ctxTokens, r.maxContextTokens);
 		statsParts.push(ctxLabel);
 	}
 	let displayStats = statsParts.join(" · ");
