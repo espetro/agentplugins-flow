@@ -34,6 +34,8 @@ export interface FlowSettings {
 	structuredOutput?: boolean;
 	/** Maximum number of flows to execute concurrently. Default: 4. */
 	maxConcurrency?: number;
+	/** Whether to write the full child flow activation prompt to a temp file on every spawn. Default: false. */
+	debugMode?: boolean;
 
 	/** Default child-flow complexity. Default: "moderate" (600s, 1x audit). */
 	complexity?: Complexity;
@@ -323,6 +325,11 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 			loop.enabled = obj.loop.enabled;
 		}
 		result.loop = loop;
+	}
+
+	// Parse debug mode setting
+	if (typeof obj.debugMode === "boolean") {
+		result.debugMode = obj.debugMode;
 	}
 
 	return result;

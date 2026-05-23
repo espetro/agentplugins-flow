@@ -513,6 +513,8 @@ export interface RunFlowOptions {
 	tools?: string[];
 	/** Pre-dispatch results — injected into the child's activation prompt. */
 	preDispatchResults?: string;
+	/** Whether to write the full child flow activation prompt to a temp file on every spawn. */
+	debugMode?: boolean;
 }
 
 /**
@@ -708,6 +710,19 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				logError(`[pi-agent-flow] Snapshot dumped to ${uniqueDumpPath}`);
 			} catch (err) {
 				logError(`[pi-agent-flow] Snapshot dump FAILED: ${err}`);
+			}
+		}
+
+		// Debug mode: write the full activation prompt to a dedicated temp file
+		if (opts.debugMode) {
+			const debugPromptIndex = piArgs.indexOf("-p");
+			const debugPrompt = debugPromptIndex >= 0 ? piArgs[debugPromptIndex + 1] : "";
+			const debugPath = path.join(os.tmpdir(), `pi-flow-debug-${flow.name}-${Date.now()}.txt`);
+			try {
+				atomicWriteFileSync(debugPath, debugPrompt);
+				logWarn(`[pi-agent-flow] Debug prompt written to ${debugPath}`);
+			} catch (err) {
+				logWarn(`[pi-agent-flow] Debug prompt write FAILED: ${err}`);
 			}
 		}
 

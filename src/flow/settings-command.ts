@@ -258,7 +258,7 @@ export class SettingsList implements Component {
 // Menu item builders
 // ---------------------------------------------------------------------------
 
-type SettingsCategory = "main" | "steering" | "animation" | "tools" | "session" | "ask-user" | "model-config" | "loop";
+type SettingsCategory = "main" | "steering" | "animation" | "tools" | "session" | "ask-user" | "model-config" | "loop" | "debug";
 
 interface TooltipSelectItem extends SelectItem {
 	tooltip?: string;
@@ -323,6 +323,12 @@ function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSelectIte
 			label: "Loop Status",
 			description: loopDescription,
 			tooltip: "Endless loop state and statistics",
+		},
+		{
+			value: "debug",
+			label: "Debug Settings",
+			description: `debugMode: ${settings.debugMode ?? false ? "on" : "off"}`,
+			tooltip: "Write full child flow prompt to disk on every spawn",
 		},
 		{
 			value: "reset",
@@ -398,6 +404,18 @@ function getToolItems(settings: FlowSettings): SettingItem[] {
 			label: "structured-output",
 			description: "Structured JSON output from flows",
 			currentValue: (settings.structuredOutput ?? true) ? "on" : "off",
+			values: ["on", "off"],
+		},
+	];
+}
+
+function getDebugItems(settings: FlowSettings): SettingItem[] {
+	return [
+		{
+			id: "debugMode",
+			label: "emit-flow-content",
+			description: "Write full child flow prompt to disk on every spawn",
+			currentValue: (settings.debugMode ?? false) ? "on" : "off",
 			values: ["on", "off"],
 		},
 	];
@@ -632,7 +650,7 @@ function buildModelPickerSubmenu(
 export function setupSettingsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("flow:settings", {
 		description:
-			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, reset. Call with no args for interactive TUI.",
+			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (!ctx.ui) {
 				return;
@@ -847,6 +865,15 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 								} else if (currentCategory === "loop") {
 									items = getLoopItems(currentSettings, cwd);
 									handleChange = () => {};
+								} else if (currentCategory === "debug") {
+									items = getDebugItems(currentSettings);
+									handleChange = (id, value) => {
+										if (id === "debugMode") {
+											writeFlowSetting(cwd, "debugMode", value === "on");
+										}
+										rebuild();
+										tui.requestRender();
+									};
 								} else {
 									items = [];
 									handleChange = () => {};
@@ -985,6 +1012,17 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 								}
 								break;
 							}
+				case "debug":
+				case "emit-flow-content": {
+					const parsed = parseOnOff(value);
+					if (parsed === null) {
+						ctx.ui.notify?.("Usage: /flow:settings debug <on|off>", "error");
+						return;
+					}
+					writeFlowSetting(cwd, "debugMode", parsed);
+					ctx.ui.notify?.(`debugMode = ${parsed}`, "info");
+					break;
+				}
 				case "complexity": {
 					const validModes = ["snap", "simple", "moderate", "complex", "intricate"] as const;
 					if (!validModes.includes(value as any)) {
@@ -1053,6 +1091,7 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 						`animation.glitch: ${currentSettings.animation?.glitch ?? true}`,
 						`askUser.enabled: ${currentSettings.askUser?.enabled ?? false}`,
 						`askUser.timeout: ${currentSettings.askUser?.timeout ?? 300}`,
+						`debugMode: ${currentSettings.debugMode ?? false}`,
 					];
 					if (loop) {
 						lines.push("");
@@ -1068,7 +1107,7 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 				}
 				default: {
 					ctx.ui.notify?.(
-						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|reset|show}",
+						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|reset|show}",
 						"error",
 					);
 				}

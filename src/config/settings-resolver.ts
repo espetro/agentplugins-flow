@@ -53,6 +53,7 @@ export interface ResolvedSettings {
 	loadedFlowModelConfigs: LoadedFlowModelConfigs;
 	activeRuntimeFlowMode: string | undefined;
 	bodyVerbosity: "lite" | "full";
+	debugMode: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +318,12 @@ export function resolveSettings(
 		if (parsed === "full" || parsed === "lite") bodyVerbosity = parsed as "full" | "lite";
 	}
 
+	// Resolve debugMode: settings.json > default
+	let debugMode = false;
+	if (typeof flowSettings.debugMode === "boolean") {
+		debugMode = flowSettings.debugMode;
+	}
+
 	return {
 		toolOptimize,
 		structuredOutput,
@@ -333,6 +340,7 @@ export function resolveSettings(
 		loadedFlowModelConfigs,
 		activeRuntimeFlowMode,
 		bodyVerbosity,
+		debugMode,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
 }

@@ -601,6 +601,7 @@ export default function (pi: ExtensionAPI) {
 						cwd: ctx.cwd,
 						loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
 						maxConcurrency: resolved.maxConcurrency,
+						debugMode: resolved.debugMode,
 
 						defaultComplexity: resolved.defaultComplexity,
 						signal,
@@ -692,6 +693,7 @@ export default function (pi: ExtensionAPI) {
 					animationEnabled: resolved.animationEnabled,
 					animationGlitch: resolved.animationGlitch,
 					bodyVerbosity: resolved.bodyVerbosity,
+					debugMode: resolved.debugMode,
 				}
 			: {
 					toolOptimize: true,
@@ -703,6 +705,7 @@ export default function (pi: ExtensionAPI) {
 					animationEnabled: true,
 					animationGlitch: true,
 					bodyVerbosity: "lite",
+					debugMode: false,
 				},
 	};
 
