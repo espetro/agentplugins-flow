@@ -10,7 +10,7 @@
 
 | Category | Files |
 |----------|-------|
-| **Docs** | [`docs/autonomous-pi-testing.md`](docs/autonomous-pi-testing.md) — scripted Pi sessions over PTY • [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — configuration reference (flags, env vars, settings) • [`docs/FLOWS.md`](docs/FLOWS.md) — bundled flows, session modes, timeout behavior, flow loop & warp • [`docs/TOOLS.md`](docs/TOOLS.md) — tool reference (batch, web, ask_user) • [`docs/CUSTOM-FLOWS.md`](docs/CUSTOM-FLOWS.md) — custom flow creation and front-matter • [`docs/STRUCTURED-OUTPUT.md`](docs/STRUCTURED-OUTPUT.md) — structured JSON output schema • [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md) — terminal and desktop notification config • [`SHARED-CONTEXT-CORE2.md`](SHARED-CONTEXT-CORE2.md) — core-2 snapshot pipeline specification (verbatim-preserving) |
+| **Docs** | [`docs/autonomous-pi-testing.md`](docs/autonomous-pi-testing.md) — scripted Pi sessions over PTY • [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — configuration reference (flags, env vars, settings) • [`docs/FLOWS.md`](docs/FLOWS.md) — bundled flows, session modes, timeout behavior, flow loop & warp • [`docs/TOOLS.md`](docs/TOOLS.md) — tool reference (batch, web, ask_user) • [`docs/CUSTOM-FLOWS.md`](docs/CUSTOM-FLOWS.md) — custom flow creation and front-matter • [`docs/STRUCTURED-OUTPUT.md`](docs/STRUCTURED-OUTPUT.md) — structured JSON output schema • [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md) — terminal and desktop notification config • [`docs/SNAPSHOT-INSTRUMENTATION.md`](docs/SNAPSHOT-INSTRUMENTATION.md) — dump capture, inspection, and verification guide • [`SHARED-CONTEXT-CORE2.md`](SHARED-CONTEXT-CORE2.md) — core-2 snapshot pipeline specification (verbatim-preserving) |
 | **Dump Analysis** | [`docs/dump-artifacts/README.md`](docs/dump-artifacts/README.md) — catalog of representative dump files |
 | **Workflows** | [`ci.yml`](.github/workflows/ci.yml) — lint + test on PR/push • [`bump-version.yml`](.github/workflows/bump-version.yml) — version bump → commit → tag → push • [`publish.yml`](.github/workflows/publish.yml) — npm publish with provenance |
 | **Scripts** | [`dev-start.sh`](scripts/dev-start.sh) — start `pi` with `PI_FLOW_DUMP_SNAPSHOT` preset • [`switch.sh`](scripts/switch.sh) — toggle local ↔ remote install • [`sync-dumps.sh`](scripts/sync-dumps.sh) — sync `/tmp` dumps into `dump-artifacts/` • [`example-autonomous-pi.expect`](scripts/example-autonomous-pi.expect) — PTY test harness template • [`./tmp/validate-context-pipeline.js`](./tmp/validate-context-pipeline.js) — synthetic context pipeline validator • [`./tmp/analyze-dump.js`](./tmp/analyze-dump.js) — real dump analyzer |
@@ -187,6 +187,8 @@ This script is **idempotent** — safe to run multiple times. It:
 > ```bash
 > PI_FLOW_DUMP_SNAPSHOT=/tmp/pi-dump npm test -- tests/core2-snapshot.test.ts
 > ```
+
+> 📋 **See [`docs/SNAPSHOT-INSTRUMENTATION.md`](docs/SNAPSHOT-INSTRUMENTATION.md) for detailed dump inspection, verification checklists, and the live verification loop.**
 
 ## TUI-Safe Logging Convention
 
