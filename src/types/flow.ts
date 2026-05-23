@@ -65,6 +65,7 @@ export interface FlowDetails {
 	flowStyle: "fork";
 	projectAgentsDir: string | null;
 	results: SingleResult[];
+	sharedContext?: { messageCount: number; preview: string };
 }
 
 /** Metrics emitted after each flow completes. */

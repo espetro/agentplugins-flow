@@ -440,18 +440,24 @@ describe("protocol schema validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("debug mode — end-to-end", () => {
+	const debugDir = path.join("/tmp", "tmp", "session-unknown-unknown");
+
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// Scrub pre-existing scout debug files from global /tmp to prevent flaky assertions.
-		for (const f of fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
-			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		// Scrub pre-existing scout debug files from session directory to prevent flaky assertions.
+		if (fs.existsSync(debugDir)) {
+			for (const f of fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
 		}
 	});
 
 	afterEach(() => {
 		// Scrub any scout debug files left behind.
-		for (const f of fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
-			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		if (fs.existsSync(debugDir)) {
+			for (const f of fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
 		}
 		vi.restoreAllMocks();
 	});
@@ -490,11 +496,10 @@ describe("debug mode — end-to-end", () => {
 
 		await promise;
 
-		const tmpFiles = fs.readdirSync(os.tmpdir());
-		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
 		expect(debugFiles.length).toBe(1);
 
-		const debugPath = path.join(os.tmpdir(), debugFiles[0]);
+		const debugPath = path.join(debugDir, debugFiles[0]);
 		const content = fs.readFileSync(debugPath, "utf-8");
 		expect(content).toContain("## Session Snapshot (JSONL)");
 		expect(content).toContain(snapshotJsonl);
@@ -509,7 +514,9 @@ describe("debug mode — end-to-end", () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
 
-		const beforeFiles = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		const beforeFiles = fs.existsSync(debugDir)
+			? fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))
+			: [];
 
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
@@ -540,7 +547,9 @@ describe("debug mode — end-to-end", () => {
 
 		await promise;
 
-		const afterFiles = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		const afterFiles = fs.existsSync(debugDir)
+			? fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))
+			: [];
 		expect(afterFiles.length).toBe(beforeFiles.length);
 	});
 
@@ -595,12 +604,11 @@ describe("debug mode — end-to-end", () => {
 
 		await Promise.all([promise1, promise2]);
 
-		const tmpFiles = fs.readdirSync(os.tmpdir());
-		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
 		expect(debugFiles.length).toBe(2);
 
 		for (const f of debugFiles) {
-			const content = fs.readFileSync(path.join(os.tmpdir(), f), "utf-8");
+			const content = fs.readFileSync(path.join(debugDir, f), "utf-8");
 			expect(content).toContain("## Session Snapshot (JSONL)");
 			expect(content).toContain(snapshotJsonl);
 			expect(content).toContain("## Activation Prompt (-p)");
@@ -609,7 +617,7 @@ describe("debug mode — end-to-end", () => {
 
 		// Cleanup.
 		for (const f of debugFiles) {
-			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+			try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
 		}
 	});
 
@@ -617,8 +625,9 @@ describe("debug mode — end-to-end", () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
 
-		// Create a stale debug file manually.
-		const staleFile = path.join(os.tmpdir(), `pi-flow-debug-scout-0.abc123.txt`);
+		// Create a stale debug file manually in the session directory.
+		fs.mkdirSync(debugDir, { recursive: true });
+		const staleFile = path.join(debugDir, `pi-flow-debug-scout-0.abc123.txt`);
 		fs.writeFileSync(staleFile, "stale", { encoding: "utf-8" });
 		// Force mtime to be 8 days ago.
 		const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
@@ -659,10 +668,11 @@ describe("debug mode — end-to-end", () => {
 		expect(fs.existsSync(staleFile)).toBe(false);
 
 		// Cleanup any newly created debug file.
-		const tmpFiles = fs.readdirSync(os.tmpdir());
-		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
-		for (const f of debugFiles) {
-			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		if (fs.existsSync(debugDir)) {
+			const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+			for (const f of debugFiles) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
 		}
 
 		if (prevMaxAge === undefined) delete process.env.PI_FLOW_DUMP_MAX_AGE_HOURS;

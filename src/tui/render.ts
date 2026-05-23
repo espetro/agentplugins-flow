@@ -466,6 +466,7 @@ export function renderFlowResult(
 ): Container | Text {
 	const details = result.details as FlowDetails | undefined;
 	const streamingText = result.content?.[0]?.type === "text" ? result.content[0].text : undefined;
+	const sharedContext = details?.sharedContext;
 
 	// Resolve a stable id for this flow widget. Once an id is stored in
 	// state we keep reusing it to prevent mid-render id switches that would
@@ -510,7 +511,7 @@ export function renderFlowResult(
 			const ghostId = resolvedToolCallId || 'ghost';
 			if (expanded) {
 				const now = Date.now();
-				container = renderFlowExpanded(ghostResult, flowStatusIcon(ghostResult, theme), false, getFlowDisplayItems([]), getFlowOutput([]), theme, ghostId, now, false, streamingText || "", config);
+				container = renderFlowExpanded(ghostResult, flowStatusIcon(ghostResult, theme), false, getFlowDisplayItems([]), getFlowOutput([]), theme, ghostId, now, false, streamingText || "", config, undefined);
 			} else {
 				container = renderFlowCollapsed(ghostResult, flowStatusIcon(ghostResult, theme), false, streamingText || "", theme, undefined, ghostId, config);
 			}
@@ -518,9 +519,9 @@ export function renderFlowResult(
 			container = new Text(scrambleManager.renderStatic(streamingText || ""), 0, 0);
 		}
 	} else if (details.results.length === 1) {
-		container = renderSingleFlowResult(details.results[0], expanded, theme, streamingText, resolvedToolCallId, config);
+		container = renderSingleFlowResult(details.results[0], expanded, theme, streamingText, resolvedToolCallId, config, sharedContext);
 	} else {
-		container = renderMultiFlowResult(details, expanded, theme, resolvedToolCallId, config);
+		container = renderMultiFlowResult(details, expanded, theme, resolvedToolCallId, config, sharedContext);
 	}
 
 	// In-place mutation pattern: reuse the stored root container
@@ -583,6 +584,7 @@ export function renderSingleFlowResult(
 	streamingText?: string,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: { messageCount: number; preview: string },
 ): Container | Text {
 	const id = toolCallId || "single";
 	const error = isFlowError(r);
@@ -593,7 +595,7 @@ export function renderSingleFlowResult(
 	const isComplete = isFlowStatusComplete(r);
 
 	if (expanded) {
-		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config);
+		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config, sharedContext);
 	}
 	return renderFlowCollapsed(r, icon, error, flowOutput, theme, streamingText, id, config);
 }
@@ -610,9 +612,16 @@ function renderFlowExpanded(
 	isComplete: boolean,
 	streamingText?: string,
 	config?: FlowColorConfig,
+	sharedContext?: { messageCount: number; preview: string },
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
+
+	if (sharedContext) {
+		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
+		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		container.addChild(new Spacer(1));
+	}
 
 	const typeName = formatFlowTypeName(r.type);
 	const initialDot = flowStatusIcon(r, theme);
@@ -1009,6 +1018,7 @@ function renderMultiFlowResult(
 	theme: FlowTheme,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: { messageCount: number; preview: string },
 ): Container | Text {
 	const baseId = toolCallId || "multi";
 	const results = details.results;
@@ -1018,7 +1028,7 @@ function renderMultiFlowResult(
 	const now = Date.now();
 
 	if (expanded) {
-		return renderMultiFlowExpanded(results, successCount, icon, theme, baseId, now, config);
+		return renderMultiFlowExpanded(results, successCount, icon, theme, baseId, now, config, sharedContext);
 	}
 	return renderMultiFlowCollapsed(results, theme, baseId, config);
 }
@@ -1031,9 +1041,16 @@ function renderMultiFlowExpanded(
 	baseId: string,
 	now: number,
 	config?: FlowColorConfig,
+	sharedContext?: { messageCount: number; preview: string },
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
+
+	if (sharedContext) {
+		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
+		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		container.addChild(new Spacer(1));
+	}
 
 	// Summary: just show count, no icon
 	container.addChild(new Text(

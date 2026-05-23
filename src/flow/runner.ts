@@ -212,6 +212,61 @@ function atomicWriteFileSync(targetPath: string, data: string): void {
 	fs.renameSync(tmpPath, targetPath);
 }
 
+function parseSessionSnapshotInfo(jsonl: string | null): { sessionId?: string; firstUserText?: string } {
+	const result: { sessionId?: string; firstUserText?: string } = {};
+	if (!jsonl) return result;
+	for (const line of jsonl.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line) as Record<string, unknown>;
+			if (entry.type === "session" && entry.id && typeof entry.id === "string") {
+				result.sessionId = entry.id;
+			}
+			if (
+				entry.type === "message" &&
+				entry.message &&
+				typeof entry.message === "object" &&
+				!result.firstUserText
+			) {
+				const msg = entry.message as Record<string, unknown>;
+				if (msg.role === "user" && msg.content) {
+					let text = "";
+					if (typeof msg.content === "string") {
+						text = msg.content;
+					} else if (Array.isArray(msg.content)) {
+						const firstText = msg.content.find(
+							(c: unknown) =>
+								c && typeof c === "object" && (c as Record<string, unknown>).type === "text",
+						) as Record<string, unknown> | undefined;
+						text = typeof firstText?.text === "string" ? firstText.text : "";
+					}
+					if (text.trim()) {
+						result.firstUserText = text.trim();
+					}
+				}
+			}
+		} catch {
+			/* ignore non-JSON lines */
+		}
+	}
+	return result;
+}
+
+function sanitizeForFilesystem(text: string, maxLength: number): string {
+	const safe = text
+		.slice(0, maxLength)
+		.replace(/[^a-zA-Z0-9_-]/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return safe || "unknown";
+}
+
+function getDebugDir(cwd: string, jsonl: string | null): string {
+	const { sessionId, firstUserText } = parseSessionSnapshotInfo(jsonl);
+	const safeText = sanitizeForFilesystem(firstUserText ?? "", 20);
+	const idShort = sanitizeForFilesystem((sessionId ?? "unknown").slice(0, 8), 8);
+	return path.join(cwd, "tmp", `session-${safeText}-${idShort}`);
+}
+
 // ---------------------------------------------------------------------------
 // Dump TTL cleanup
 // ---------------------------------------------------------------------------
@@ -253,30 +308,43 @@ function cleanupStaleDumps(dumpPath: string, maxAgeHours = 168): void {
 }
 
 /**
- * Delete stale debug dump files from the temp directory.
+ * Delete stale debug dump files from session directories under the repo tmp/ path.
  * Called once at the start of each debug block to prevent unbounded accumulation.
  * Silently skips on any error (defensive).
  */
-function cleanupStaleDebugDumps(maxAgeHours = 168): void {
+function cleanupStaleDebugDumps(cwd: string, maxAgeHours = 168): void {
 	try {
-		const dir = os.tmpdir();
-		const entries = fs.readdirSync(dir);
+		const baseDir = path.join(cwd, "tmp");
+		if (!fs.existsSync(baseDir)) return;
+		const entries = fs.readdirSync(baseDir);
 		const nowMs = Date.now();
 		const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
 		let deleted = 0;
 		for (const entry of entries) {
-			if (!entry.startsWith("pi-flow-debug-")) continue;
-			const entryPath = path.join(dir, entry);
+			if (!entry.startsWith("session-")) continue;
+			const sessionDir = path.join(baseDir, entry);
 			try {
-				const stats = fs.statSync(entryPath);
-				if (nowMs - stats.mtimeMs > maxAgeMs) {
-					fs.unlinkSync(entryPath);
-					deleted++;
+				const stat = fs.statSync(sessionDir);
+				if (!stat.isDirectory()) continue;
+				const files = fs.readdirSync(sessionDir);
+				for (const file of files) {
+					const filePath = path.join(sessionDir, file);
+					try {
+						const stats = fs.statSync(filePath);
+						if (nowMs - stats.mtimeMs > maxAgeMs) {
+							fs.unlinkSync(filePath);
+							deleted++;
+						}
+					} catch { /* ignore per-file errors */ }
 				}
-			} catch { /* ignore per-entry errors */ }
+				// Remove empty session directories
+				if (fs.readdirSync(sessionDir).length === 0) {
+					fs.rmdirSync(sessionDir);
+				}
+			} catch { /* ignore per-directory errors */ }
 		}
 		if (deleted > 0) {
-			logWarn(`[pi-agent-flow] Cleaned ${deleted} stale debug file(s) from ${dir}`);
+			logWarn(`[pi-agent-flow] Cleaned ${deleted} stale debug file(s) from ${baseDir}`);
 		}
 	} catch (err) {
 		logWarn(`[pi-agent-flow] cleanupStaleDebugDumps failed: ${err}`);
@@ -748,11 +816,13 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		// Debug mode: write the activation prompt and shared session snapshot to a dedicated temp file.
 		if (opts.debugMode) {
 			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
-			cleanupStaleDebugDumps(Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
+			cleanupStaleDebugDumps(cwd, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
 
 			const safeFlowName = flow.name.replace(/[^\w.-]+/g, "_");
 			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
-			const debugPath = path.join(os.tmpdir(), `pi-flow-debug-${safeFlowName}-${uniqueSuffix}.txt`);
+			const debugDir = getDebugDir(cwd, forkSessionSnapshotJsonl);
+			fs.mkdirSync(debugDir, { recursive: true });
+			const debugPath = path.join(debugDir, `pi-flow-debug-${safeFlowName}-${uniqueSuffix}.txt`);
 			try {
 				const parts: string[] = [];
 				if (forkSessionSnapshotJsonl) {

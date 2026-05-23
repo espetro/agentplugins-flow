@@ -229,12 +229,38 @@ async function executeDispatchOps(
 	return parts.join("\n\n---\n\n");
 }
 
-function makeFlowDetailsFactory(projectFlowsDir: string | null) {
+function parseSharedContext(snapshotJsonl: string | null): { messageCount: number; preview: string } | undefined {
+	if (!snapshotJsonl) return undefined;
+	let messageCount = 0;
+	let firstUserText: string | undefined;
+	for (const line of snapshotJsonl.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line);
+			if (entry.type === "message" && entry.message && typeof entry.message === "object") {
+				messageCount++;
+				if (!firstUserText && entry.message.role === "user" && typeof entry.message.content === "string") {
+					firstUserText = entry.message.content.slice(0, 60);
+				}
+			}
+		} catch {
+			// skip invalid lines
+		}
+	}
+	if (messageCount === 0) return undefined;
+	const preview = firstUserText
+		? `${messageCount} messages · ${firstUserText}${firstUserText.length >= 60 ? "..." : ""}`
+		: `${messageCount} messages`;
+	return { messageCount, preview };
+}
+
+function makeFlowDetailsFactory(projectFlowsDir: string | null, sharedContext?: { messageCount: number; preview: string }) {
 	return (results: SingleResult[]): FlowDetails => ({
 		mode: "flow",
 		flowStyle: "fork",
 		projectAgentsDir: projectFlowsDir,
 		results,
+		sharedContext,
 	});
 }
 
@@ -559,7 +585,6 @@ export default function (pi: ExtensionAPI) {
 
 				const discovery = discoverFlows(ctx.cwd, "all");
 				const { flows } = discovery;
-				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir);
 
 				// Build the fork session snapshot. Core-2 applies a 6-stage sanitization
 				// pipeline that strips metadata noise irrelevant to child flow orientation
@@ -567,6 +592,9 @@ export default function (pi: ExtensionAPI) {
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 					activeToolCallId: toolCallId,
 				});
+
+				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
+				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir, sharedContext);
 
 
 
@@ -611,6 +639,7 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						onUpdate,
 						makeDetails,
+						sharedContext,
 						getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
 						tierOverrideResolver: getTierOverride,
 						fallbackModel: inheritedCliArgs.fallbackModel,
