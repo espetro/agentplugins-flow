@@ -1071,7 +1071,7 @@ function renderMultiFlowResult(
 	if (expanded) {
 		return renderMultiFlowExpanded(results, successCount, icon, theme, baseId, now, config, sharedContext);
 	}
-	return renderMultiFlowCollapsed(results, theme, baseId, config);
+	return renderMultiFlowCollapsed(results, theme, baseId, config, sharedContext);
 }
 
 function renderMultiFlowExpanded(
@@ -1240,6 +1240,14 @@ function renderActivityPanel(
 	theme: FlowTheme,
 	baseId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const idPrefix = baseId || "panel";
 	const container = new Container();
@@ -1280,12 +1288,12 @@ function renderActivityPanel(
 		if (item.kind === "flow") {
 			renderStandaloneFlow(
 				container, results[item.index], item.index,
-				idPrefix, theme, now, config, isLastRoot,
+				idPrefix, theme, now, config, isLastRoot, sharedContext,
 			);
 		} else {
 			renderGroup(
 				container, groups[item.groupIndex], results,
-				idPrefix, theme, now, config, isLastRoot,
+				idPrefix, theme, now, config, isLastRoot, sharedContext,
 			);
 		}
 
@@ -1307,12 +1315,20 @@ function renderStandaloneFlow(
 	now: number,
 	config?: FlowColorConfig,
 	isLastRoot: boolean = false,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	const flowId = `${idPrefix}#${index}`;
 	const headerPrefix = isLastRoot ? "└─" : "├─";
 	const childPrefix = isLastRoot ? "   " : "│  ";
 
-	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config);
+	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, r, flowId, childPrefix, theme, now, config);
 
 	if (isFlowStatusComplete(r)) {
@@ -1332,6 +1348,14 @@ function renderGroup(
 	now: number,
 	config?: FlowColorConfig,
 	isLastRoot: boolean = false,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	// ─── Group header line ───
 	const headerPrefix = isLastRoot ? "" : "├─";
@@ -1348,7 +1372,7 @@ function renderGroup(
 		const buildHeaderPrefix = isLastRoot ? "├─" : "│  ├─";
 		const buildChildPrefix = isLastRoot ? "│  " : "│  │  "; // All builds: audit follows, tree line continues
 
-		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config);
+		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config, sharedContext);
 		renderFlowBody(container, r, flowId, buildChildPrefix, theme, now, config);
 
 		if (isFlowStatusComplete(r)) {
@@ -1365,7 +1389,7 @@ function renderGroup(
 	const auditHeaderPrefix = isLastRoot ? "└─" : "│  └─";
 	const auditChildPrefix = isLastRoot ? "   " : "│     ";
 
-	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config);
+	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, auditResult, auditFlowId, auditChildPrefix, theme, now, config);
 
 	if (isFlowStatusComplete(auditResult)) {
@@ -1387,6 +1411,14 @@ function renderFlowHeader(
 	theme: FlowTheme,
 	now: number,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	const typeName = formatCollapsedFlowHeaderTypeName(r.type);
 	const modelLabel = formatModelLabel(r.model);
@@ -1409,7 +1441,8 @@ function renderFlowHeader(
 		// Standard flow: model + stats
 		const statsParts: string[] = [];
 		if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
-			const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
+			const ctxTokens = sharedContext?.totalTokens ?? r.usage.contextTokens;
+			const ctxLabel = formatContextLabel(ctxTokens, r.maxContextTokens);
 			statsParts.push(ctxLabel);
 		}
 		let displayStats = statsParts.join(" · ");
@@ -1590,8 +1623,16 @@ function renderMultiFlowCollapsed(
 	theme: FlowTheme,
 	baseId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
-	return renderActivityPanel(results, theme, baseId, config);
+	return renderActivityPanel(results, theme, baseId, config, sharedContext);
 }
 
 
