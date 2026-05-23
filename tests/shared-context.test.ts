@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSharedContext } from "../src/index.js";
+import { parseSharedContext } from "../src/core2/snapshot.js";
 
 describe("parseSharedContext", () => {
 	it("returns undefined for null input", () => {

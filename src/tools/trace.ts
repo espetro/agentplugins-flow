@@ -13,7 +13,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { runFlow } from "../flow/runner.js";
 import { discoverFlows, getFlowTier } from "../flow/agents.js";
-import { buildCore2Snapshot } from "../core2/snapshot.js";
+import { buildCore2Snapshot, parseSharedContext } from "../core2/snapshot.js";
 import {
 	resolveFlowModelCandidates,
 	resolveModelContextWindow,
@@ -244,13 +244,6 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				throw new Error("Trace agent not found. Expected agents/trace.md to be present.");
 			}
 
-			const makeDetails = (results: SingleResult[]): FlowDetails => ({
-				mode: "flow",
-				flowStyle: "fork",
-				projectAgentsDir: discovery.projectFlowsDir,
-				results,
-			});
-
 			const preDispatch = params.dispatch?.length
 				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
 				: undefined;
@@ -260,6 +253,15 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 				activeToolCallId: toolCallId,
 				tier: traceFlow.tier ?? getFlowTier("trace"),
+			});
+
+			const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
+			const makeDetails = (results: SingleResult[]): FlowDetails => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: discovery.projectFlowsDir,
+				results,
+				sharedContext,
 			});
 
 			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)

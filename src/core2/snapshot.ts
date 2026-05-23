@@ -93,7 +93,7 @@ export function buildCore2Snapshot(
 		processedEntries.push(processedEntry);
 	}
 
-	const finalEntries = options?.tier === "lite" ? applyLiteMessageLimit(processedEntries) : processedEntries;
+	const finalEntries = applyMessageLimit(processedEntries, options?.tier);
 
 	for (const entry of finalEntries) {
 		const line = JSON.stringify(entry);
@@ -259,23 +259,37 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LITE_MAX_MESSAGES = 30;
+const DEFAULT_FLASH_MAX_MESSAGES = 50;
+const DEFAULT_FULL_MAX_MESSAGES = 80;
 
-function getLiteMaxMessages(): number {
-	const env = process.env.PI_FLOW_LITE_MAX_MESSAGES;
-	if (!env) return DEFAULT_LITE_MAX_MESSAGES;
+function getTierMaxMessages(tier: FlowTier | undefined): number {
+	if (!tier) return Number.MAX_SAFE_INTEGER;
+	const env =
+		tier === "lite"
+			? process.env.PI_FLOW_LITE_MAX_MESSAGES
+			: tier === "flash"
+				? process.env.PI_FLOW_FLASH_MAX_MESSAGES
+				: process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	const defaultVal =
+		tier === "lite"
+			? DEFAULT_LITE_MAX_MESSAGES
+			: tier === "flash"
+				? DEFAULT_FLASH_MAX_MESSAGES
+				: DEFAULT_FULL_MAX_MESSAGES;
+	if (!env) return defaultVal;
 	const n = Number(env);
-	return Number.isFinite(n) && n > 0 ? n : DEFAULT_LITE_MAX_MESSAGES;
+	return Number.isFinite(n) && n > 0 ? n : defaultVal;
 }
 
 /**
  * Compress a single snapshot entry based on tier.
  *
- * - lite: strip tool/toolResult content to placeholders.
- * - flash: truncate tool/toolResult text longer than 500 chars to 200 + ellipsis.
- * - full: pass-through (no per-entry compression).
+ * All tiers strip tool/toolResult content to placeholders (e.g. [toolResult: bash])
+ * so the child flow sees what tools were used without receiving full verbatim
+ * output, keeping the snapshot compact and focused on conversation history.
  */
 function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unknown {
-	if (!tier || tier === "full") return entry;
+	if (!tier) return entry;
 	if (!entry || typeof entry !== "object") return entry;
 	const e = entry as Record<string, unknown>;
 	if (e.type !== "message" || !e.message || typeof e.message !== "object") {
@@ -287,59 +301,20 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
 		return entry;
 	}
 
-	if (tier === "lite") {
-		const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
-		const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
-		msg.content = placeholder;
-		return { ...e, message: msg };
-	}
-
-	if (tier === "flash") {
-		let text: string | undefined;
-		let textIndex: number | undefined;
-		let isArray = false;
-
-		if (typeof msg.content === "string") {
-			text = msg.content;
-		} else if (Array.isArray(msg.content)) {
-			isArray = true;
-			for (let idx = 0; idx < msg.content.length; idx++) {
-				const part = msg.content[idx] as Record<string, unknown>;
-				if (part.type === "text" && typeof part.text === "string") {
-					text = part.text;
-					textIndex = idx;
-					break;
-				}
-			}
-		}
-
-		if (text && text.length > 500) {
-			const truncated = text.slice(0, 200) + " [...truncated]";
-			if (isArray && textIndex !== undefined) {
-				const newContent = (msg.content as Array<Record<string, unknown>>).map((part, idx) => {
-					if (idx === textIndex && part.type === "text" && typeof part.text === "string") {
-						return { ...part, text: truncated };
-					}
-					return part;
-				});
-				msg.content = newContent;
-			} else {
-				msg.content = truncated;
-			}
-			return { ...e, message: msg };
-		}
-	}
-
-	return entry;
+	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
+	msg.content = placeholder;
+	return { ...e, message: msg };
 }
 
 /**
- * Apply array-level compression for lite tier: keep only the last N messages.
+ * Apply array-level message limit based on tier: keep only the last N messages.
  * Header/session entries at the start of the branch are preserved; only
  * `type: "message"` entries count toward the limit.
  */
-function applyLiteMessageLimit(entries: unknown[]): unknown[] {
-	const max = getLiteMaxMessages();
+function applyMessageLimit(entries: unknown[], tier: FlowTier | undefined): unknown[] {
+	const max = getTierMaxMessages(tier);
+	if (max >= Number.MAX_SAFE_INTEGER) return entries;
 
 	// Extract leading header/session entries so they survive the slice
 	let headerEnd = 0;
@@ -560,5 +535,73 @@ function stripActiveToolCall(entry: unknown, activeToolCallId: string | undefine
 			content: newContent,
 		},
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Shared context
+// ---------------------------------------------------------------------------
+
+export interface SharedContext {
+	messageCount: number;
+	userMessageCount: number;
+	assistantMessageCount: number;
+	toolCalls: Record<string, number>;
+	totalTokens: number;
+	preview: string;
+}
+
+export function parseSharedContext(snapshotJsonl: string | null): SharedContext | undefined {
+	if (!snapshotJsonl) return undefined;
+	let messageCount = 0;
+	let userMessageCount = 0;
+	let assistantMessageCount = 0;
+	let totalTokens = 0;
+	const toolCalls: Record<string, number> = {};
+	let preview = "";
+	for (const line of snapshotJsonl.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line);
+			if (entry.type === "message" && entry.message && typeof entry.message === "object") {
+				const msg = entry.message;
+				messageCount++;
+				if (msg.role === "user") {
+					userMessageCount++;
+					if (!preview && typeof msg.content === "string") {
+						preview = msg.content;
+					}
+				} else if (msg.role === "assistant") {
+					assistantMessageCount++;
+					if (msg.usage && typeof msg.usage.totalTokens === "number") {
+						totalTokens = msg.usage.totalTokens;
+					}
+				}
+				// Aggregate tool calls from any message
+				const tcs = msg.toolCalls || msg.tool_calls;
+				if (Array.isArray(tcs)) {
+					for (const tc of tcs) {
+						const name = tc?.name || tc?.function?.name;
+						if (typeof name === "string") {
+							toolCalls[name] = (toolCalls[name] || 0) + 1;
+						}
+					}
+				}
+				if (Array.isArray(msg.content)) {
+					for (const block of msg.content) {
+						if (block && block.type === "toolCall") {
+							const name = block.name || block.toolCall?.name || block.function?.name;
+							if (typeof name === "string") {
+								toolCalls[name] = (toolCalls[name] || 0) + 1;
+							}
+						}
+					}
+				}
+			}
+		} catch {
+			// skip invalid lines
+		}
+	}
+	if (messageCount === 0) return undefined;
+	return { messageCount, userMessageCount, assistantMessageCount, toolCalls, totalTokens, preview };
 }
 

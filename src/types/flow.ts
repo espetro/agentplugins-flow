@@ -4,6 +4,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import { getFlowFinalText } from "../snapshot/runner-events.js";
+import type { SharedContext } from "../core2/snapshot.js";
 
 /** Aggregated token usage from a flow run. */
 export interface UsageStats {
@@ -65,14 +66,7 @@ export interface FlowDetails {
 	flowStyle: "fork";
 	projectAgentsDir: string | null;
 	results: SingleResult[];
-	sharedContext?: {
-		messageCount: number;
-		userMessageCount: number;
-		assistantMessageCount: number;
-		toolCalls: Record<string, number>;
-		totalTokens: number;
-		preview: string;
-	};
+	sharedContext?: SharedContext;
 }
 
 /** Metrics emitted after each flow completes. */

@@ -49,7 +49,7 @@ import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
 } from "./flow/depth.js";
-import { buildCore2Snapshot } from "./core2/snapshot.js";
+import { buildCore2Snapshot, parseSharedContext, type SharedContext } from "./core2/snapshot.js";
 import {
 	resolveSettings,
 	type ResolvedSettings,
@@ -229,69 +229,7 @@ async function executeDispatchOps(
 	return parts.join("\n\n---\n\n");
 }
 
-export function parseSharedContext(snapshotJsonl: string | null): {
-	messageCount: number;
-	userMessageCount: number;
-	assistantMessageCount: number;
-	toolCalls: Record<string, number>;
-	totalTokens: number;
-	preview: string;
-} | undefined {
-	if (!snapshotJsonl) return undefined;
-	let messageCount = 0;
-	let userMessageCount = 0;
-	let assistantMessageCount = 0;
-	let totalTokens = 0;
-	const toolCalls: Record<string, number> = {};
-	let preview = "";
-	for (const line of snapshotJsonl.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		try {
-			const entry = JSON.parse(line);
-			if (entry.type === "message" && entry.message && typeof entry.message === "object") {
-				const msg = entry.message;
-				messageCount++;
-				if (msg.role === "user") {
-					userMessageCount++;
-					if (!preview && typeof msg.content === "string") {
-						preview = msg.content;
-					}
-				} else if (msg.role === "assistant") {
-					assistantMessageCount++;
-					if (msg.usage && typeof msg.usage.totalTokens === "number") {
-						totalTokens = msg.usage.totalTokens;
-					}
-				}
-				// Aggregate tool calls from any message
-				const tcs = msg.toolCalls || msg.tool_calls;
-				if (Array.isArray(tcs)) {
-					for (const tc of tcs) {
-						const name = tc?.name || tc?.function?.name;
-						if (typeof name === "string") {
-							toolCalls[name] = (toolCalls[name] || 0) + 1;
-						}
-					}
-				}
-				if (Array.isArray(msg.content)) {
-					for (const block of msg.content) {
-						if (block && block.type === "toolCall") {
-							const name = block.name || block.toolCall?.name || block.function?.name;
-							if (typeof name === "string") {
-								toolCalls[name] = (toolCalls[name] || 0) + 1;
-							}
-						}
-					}
-				}
-			}
-		} catch {
-			// skip invalid lines
-		}
-	}
-	if (messageCount === 0) return undefined;
-	return { messageCount, userMessageCount, assistantMessageCount, toolCalls, totalTokens, preview };
-}
-
-function makeFlowDetailsFactory(projectFlowsDir: string | null, sharedContext?: { messageCount: number; userMessageCount: number; assistantMessageCount: number; toolCalls: Record<string, number>; totalTokens: number; preview: string }) {
+function makeFlowDetailsFactory(projectFlowsDir: string | null, sharedContext?: SharedContext) {
 	return (results: SingleResult[]): FlowDetails => ({
 		mode: "flow",
 		flowStyle: "fork",

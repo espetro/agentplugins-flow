@@ -689,6 +689,34 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).not.toContain("msg-19");
 	});
 
+	it("flash tier keeps only the last 50 messages", () => {
+		const entries = Array.from({ length: 70 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 50 messages = 51 total
+		expect(parsed).toHaveLength(51);
+		expect(snapshot).toContain("msg-69");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("full tier keeps only the last 80 messages", () => {
+		const entries = Array.from({ length: 100 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 80 messages = 81 total
+		expect(parsed).toHaveLength(81);
+		expect(snapshot).toContain("msg-99");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
 	it("lite tier respects PI_FLOW_LITE_MAX_MESSAGES env override", () => {
 		process.env.PI_FLOW_LITE_MAX_MESSAGES = "5";
 		const entries = Array.from({ length: 10 }, (_, i) => ({
@@ -701,7 +729,31 @@ describe("buildCore2Snapshot — tier compression", () => {
 		delete process.env.PI_FLOW_LITE_MAX_MESSAGES;
 	});
 
-	it("flash tier truncates long toolResult text to 200 chars + ellipsis", () => {
+	it("flash tier respects PI_FLOW_FLASH_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FLASH_MAX_MESSAGES = "7";
+		const entries = Array.from({ length: 15 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(8); // header + 7
+		delete process.env.PI_FLOW_FLASH_MAX_MESSAGES;
+	});
+
+	it("full tier respects PI_FLOW_FULL_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FULL_MAX_MESSAGES = "9";
+		const entries = Array.from({ length: 20 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(10); // header + 9
+		delete process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	});
+
+	it("flash tier strips toolResult content to placeholder", () => {
 		const longText = "a".repeat(600);
 		const entries = [
 			{
@@ -709,33 +761,33 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "toolResult",
 					toolCallId: "tc-1",
+					name: "bash",
 					content: [{ type: "text", text: longText }],
 				},
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		expect(snapshot).toContain("a".repeat(200));
-		expect(snapshot).toContain("[...truncated]");
-		expect(snapshot).not.toContain("a".repeat(201));
+		expect(snapshot).not.toContain("a".repeat(10));
+		expect(snapshot).toContain("[toolResult: bash]");
 	});
 
-	it("flash tier leaves short toolResult text intact", () => {
+	it("flash tier strips tool content to placeholder", () => {
 		const entries = [
 			{
 				type: "message",
 				message: {
-					role: "toolResult",
+					role: "tool",
 					toolCallId: "tc-1",
-					content: [{ type: "text", text: "short" }],
+					content: "short",
 				},
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		expect(snapshot).toContain("short");
-		expect(snapshot).not.toContain("[...truncated]");
+		expect(snapshot).not.toContain("short");
+		expect(snapshot).toContain("[tool result omitted]");
 	});
 
-	it("full tier leaves toolResult content unchanged", () => {
+	it("full tier strips toolResult content to placeholder", () => {
 		const longText = "b".repeat(600);
 		const entries = [
 			{
@@ -743,13 +795,14 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "toolResult",
 					toolCallId: "tc-1",
+					name: "trace",
 					content: [{ type: "text", text: longText }],
 				},
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
-		expect(snapshot).toContain("b".repeat(600));
-		expect(snapshot).not.toContain("[...truncated]");
+		expect(snapshot).not.toContain("b".repeat(10));
+		expect(snapshot).toContain("[toolResult: trace]");
 	});
 
 	it("lite tier significantly reduces snapshot size", () => {
