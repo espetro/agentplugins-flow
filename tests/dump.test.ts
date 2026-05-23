@@ -125,10 +125,7 @@ describe("dump mechanism — end-to-end", () => {
 		expect(mdContent).toContain("Flow: scout");
 		expect(mdContent).toContain("## Session Snapshot (JSONL)");
 		expect(mdContent).toContain("## Activation Prompt (-p)");
-		expect(mdContent).toContain("## Compression Stats");
-		expect(mdContent).toContain("- Pre-sanitization: 0 bytes");
-		expect(mdContent).toContain("- Post-sanitization: 0 bytes");
-		expect(mdContent).toContain("- Reduction: 0%");
+		// Compression Stats section removed from dumps
 
 		expect(mdContent).toContain('"type":"session"');
 		expect(mdContent).toContain("<activation flow=\"scout\"");

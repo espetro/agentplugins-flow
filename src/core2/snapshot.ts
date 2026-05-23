@@ -133,6 +133,7 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 		delete msg.responseModel;
 		delete msg.timestamp;
 		delete msg.isError;
+		delete msg.usage; // Token telemetry irrelevant to child flow orientation
 
 		// Strip tool correlation IDs — child flows replay linearly, no invocation by ID
 		if (msg.role === "toolResult" || msg.role === "tool") {

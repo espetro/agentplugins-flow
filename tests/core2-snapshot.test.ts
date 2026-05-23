@@ -612,8 +612,7 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(msg1.message).not.toHaveProperty("api");
 		expect(msg1.message).not.toHaveProperty("provider");
 		expect(msg1.message).not.toHaveProperty("model");
-		expect(msg1.message).toHaveProperty("usage");
-		expect(msg1.message.usage).toEqual({ input: 100, output: 200, totalTokens: 300 });
+		expect(msg1.message).not.toHaveProperty("usage");
 		expect(msg1.message).not.toHaveProperty("cost");
 		expect(msg1.message).toHaveProperty("stopReason", "stop");
 		expect(msg1.message).not.toHaveProperty("responseId");

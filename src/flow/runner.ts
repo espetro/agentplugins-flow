@@ -52,7 +52,6 @@ import {
 import {
 	computeTransitionState,
 	buildGuardLine,
-	buildTransitionRule,
 	buildFlowListSection,
 	buildLineage,
 	computeChildPropagation,
@@ -406,7 +405,6 @@ function buildFlowArgs(
 
 	// Phase 2: Activation — role, tools, depth, transition rules (dynamically generated)
 	const guardLine = buildGuardLine(currentDepth, effectiveMaxDepth, preventCycles, parentFlowStack);
-	const transitionRule = buildTransitionRule(canTransition, guardLine);
 	const flowListSection = buildFlowListSection(canTransition, discoveredFlows);
 
 	const effectiveTier = flow.tier ?? getFlowTier(flow.name);
@@ -414,7 +412,6 @@ function buildFlowArgs(
 	const activation =
 		`\n\n<activation flow="${flow.name}" depth="${currentDepth}" tools="${availableTools}" tier="${effectiveTier}" lineage="${lineage}">\n` +
 		`You are a [${flow.name}] agent operating at depth ${currentDepth}.\n` +
-		`${transitionRule}\n` +
 		`${flowListSection}` +
 		`Do not attempt to use any tool outside the available set — it will fail.\n` +
 		`</activation>`;
@@ -701,14 +698,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				``,
 				prompt,
 			);
-			markdownParts.push(
-				``,
-				`## Compression Stats`,
-				``,
-				`- Pre-sanitization: 0 bytes`,
-				`- Post-sanitization: 0 bytes`,
-				`- Reduction: 0%`,
-			);
+			// Compression Stats section removed — zeroed values provide no signal
 			const markdown = markdownParts.join("\n");
 			const uniqueDumpPath = makeUniqueDumpPath(dumpPath, flow.name);
 			const uniqueTxtPath = makeUniqueDumpTxtPath(uniqueDumpPath);
