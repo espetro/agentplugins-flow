@@ -229,11 +229,11 @@ async function executeDispatchOps(
 	return parts.join("\n\n---\n\n");
 }
 
-function parseSharedContext(snapshotJsonl: string | null): { messageCount: number; preview: string } | undefined {
+export function parseSharedContext(snapshotJsonl: string | null): { messageCount: number; preview: string } | undefined {
 	if (!snapshotJsonl) return undefined;
 	let messageCount = 0;
 	let firstUserText: string | undefined;
-	for (const line of snapshotJsonl.split("\n")) {
+	for (const line of snapshotJsonl.split(/\r?\n/)) {
 		if (!line.trim()) continue;
 		try {
 			const entry = JSON.parse(line);
@@ -639,7 +639,6 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						onUpdate,
 						makeDetails,
-						sharedContext,
 						getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
 						tierOverrideResolver: getTierOverride,
 						fallbackModel: inheritedCliArgs.fallbackModel,

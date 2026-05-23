@@ -617,13 +617,15 @@ function renderFlowExpanded(
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
 
+	const typeName = formatFlowTypeName(r.type);
+
 	if (sharedContext) {
 		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
 		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
 		container.addChild(new Spacer(1));
+		container.addChild(new Text(applyRole("prefixLabel", sectionHeader(typeName), theme, config), 0, 0));
+		container.addChild(new Spacer(1));
 	}
-
-	const typeName = formatFlowTypeName(r.type);
 	const initialDot = flowStatusIcon(r, theme);
 	let header = `${initialDot} ${applyRole("flowName", typeName, theme, config)}`;
 	const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";

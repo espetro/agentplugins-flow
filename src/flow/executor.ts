@@ -81,8 +81,6 @@ export interface FlowExecutorDeps {
 	onUpdate?: (result: import("@earendil-works/pi-agent-core").AgentToolResult<FlowDetails>) => void;
 	/** Factory to wrap results into FlowDetails. */
 	makeDetails: (results: SingleResult[]) => FlowDetails;
-	/** Optional shared session context for rendering. */
-	sharedContext?: { messageCount: number; preview: string };
 	/** Get a CLI flag value. */
 	getFlag: (name: string) => unknown;
 	/** Inherited CLI args for tier overrides. */
