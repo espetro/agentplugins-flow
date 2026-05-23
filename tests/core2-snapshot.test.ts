@@ -151,6 +151,31 @@ describe("buildCore2Snapshot — retention", () => {
 		expect(snapshot).toContain("a");
 	});
 
+	it("strips directive blocks from non-batch tool result text", () => {
+		const text =
+			"exit 0\n\n[Directive: Close what you start. Dispatch a [build] or [scout] flow to verify before advancing.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Directive:");
+		expect(snapshot).not.toContain("Dispatch a [build]");
+		expect(snapshot).toContain("exit 0");
+	});
+
+	it("strips legacy [Hint:] blocks from tool result text", () => {
+		const text = "hello world\n\n[Hint: Do something useful.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Hint:");
+		expect(snapshot).not.toContain("Do something useful");
+		expect(snapshot).toContain("hello world");
+	});
+
 	it("preserves batch bash and rg sections verbatim", () => {
 		const batchText =
 			"✔ 1 bash\n\n" +

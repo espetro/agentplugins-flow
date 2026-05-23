@@ -318,8 +318,8 @@ function maybeStripBatchBodies(line: string): string {
 		}
 	}
 
-	// Fast path: no batch section headers present
-	if (!text || !text.includes("\n--- ")) {
+	// Fast path: no batch section headers or directive/hint markers present
+	if (!text || (!text.includes("\n--- ") && !text.includes("[Directive:") && !text.includes("[Hint:"))) {
 		return line;
 	}
 
