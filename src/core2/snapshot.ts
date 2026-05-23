@@ -133,7 +133,7 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 	const result = { ...e };
 	delete result.timestamp;
 	delete result.parentId; // Tree linkage irrelevant to linear replay
-	delete result.id;       // Entry IDs irrelevant to linear replay
+	// result.id is preserved for child session manager deduplication
 
 	// 2. Process message entries
 	if (result.type === "message" && result.message && typeof result.message === "object") {

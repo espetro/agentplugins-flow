@@ -120,10 +120,10 @@ describe("buildCore2Snapshot — retention", () => {
 		expect(snapshot).toContain('"name":"flow"');
 	});
 
-	it("strips id and parentId from entries", () => {
+	it("preserves id and strips parentId from entries", () => {
 		const entry = { type: "message", id: "msg-1", parentId: "parent-abc", message: { role: "user", content: "hi" } };
 		const snapshot = buildCore2Snapshot(makeSource([entry]));
-		expect(snapshot).not.toContain('"id":"msg-1"');
+		expect(snapshot).toContain('"id":"msg-1"');
 		expect(snapshot).not.toContain("parentId");
 	});
 
@@ -467,7 +467,7 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		const parsed = parseSnapshot(snapshot);
 		expect(parsed).toHaveLength(2);
 		expect(parsed[0]).toMatchObject({ version: 1, type: "session" });
-		expect(parsed[0]).not.toHaveProperty("id");
+		expect(parsed[0]).toHaveProperty("id", "session-1");
 	});
 
 	it("strips activeToolCallId matching tool call and omits empty assistant message", () => {
