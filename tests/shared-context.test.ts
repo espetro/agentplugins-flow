@@ -123,19 +123,19 @@ describe("parseSharedContext", () => {
 			userMessageCount: 1,
 			assistantMessageCount: 2,
 			toolCalls: { bash: 2, read: 1, batch: 1 },
-			totalTokens: 60,
+			totalTokens: 18,
 			preview: "run some tools",
 		});
 	});
 
-	it("sums totalTokens only from assistant messages", () => {
+	it("captures the last assistant message's cumulative totalTokens", () => {
 		const lines = [
 			JSON.stringify({ type: "message", message: { role: "user", content: "hello" } }),
 			JSON.stringify({ type: "message", message: { role: "assistant", content: "ok", usage: { totalTokens: 15 } } }),
 			JSON.stringify({ type: "message", message: { role: "assistant", content: "done", usage: { totalTokens: 25 } } }),
 		];
 		const result = parseSharedContext(lines.join("\n"));
-		expect(result?.totalTokens).toBe(40);
+		expect(result?.totalTokens).toBe(25);
 		expect(result?.userMessageCount).toBe(1);
 		expect(result?.assistantMessageCount).toBe(2);
 	});

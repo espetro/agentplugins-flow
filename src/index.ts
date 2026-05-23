@@ -259,7 +259,7 @@ export function parseSharedContext(snapshotJsonl: string | null): {
 				} else if (msg.role === "assistant") {
 					assistantMessageCount++;
 					if (msg.usage && typeof msg.usage.totalTokens === "number") {
-						totalTokens += msg.usage.totalTokens;
+						totalTokens = msg.usage.totalTokens;
 					}
 				}
 				// Aggregate tool calls from any message
