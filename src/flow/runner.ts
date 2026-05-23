@@ -745,7 +745,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			}
 		}
 
-		// Debug mode: write the full activation prompt to a dedicated temp file.
+		// Debug mode: write the activation prompt and shared session snapshot to a dedicated temp file.
 		if (opts.debugMode) {
 			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
 			cleanupStaleDebugDumps(Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
@@ -754,7 +754,14 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
 			const debugPath = path.join(os.tmpdir(), `pi-flow-debug-${safeFlowName}-${uniqueSuffix}.txt`);
 			try {
-				atomicWriteFileSync(debugPath, prompt);
+				const parts: string[] = [];
+				if (forkSessionSnapshotJsonl) {
+					parts.push("## Session Snapshot (JSONL)");
+					parts.push(forkSessionSnapshotJsonl);
+				}
+				parts.push("## Activation Prompt (-p)");
+				parts.push(prompt);
+				atomicWriteFileSync(debugPath, parts.join("\n\n"));
 				logWarn(`[pi-agent-flow] Debug prompt written to ${debugPath}`);
 			} catch (err) {
 				logWarn(`[pi-agent-flow] Debug prompt write FAILED: ${err}`);

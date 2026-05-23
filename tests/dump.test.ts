@@ -456,10 +456,11 @@ describe("debug mode — end-to-end", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("writes activation prompt to a temp file when debugMode is enabled", async () => {
+	it("writes activation prompt and session snapshot to a temp file when debugMode is enabled", async () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
 
+		const snapshotJsonl = '{"type":"session"}\n{"type":"message"}\n';
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
 			complexity: "moderate",
@@ -467,7 +468,7 @@ describe("debug mode — end-to-end", () => {
 			flowName: "scout",
 			intent: "Test intent",
 			aim: "Test aim",
-			forkSessionSnapshotJsonl: null,
+			forkSessionSnapshotJsonl: snapshotJsonl,
 			parentDepth: 0,
 			parentFlowStack: [],
 			maxDepth: 3,
@@ -495,6 +496,9 @@ describe("debug mode — end-to-end", () => {
 
 		const debugPath = path.join(os.tmpdir(), debugFiles[0]);
 		const content = fs.readFileSync(debugPath, "utf-8");
+		expect(content).toContain("## Session Snapshot (JSONL)");
+		expect(content).toContain(snapshotJsonl);
+		expect(content).toContain("## Activation Prompt (-p)");
 		expect(content).toContain("<activation flow=\"scout\"");
 
 		// Cleanup.
@@ -549,6 +553,7 @@ describe("debug mode — end-to-end", () => {
 			return spawnCall === 1 ? mockProc1 : mockProc2;
 		});
 
+		const snapshotJsonl = '{"type":"session"}\n{"type":"message"}\n';
 		const opts: RunFlowOptions = {
 			cwd: "/tmp",
 			complexity: "moderate",
@@ -556,7 +561,7 @@ describe("debug mode — end-to-end", () => {
 			flowName: "scout",
 			intent: "Test intent",
 			aim: "Test aim",
-			forkSessionSnapshotJsonl: null,
+			forkSessionSnapshotJsonl: snapshotJsonl,
 			parentDepth: 0,
 			parentFlowStack: [],
 			maxDepth: 3,
@@ -593,6 +598,14 @@ describe("debug mode — end-to-end", () => {
 		const tmpFiles = fs.readdirSync(os.tmpdir());
 		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
 		expect(debugFiles.length).toBe(2);
+
+		for (const f of debugFiles) {
+			const content = fs.readFileSync(path.join(os.tmpdir(), f), "utf-8");
+			expect(content).toContain("## Session Snapshot (JSONL)");
+			expect(content).toContain(snapshotJsonl);
+			expect(content).toContain("## Activation Prompt (-p)");
+			expect(content).toContain("<activation flow=\"scout\"");
+		}
 
 		// Cleanup.
 		for (const f of debugFiles) {
