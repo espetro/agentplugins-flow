@@ -252,6 +252,37 @@ function cleanupStaleDumps(dumpPath: string, maxAgeHours = 168): void {
 	}
 }
 
+/**
+ * Delete stale debug dump files from the temp directory.
+ * Called once at the start of each debug block to prevent unbounded accumulation.
+ * Silently skips on any error (defensive).
+ */
+function cleanupStaleDebugDumps(maxAgeHours = 168): void {
+	try {
+		const dir = os.tmpdir();
+		const entries = fs.readdirSync(dir);
+		const nowMs = Date.now();
+		const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+		let deleted = 0;
+		for (const entry of entries) {
+			if (!entry.startsWith("pi-flow-debug-")) continue;
+			const entryPath = path.join(dir, entry);
+			try {
+				const stats = fs.statSync(entryPath);
+				if (nowMs - stats.mtimeMs > maxAgeMs) {
+					fs.unlinkSync(entryPath);
+					deleted++;
+				}
+			} catch { /* ignore per-entry errors */ }
+		}
+		if (deleted > 0) {
+			logWarn(`[pi-agent-flow] Cleaned ${deleted} stale debug file(s) from ${dir}`);
+		}
+	} catch (err) {
+		logWarn(`[pi-agent-flow] cleanupStaleDebugDumps failed: ${err}`);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Reminder file helpers
 // ---------------------------------------------------------------------------
@@ -671,14 +702,15 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			opts.preDispatchResults,
 		);
 
+		// Extract the activation prompt once for reuse by both dump and debug blocks.
+		const promptIndex = piArgs.indexOf("-p");
+		const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
+
 		// Dump verbatim child payload to disk for debugging when requested.
 		const dumpPath = process.env[FLOW_DUMP_SNAPSHOT_ENV] || inheritedCliArgs.dumpPath;
 		if (dumpPath) {
 			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
 			cleanupStaleDumps(dumpPath, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
-
-			const promptIndex = piArgs.indexOf("-p");
-			const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
 
 			const effectiveTier = flow.tier ?? getFlowTier(flow.name);
 			const sanitizationHeader = `<!-- pi-agent-flow dump | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
@@ -713,13 +745,16 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			}
 		}
 
-		// Debug mode: write the full activation prompt to a dedicated temp file
+		// Debug mode: write the full activation prompt to a dedicated temp file.
 		if (opts.debugMode) {
-			const debugPromptIndex = piArgs.indexOf("-p");
-			const debugPrompt = debugPromptIndex >= 0 ? piArgs[debugPromptIndex + 1] : "";
-			const debugPath = path.join(os.tmpdir(), `pi-flow-debug-${flow.name}-${Date.now()}.txt`);
+			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
+			cleanupStaleDebugDumps(Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
+
+			const safeFlowName = flow.name.replace(/[^\w.-]+/g, "_");
+			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+			const debugPath = path.join(os.tmpdir(), `pi-flow-debug-${safeFlowName}-${uniqueSuffix}.txt`);
 			try {
-				atomicWriteFileSync(debugPath, debugPrompt);
+				atomicWriteFileSync(debugPath, prompt);
 				logWarn(`[pi-agent-flow] Debug prompt written to ${debugPath}`);
 			} catch (err) {
 				logWarn(`[pi-agent-flow] Debug prompt write FAILED: ${err}`);

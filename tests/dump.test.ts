@@ -434,3 +434,217 @@ describe("protocol schema validation", () => {
 		expect(validateStreamingStdout(["not json"])).toEqual([]);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// 4D. Debug mode tests
+// ---------------------------------------------------------------------------
+
+describe("debug mode — end-to-end", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("writes activation prompt to a temp file when debugMode is enabled", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		const tmpFiles = fs.readdirSync(os.tmpdir());
+		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		expect(debugFiles.length).toBe(1);
+
+		const debugPath = path.join(os.tmpdir(), debugFiles[0]);
+		const content = fs.readFileSync(debugPath, "utf-8");
+		expect(content).toContain("<activation flow=\"scout\"");
+
+		// Cleanup.
+		try { fs.unlinkSync(debugPath); } catch { /* ignore */ }
+	});
+
+	it("does not write a debug file when debugMode is disabled", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const beforeFiles = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: false,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		const afterFiles = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		expect(afterFiles.length).toBe(beforeFiles.length);
+	});
+
+	it("uses a unique filename to avoid race conditions under concurrency", async () => {
+		const mockProc1 = makeMockProcess();
+		const mockProc2 = makeMockProcess();
+		let spawnCall = 0;
+		vi.mocked(childProcess.spawn).mockImplementation(() => {
+			spawnCall++;
+			return spawnCall === 1 ? mockProc1 : mockProc2;
+		});
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise1 = runFlow(opts);
+		const promise2 = runFlow(opts);
+
+		setTimeout(() => {
+			mockProc1.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc1.emit("close", 0);
+		}, 10);
+
+		setTimeout(() => {
+			mockProc2.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc2.emit("close", 0);
+		}, 15);
+
+		await Promise.all([promise1, promise2]);
+
+		const tmpFiles = fs.readdirSync(os.tmpdir());
+		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		expect(debugFiles.length).toBe(2);
+
+		// Cleanup.
+		for (const f of debugFiles) {
+			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		}
+	});
+
+	it("cleans up stale debug files older than max age", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		// Create a stale debug file manually.
+		const staleFile = path.join(os.tmpdir(), `pi-flow-debug-scout-0.abc123.txt`);
+		fs.writeFileSync(staleFile, "stale", { encoding: "utf-8" });
+		// Force mtime to be 8 days ago.
+		const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+		fs.utimesSync(staleFile, eightDaysAgo, eightDaysAgo);
+
+		const prevMaxAge = process.env.PI_FLOW_DUMP_MAX_AGE_HOURS;
+		process.env.PI_FLOW_DUMP_MAX_AGE_HOURS = "168";
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		expect(fs.existsSync(staleFile)).toBe(false);
+
+		// Cleanup any newly created debug file.
+		const tmpFiles = fs.readdirSync(os.tmpdir());
+		const debugFiles = tmpFiles.filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		for (const f of debugFiles) {
+			try { fs.unlinkSync(path.join(os.tmpdir(), f)); } catch { /* ignore */ }
+		}
+
+		if (prevMaxAge === undefined) delete process.env.PI_FLOW_DUMP_MAX_AGE_HOURS;
+		else process.env.PI_FLOW_DUMP_MAX_AGE_HOURS = prevMaxAge;
+	});
+});
