@@ -636,3 +636,153 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(msg2.message.content[0].text).toBe("exit 0");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Tier-based compression tests
+// ---------------------------------------------------------------------------
+
+describe("buildCore2Snapshot — tier compression", () => {
+	it("lite tier strips toolResult content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "bash",
+					content: [{ type: "text", text: "long output here\nline2\nline3" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("long output here");
+		expect(snapshot).toContain("[toolResult: bash]");
+	});
+
+	it("lite tier strips tool content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "tool",
+					toolCallId: "tc-1",
+					content: "tool output text",
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("tool output text");
+		expect(snapshot).toContain("[tool result omitted]");
+	});
+
+	it("lite tier keeps only the last 30 messages", () => {
+		const entries = Array.from({ length: 50 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 30 messages = 31 total
+		expect(parsed).toHaveLength(31);
+		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("lite tier respects PI_FLOW_LITE_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_LITE_MAX_MESSAGES = "5";
+		const entries = Array.from({ length: 10 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(6); // header + 5
+		delete process.env.PI_FLOW_LITE_MAX_MESSAGES;
+	});
+
+	it("flash tier truncates long toolResult text to 200 chars + ellipsis", () => {
+		const longText = "a".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).toContain("a".repeat(200));
+		expect(snapshot).toContain("[...truncated]");
+		expect(snapshot).not.toContain("a".repeat(201));
+	});
+
+	it("flash tier leaves short toolResult text intact", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: "short" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).toContain("short");
+		expect(snapshot).not.toContain("[...truncated]");
+	});
+
+	it("full tier leaves toolResult content unchanged", () => {
+		const longText = "b".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		expect(snapshot).toContain("b".repeat(600));
+		expect(snapshot).not.toContain("[...truncated]");
+	});
+
+	it("lite tier significantly reduces snapshot size", () => {
+		const entries = Array.from({ length: 40 }, (_, i) => ({
+			type: "message",
+			message: {
+				role: i % 2 === 0 ? ("user" as const) : ("toolResult" as const),
+				content:
+					i % 2 === 0
+						? `user message ${i}`
+						: [{ type: "text" as const, text: "x".repeat(1000) }],
+			},
+		}));
+		const fullSnapshot = buildCore2Snapshot(makeSource(entries));
+		const liteSnapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(fullSnapshot!.length).toBeGreaterThan(liteSnapshot!.length * 2);
+	});
+
+	it("tier compression runs after sanitize and compaction", () => {
+		const entries = [
+			{ type: "model_change", model: "kimi" },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: "output" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("model_change");
+		expect(snapshot).not.toContain("output");
+		expect(snapshot).toContain("[toolResult result omitted]");
+	});
+});

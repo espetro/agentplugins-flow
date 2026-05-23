@@ -628,6 +628,7 @@ export default function (pi: ExtensionAPI) {
 				// while preserving chronological conversation history.
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 					activeToolCallId: toolCallId,
+					tier: params.flow[0]?.type ? getFlowTier(params.flow[0].type) : undefined,
 				});
 
 				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);

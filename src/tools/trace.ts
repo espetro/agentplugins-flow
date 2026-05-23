@@ -12,7 +12,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { runFlow } from "../flow/runner.js";
-import { discoverFlows } from "../flow/agents.js";
+import { discoverFlows, getFlowTier } from "../flow/agents.js";
 import { buildCore2Snapshot } from "../core2/snapshot.js";
 import {
 	resolveFlowModelCandidates,
@@ -259,6 +259,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 
 			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 				activeToolCallId: toolCallId,
+				tier: traceFlow.tier ?? getFlowTier("trace"),
 			});
 
 			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)

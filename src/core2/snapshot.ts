@@ -7,6 +7,7 @@
  */
 
 import { stripDirectives } from "../steering/tool-utils.js";
+import type { FlowTier } from "../flow/agents.js";
 
 export interface SessionSnapshotSource {
 	getHeader: () => unknown;
@@ -19,6 +20,7 @@ export interface BuildCore2SnapshotOptions {
 	parentFlow?: string;
 	depth?: number;
 	activeToolCallId?: string;
+	tier?: FlowTier;
 }
 
 export function buildCore2Snapshot(
@@ -73,6 +75,7 @@ export function buildCore2Snapshot(
 		lines.push(JSON.stringify(compressedHeader));
 	}
 
+	const processedEntries: unknown[] = [];
 	for (const entry of branchEntries) {
 		let processedEntry = sanitizeSnapshotEntry(entry);
 		if (!processedEntry) continue;
@@ -80,12 +83,21 @@ export function buildCore2Snapshot(
 		processedEntry = maybeStripCompaction(processedEntry);
 		if (!processedEntry) continue;
 
+		processedEntry = compressSnapshotEntry(processedEntry, options?.tier);
+		if (!processedEntry) continue;
+
 		if (options?.activeToolCallId) {
 			processedEntry = stripActiveToolCall(processedEntry, options.activeToolCallId);
 			if (!processedEntry) continue;
 		}
 
-		const line = JSON.stringify(processedEntry);
+		processedEntries.push(processedEntry);
+	}
+
+	const finalEntries = options?.tier === "lite" ? applyLiteMessageLimit(processedEntries) : processedEntries;
+
+	for (const entry of finalEntries) {
+		const line = JSON.stringify(entry);
 		// Strip batch read/write/edit bodies from tool result messages
 		const processed = maybeStripBatchBodies(line);
 		lines.push(processed);
@@ -241,6 +253,108 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 	}
 
 	return entry;
+}
+
+// ---------------------------------------------------------------------------
+// Tier-based context compression
+// ---------------------------------------------------------------------------
+
+const DEFAULT_LITE_MAX_MESSAGES = 30;
+
+function getLiteMaxMessages(): number {
+	const env = process.env.PI_FLOW_LITE_MAX_MESSAGES;
+	if (!env) return DEFAULT_LITE_MAX_MESSAGES;
+	const n = Number(env);
+	return Number.isFinite(n) && n > 0 ? n : DEFAULT_LITE_MAX_MESSAGES;
+}
+
+/**
+ * Compress a single snapshot entry based on tier.
+ *
+ * - lite: strip tool/toolResult content to placeholders.
+ * - flash: truncate tool/toolResult text longer than 500 chars to 200 + ellipsis.
+ * - full: pass-through (no per-entry compression).
+ */
+function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unknown {
+	if (!tier || tier === "full") return entry;
+	if (!entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") {
+		return entry;
+	}
+	const msg = { ...(e.message as Record<string, unknown>) };
+	const role = msg.role;
+	if (role !== "tool" && role !== "toolResult") {
+		return entry;
+	}
+
+	if (tier === "lite") {
+		const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+		const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
+		msg.content = placeholder;
+		return { ...e, message: msg };
+	}
+
+	if (tier === "flash") {
+		let text: string | undefined;
+		let textIndex: number | undefined;
+		let isArray = false;
+
+		if (typeof msg.content === "string") {
+			text = msg.content;
+		} else if (Array.isArray(msg.content)) {
+			isArray = true;
+			for (let idx = 0; idx < msg.content.length; idx++) {
+				const part = msg.content[idx] as Record<string, unknown>;
+				if (part.type === "text" && typeof part.text === "string") {
+					text = part.text;
+					textIndex = idx;
+					break;
+				}
+			}
+		}
+
+		if (text && text.length > 500) {
+			const truncated = text.slice(0, 200) + " [...truncated]";
+			if (isArray && textIndex !== undefined) {
+				const newContent = (msg.content as Array<Record<string, unknown>>).map((part, idx) => {
+					if (idx === textIndex && part.type === "text" && typeof part.text === "string") {
+						return { ...part, text: truncated };
+					}
+					return part;
+				});
+				msg.content = newContent;
+			} else {
+				msg.content = truncated;
+			}
+			return { ...e, message: msg };
+		}
+	}
+
+	return entry;
+}
+
+/**
+ * Apply array-level compression for lite tier: keep only the last N messages.
+ * Header/non-message entries are preserved; only `type: "message"` entries
+ * count toward the limit.
+ */
+function applyLiteMessageLimit(entries: unknown[]): unknown[] {
+	const max = getLiteMaxMessages();
+	if (entries.length <= max) return entries;
+
+	let messageCount = 0;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const e = entries[i];
+		if (e && typeof e === "object" && (e as Record<string, unknown>).type === "message") {
+			messageCount++;
+		}
+		if (messageCount >= max) {
+			// Keep everything from this index onward
+			return entries.slice(i);
+		}
+	}
+	return entries;
 }
 
 // ---------------------------------------------------------------------------

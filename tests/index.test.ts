@@ -171,7 +171,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "ideas", intent: "Explore things", complexity: "moderate", aim: "Explore codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -243,7 +243,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Fix things", complexity: "moderate", aim: "Fix codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
@@ -373,7 +373,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ flow: [{ type: "build", intent: "Fix things", complexity: "moderate", aim: "Fix codebase" }], confirmProjectFlows: false },
 			new AbortController().signal,
 			undefined,
 			{
