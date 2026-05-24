@@ -20,7 +20,7 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
 	`primary_flow:\n` +
-	`  available_tools: [trace, flow, scout, build, debug, audit, craft, ask_user]\n` +
+	`  available_tools: [trace, flow, scout, build, debug, audit, craft, ideas, ask_user]\n` +
 	`  output_format: "Zero preamble or filler. Be direct in answer or tool call."\n` +
 	`execution_rules:\n` +
 	`  mindset:\n` +
