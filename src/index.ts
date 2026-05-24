@@ -630,6 +630,8 @@ export default function (pi: ExtensionAPI) {
 						loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
 						maxConcurrency: resolved.maxConcurrency,
 						debugMode: resolved.debugMode,
+				traceEnabled: resolved.traceEnabled,
+				batchReadEnabled: resolved.batchReadEnabled,
 
 						defaultComplexity: resolved.defaultComplexity,
 						signal,
@@ -722,8 +724,8 @@ export default function (pi: ExtensionAPI) {
 					animationGlitch: resolved.animationGlitch,
 					bodyVerbosity: resolved.bodyVerbosity,
 					debugMode: resolved.debugMode,
-					traceEnabled: resolved.traceEnabled,
-					batchReadEnabled: resolved.batchReadEnabled,
+				traceEnabled: resolved.traceEnabled,
+				batchReadEnabled: resolved.batchReadEnabled,
 				}
 			: {
 					toolOptimize: true,
@@ -736,8 +738,8 @@ export default function (pi: ExtensionAPI) {
 					animationGlitch: true,
 					bodyVerbosity: "lite",
 					debugMode: false,
-					traceEnabled: true,
-					batchReadEnabled: true,
+				traceEnabled: true,
+				batchReadEnabled: true,
 				},
 	};
 

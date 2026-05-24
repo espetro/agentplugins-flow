@@ -653,77 +653,73 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildCore2Snapshot — tier compression", () => {
-	it("all tiers preserve toolResult content and optimize it (no placeholders)", () => {
+	it("lite tier strips toolResult content to placeholder", () => {
 		const entries = [
 			{
 				type: "message",
 				message: {
 					role: "toolResult",
-					name: "trace",
-					content: [{ type: "text", text: "verbatim output preserved" }],
+					toolCallId: "tc-1",
+					name: "bash",
+					content: [{ type: "text", text: "long output here\nline2\nline3" }],
 				},
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		expect(snapshot).toContain("verbatim output preserved");
-		expect(snapshot).not.toContain("[toolResult: trace]");
+		expect(snapshot).not.toContain("long output here");
+		expect(snapshot).toContain("[toolResult: bash]");
 	});
 
-	it("verbose standalone bash output (> 50 lines) is truncated to 30 head and 20 tail lines", () => {
-		const body = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+	it("lite tier strips tool content to placeholder", () => {
 		const entries = [
 			{
 				type: "message",
 				message: {
-					role: "toolResult",
-					name: "bash",
-					content: [{ type: "text", text: body }],
+					role: "tool",
+					toolCallId: "tc-1",
+					content: "tool output text",
 				},
 			},
 		];
-		const snapshot = buildCore2Snapshot(makeSource(entries));
-		const parsed = parseSnapshot(snapshot);
-		const toolMsg = parsed.find((e: any) => e.message?.role === "toolResult") as any;
-		const textContent = toolMsg.message.content[0].text;
-		expect(textContent).toContain("line 1\nline 2\nline 3");
-		expect(textContent).toContain("line 30");
-		expect(textContent).toContain("[...10 lines of bash output truncated...]");
-		expect(textContent).toContain("line 41");
-		expect(textContent).toContain("line 60");
-		expect(textContent).not.toContain("line 31\n");
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("tool output text");
+		expect(snapshot).toContain("[tool result omitted]");
 	});
 
-	it("verbose batched bash section output (> 50 lines) is truncated to 30 head and 20 tail lines", () => {
-		const body = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
-		const batchText = `✔ 1 bash\n\n--- bash [abc] exit 0 ---\n${body}`;
-		const entries = [
-			{
-				type: "message",
-				message: {
-					role: "toolResult",
-					toolCallId: "batch-1",
-					content: [{ type: "text", text: batchText }],
-				},
-			},
-		];
-		const snapshot = buildCore2Snapshot(makeSource(entries));
+	it("lite tier keeps only the last 30 messages", () => {
+		const entries = Array.from({ length: 50 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
 		const parsed = parseSnapshot(snapshot);
-		const toolMsg = parsed.find((e: any) => e.message?.role === "toolResult") as any;
-		const textContent = toolMsg.message.content[0].text;
-		expect(textContent).toContain("line 1\nline 2\nline 3");
-		expect(textContent).toContain("line 30");
-		expect(textContent).toContain("[...10 lines of bash output truncated...]");
-		expect(textContent).toContain("line 41");
-		expect(textContent).toContain("line 60");
-		expect(textContent).not.toContain("line 31\n");
+		// header + context map + 30 messages = 32 total
+		expect(parsed).toHaveLength(32);
+		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
 	});
 
-	it("message limit is always applied (defaults to 80) regardless of tier option", () => {
+	it("flash tier keeps only the last 50 messages", () => {
+		const entries = Array.from({ length: 70 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		// header + context map + 50 messages = 52 total
+		expect(parsed).toHaveLength(52);
+		expect(snapshot).toContain("msg-69");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("full tier keeps only the last 80 messages", () => {
 		const entries = Array.from({ length: 100 }, (_, i) => ({
 			type: "message",
 			message: { role: "user" as const, content: `msg-${i}` },
 		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
 		const parsed = parseSnapshot(snapshot);
 		// header + context map + 80 messages = 82 total
 		expect(parsed).toHaveLength(82);
@@ -732,30 +728,132 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).not.toContain("msg-19");
 	});
 
-	it("all tiers respect PI_FLOW_MAX_MESSAGES env override", () => {
-		const previous = process.env.PI_FLOW_MAX_MESSAGES;
-		process.env.PI_FLOW_MAX_MESSAGES = "5";
-		try {
-			const entries = Array.from({ length: 10 }, (_, i) => ({
-				type: "message",
-				message: { role: "user" as const, content: `msg-${i}` },
-			}));
-			const snapshot = buildCore2Snapshot(makeSource(entries));
-			const parsed = parseSnapshot(snapshot);
-			expect(parsed).toHaveLength(7); // header + context map + 5
-		} finally {
-			if (previous === undefined) {
-				delete process.env.PI_FLOW_MAX_MESSAGES;
-			} else {
-				process.env.PI_FLOW_MAX_MESSAGES = previous;
-			}
-		}
+	it("lite tier respects PI_FLOW_LITE_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_LITE_MAX_MESSAGES = "5";
+		const entries = Array.from({ length: 10 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(7); // header + context map + 5
+		delete process.env.PI_FLOW_LITE_MAX_MESSAGES;
 	});
 
-	it("message limit preserves session header inside branchEntries", () => {
+	it("flash tier respects PI_FLOW_FLASH_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FLASH_MAX_MESSAGES = "7";
+		const entries = Array.from({ length: 15 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(9); // header + context map + 7
+		delete process.env.PI_FLOW_FLASH_MAX_MESSAGES;
+	});
+
+	it("full tier respects PI_FLOW_FULL_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FULL_MAX_MESSAGES = "9";
+		const entries = Array.from({ length: 20 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(11); // header + context map + 9
+		delete process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	});
+
+	it("flash tier strips toolResult content to placeholder", () => {
+		const longText = "a".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "bash",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).not.toContain("a".repeat(10));
+		expect(snapshot).toContain("[toolResult: bash]");
+	});
+
+	it("flash tier strips tool content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "tool",
+					toolCallId: "tc-1",
+					content: "short",
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).not.toContain("short");
+		expect(snapshot).toContain("[tool result omitted]");
+	});
+
+	it("full tier strips toolResult content to placeholder", () => {
+		const longText = "b".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "trace",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		expect(snapshot).not.toContain("b".repeat(10));
+		expect(snapshot).toContain("[toolResult: trace]");
+	});
+
+	it("lite tier significantly reduces snapshot size", () => {
+		const entries = Array.from({ length: 40 }, (_, i) => ({
+			type: "message",
+			message: {
+				role: i % 2 === 0 ? ("user" as const) : ("toolResult" as const),
+				content:
+					i % 2 === 0
+						? `user message ${i}`
+						: [{ type: "text" as const, text: "x".repeat(1000) }],
+			},
+		}));
+		const fullSnapshot = buildCore2Snapshot(makeSource(entries));
+		const liteSnapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(fullSnapshot!.length).toBeGreaterThan(liteSnapshot!.length * 2);
+	});
+
+	it("tier compression runs after sanitize and compaction", () => {
+		const entries = [
+			{ type: "model_change", model: "kimi" },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: "output" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("model_change");
+		expect(snapshot).not.toContain("output");
+		expect(snapshot).toContain("[toolResult result omitted]");
+	});
+
+	it("lite limit preserves session header inside branchEntries", () => {
 		const entries: unknown[] = [
 			{ type: "session", id: "test-session", version: 1 },
-			...Array.from({ length: 100 }, (_, i) => ({
+			...Array.from({ length: 50 }, (_, i) => ({
 				type: "message" as const,
 				message: { role: "user" as const, content: `msg-${i}` },
 			})),
@@ -764,12 +862,12 @@ describe("buildCore2Snapshot — tier compression", () => {
 			getHeader: () => ({ version: 1, id: "test-session" }),
 			getBranch: () => entries,
 		};
-		const snapshot = buildCore2Snapshot(source);
+		const snapshot = buildCore2Snapshot(source, { tier: "lite" });
 		const parsed = parseSnapshot(snapshot);
-		// Header inside branch + context map + 80 messages = 82 total
-		expect(parsed).toHaveLength(82);
+		// Header inside branch + context map + 30 messages = 32 total
+		expect(parsed).toHaveLength(32);
 		expect(parsed[0]).toMatchObject({ type: "session", id: "test-session" });
-		expect(snapshot).toContain("msg-99");
+		expect(snapshot).toContain("msg-49");
 		expect(snapshot).toContain("msg-20");
 		expect(snapshot).not.toContain("msg-19");
 	});

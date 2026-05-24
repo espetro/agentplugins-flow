@@ -108,6 +108,7 @@ export function buildCore2Snapshot(
 		processedEntry = maybeStripCompaction(processedEntry);
 		if (!processedEntry) continue;
 
+		processedEntry = compressSnapshotEntry(processedEntry, options?.tier);
 		processedEntry = truncateStandaloneBashResult(processedEntry);
 
 		if (options?.activeToolCallId) {
@@ -118,7 +119,7 @@ export function buildCore2Snapshot(
 		processedEntries.push(processedEntry);
 	}
 
-	const finalEntries = applyMessageLimit(processedEntries);
+	const finalEntries = applyMessageLimit(processedEntries, options?.tier);
 	const entriesWithMap = insertContextMap(finalEntries);
 
 	for (const entry of entriesWithMap) {
@@ -432,20 +433,60 @@ function truncateStandaloneBashResult(entry: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// Unified context message limits
+// Tier-based context compression
 // ---------------------------------------------------------------------------
 
-const DEFAULT_MAX_MESSAGES = 80;
+const DEFAULT_LITE_MAX_MESSAGES = 30;
+const DEFAULT_FLASH_MAX_MESSAGES = 50;
+const DEFAULT_FULL_MAX_MESSAGES = 80;
 
-function getTierMaxMessages(): number {
-	const env = process.env.PI_FLOW_MAX_MESSAGES;
-	if (!env) return DEFAULT_MAX_MESSAGES;
+function getTierMaxMessages(tier: FlowTier | undefined): number {
+	if (!tier) return Number.MAX_SAFE_INTEGER;
+	const env =
+		tier === "lite"
+			? process.env.PI_FLOW_LITE_MAX_MESSAGES
+			: tier === "flash"
+				? process.env.PI_FLOW_FLASH_MAX_MESSAGES
+				: process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	const defaultVal =
+		tier === "lite"
+			? DEFAULT_LITE_MAX_MESSAGES
+			: tier === "flash"
+				? DEFAULT_FLASH_MAX_MESSAGES
+				: DEFAULT_FULL_MAX_MESSAGES;
+	if (!env) return defaultVal;
 	const n = Number(env);
-	return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_MESSAGES;
+	return Number.isFinite(n) && n > 0 ? n : defaultVal;
 }
 
 /**
- * Apply array-level message limit: keep only the last N messages.
+ * Compress a single snapshot entry based on tier.
+ *
+ * All tiers strip tool/toolResult content to placeholders (e.g. [toolResult: bash])
+ * so the child flow sees what tools were used without receiving full verbatim
+ * output, keeping the snapshot compact and focused on conversation history.
+ */
+function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unknown {
+	if (!tier) return entry;
+	if (!entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") {
+		return entry;
+	}
+	const msg = { ...(e.message as Record<string, unknown>) };
+	const role = msg.role;
+	if (role !== "tool" && role !== "toolResult") {
+		return entry;
+	}
+
+	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
+	msg.content = placeholder;
+	return { ...e, message: msg };
+}
+
+/**
+ * Apply array-level message limit based on tier: keep only the last N messages.
  * Header/session entries at the start of the branch are preserved; only
  * `type: "message"` entries count toward the limit.
  */
@@ -465,9 +506,8 @@ function insertContextMap(entries: unknown[]): unknown[] {
 	];
 }
 
-function applyMessageLimit(entries: unknown[]): unknown[] {
-	const max = getTierMaxMessages();
-	if (max >= Number.MAX_SAFE_INTEGER) return entries;
+function applyMessageLimit(entries: unknown[], tier: FlowTier | undefined): unknown[] {
+	const max = getTierMaxMessages(tier);
 
 	// Extract leading header/session entries so they survive the slice
 	let headerEnd = 0;

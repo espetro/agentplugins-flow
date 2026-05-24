@@ -189,11 +189,12 @@ describe("flow tool execute", () => {
 		expect(snapshot).toContain("Keep this product requirement in mind as you work through /src/product.ts");
 		expect(snapshot).toContain("Normal assistant context with implementation details and code examples and a file reference to /src/index.ts for context.");
 		expect(snapshot).toContain("bash-call-1");
-		expect(snapshot).toContain("normal bash output");
+		expect(snapshot).toContain("[toolResult: bash]");
 		expect(snapshot).toContain("Implementation summary after transition");
 		expect(snapshot).toContain("flow-call-1");
 		expect(snapshot).toContain('"name":"flow"');
-		expect(snapshot).toContain("prior flow result should be inherited");
+		// Core-2 compresses tool results for all tiers.
+		expect(snapshot).toContain("[toolResult: flow]");
 		expect(snapshot).toContain("Current request should be inherited from /src/config.ts and applied consistently");
 		// Core-2 strips reasoning/thinking fields and blocks.
 		expect(snapshot).not.toContain("SECRET_THINKING_FIELD");
@@ -236,7 +237,7 @@ describe("flow tool execute", () => {
 		const unchangedTool = { type: "message", message: { role: "toolResult", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }], timestamp: 5 } };
 		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project" } };
 		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }] } };
-		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "Unchanged tool result" }] } });
+		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: "[toolResult result omitted]" } });
 		const sessionBranch = [unchangedUser, unchangedAssistant, changedAssistant, droppedSystem, unchangedTool];
 
 		const tool = pi.getTool("flow");
@@ -389,7 +390,8 @@ describe("flow tool execute", () => {
 		expect(snapshot).toContain("Original requirement defined in /src/requirements.md for reference");
 		expect(snapshot).toContain("Text before transition.");
 		expect(snapshot).toContain("Text after transition — [debug] completed.");
-		expect(snapshot).toContain("FLOW_RESULT_PAYLOAD");
+		// Core-2 compresses tool results for all tiers.
+		expect(snapshot).toContain("[toolResult result omitted]");
 		expect(snapshot).toContain("flow-call-2");
 		expect(snapshot).toContain('"name":"flow"');
 		expect(snapshot).toContain("Current request should be inherited");
