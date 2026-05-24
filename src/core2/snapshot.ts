@@ -23,6 +23,30 @@ export interface BuildCore2SnapshotOptions {
 	tier?: FlowTier;
 }
 
+/** Synthetic system message providing the context architecture map. */
+const CONTEXT_MAP_ENTRY = {
+	type: "message",
+	message: {
+		role: "system",
+		content: `   ┌─────────────────────────────┐
+   │  [SHARED CONTEXT]           │
+   │  Inherited conversation     │
+   │  history. Situational       │
+   │  awareness only.            │
+   │                             │
+   │  Do NOT reply to anything   │
+   │  above this line.           │
+   ├─────────────────────────────┤  ◀ <context-seal>
+   │  [YOUR MISSION]             │
+   │  <activation> · role, tier  │
+   │  <directive>  · rules       │
+   │  <mission>    · intent      │
+   │                             │
+   │  Execute from here.         │
+   └─────────────────────────────┘`,
+	},
+};
+
 export function buildCore2Snapshot(
 	sessionManager: SessionSnapshotSource,
 	options?: BuildCore2SnapshotOptions,
@@ -94,8 +118,9 @@ export function buildCore2Snapshot(
 	}
 
 	const finalEntries = applyMessageLimit(processedEntries, options?.tier);
+	const entriesWithMap = insertContextMap(finalEntries);
 
-	for (const entry of finalEntries) {
+	for (const entry of entriesWithMap) {
 		const line = JSON.stringify(entry);
 		// Strip batch read/write/edit bodies from tool result messages
 		const processed = maybeStripBatchBodies(line);
@@ -258,27 +283,14 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 // Tier-based context compression
 // ---------------------------------------------------------------------------
 
-const DEFAULT_LITE_MAX_MESSAGES = 30;
-const DEFAULT_FLASH_MAX_MESSAGES = 50;
-const DEFAULT_FULL_MAX_MESSAGES = 80;
+const DEFAULT_MAX_MESSAGES = 80;
 
 function getTierMaxMessages(tier: FlowTier | undefined): number {
 	if (!tier) return Number.MAX_SAFE_INTEGER;
-	const env =
-		tier === "lite"
-			? process.env.PI_FLOW_LITE_MAX_MESSAGES
-			: tier === "flash"
-				? process.env.PI_FLOW_FLASH_MAX_MESSAGES
-				: process.env.PI_FLOW_FULL_MAX_MESSAGES;
-	const defaultVal =
-		tier === "lite"
-			? DEFAULT_LITE_MAX_MESSAGES
-			: tier === "flash"
-				? DEFAULT_FLASH_MAX_MESSAGES
-				: DEFAULT_FULL_MAX_MESSAGES;
-	if (!env) return defaultVal;
+	const env = process.env.PI_FLOW_MAX_MESSAGES;
+	if (!env) return DEFAULT_MAX_MESSAGES;
 	const n = Number(env);
-	return Number.isFinite(n) && n > 0 ? n : defaultVal;
+	return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_MESSAGES;
 }
 
 /**
@@ -312,6 +324,22 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
  * Header/session entries at the start of the branch are preserved; only
  * `type: "message"` entries count toward the limit.
  */
+function insertContextMap(entries: unknown[]): unknown[] {
+	const insertIndex = entries.findIndex((e) => {
+		if (!e || typeof e !== "object") return false;
+		const type = (e as Record<string, unknown>).type;
+		return type !== "session" && type !== "header";
+	});
+	if (insertIndex === -1) {
+		return [...entries, CONTEXT_MAP_ENTRY];
+	}
+	return [
+		...entries.slice(0, insertIndex),
+		CONTEXT_MAP_ENTRY,
+		...entries.slice(insertIndex),
+	];
+}
+
 function applyMessageLimit(entries: unknown[], tier: FlowTier | undefined): unknown[] {
 	const max = getTierMaxMessages(tier);
 	if (max >= Number.MAX_SAFE_INTEGER) return entries;

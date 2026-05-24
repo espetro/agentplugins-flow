@@ -42,10 +42,11 @@ describe("buildCore2Snapshot — retention", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(3); // header + 2 messages
+		expect(parsed).toHaveLength(4); // header + context map + 2 messages
 		expect(parsed[0]).toMatchObject({ version: 1, id: "test-session" });
-		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "user", content: "Hello" } });
-		expect(parsed[2]).toMatchObject({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Hi" }] } });
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({ type: "message", message: { role: "user", content: "Hello" } });
+		expect(parsed[3]).toMatchObject({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Hi" }] } });
 	});
 
 	it("preserves non-batch tool results verbatim", () => {
@@ -219,7 +220,7 @@ describe("buildCore2Snapshot — chronology", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed.slice(1).map((e: any) => e.message?.id)).toEqual(["1", "2", "3", "4", "5"]);
+		expect(parsed.slice(2).map((e: any) => e.message?.id)).toEqual(["1", "2", "3", "4", "5"]);
 	});
 
 	it("does not drop or reorder messages", () => {
@@ -231,11 +232,12 @@ describe("buildCore2Snapshot — chronology", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(5);
-		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system" } });
-		expect(parsed[2]).toMatchObject({ type: "message", message: { role: "user" } });
-		expect(parsed[3]).toMatchObject({ type: "message", message: { role: "assistant" } });
-		expect(parsed[4]).toMatchObject({ type: "message", message: { role: "tool" } });
+		expect(parsed).toHaveLength(6);
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({ type: "message", message: { role: "system" } });
+		expect(parsed[3]).toMatchObject({ type: "message", message: { role: "user" } });
+		expect(parsed[4]).toMatchObject({ type: "message", message: { role: "assistant" } });
+		expect(parsed[5]).toMatchObject({ type: "message", message: { role: "tool" } });
 	});
 });
 
@@ -465,9 +467,10 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		};
 		const snapshot = buildCore2Snapshot(source);
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(2);
+		expect(parsed).toHaveLength(3);
 		expect(parsed[0]).toMatchObject({ version: 1, type: "session" });
 		expect(parsed[0]).toHaveProperty("id", "session-1");
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
 	});
 
 	it("strips activeToolCallId matching tool call and omits empty assistant message", () => {
@@ -485,8 +488,9 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { activeToolCallId: "active-call-1" });
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(2); // header + 1 message (user)
-		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "user", content: "Hi" } });
+		expect(parsed).toHaveLength(3); // header + context map + 1 message (user)
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({ type: "message", message: { role: "user", content: "Hi" } });
 	});
 
 	it("keeps assistant message when it contains other substance/tool calls after filtering", () => {
@@ -504,9 +508,10 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { activeToolCallId: "active-call-1" });
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(2); // header + assistant message
-		expect(parsed[1].message.content).toHaveLength(1);
-		expect(parsed[1].message.content[0]).toMatchObject({ type: "text", text: "some text" });
+		expect(parsed).toHaveLength(3); // header + context map + assistant message
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2].message.content).toHaveLength(1);
+		expect(parsed[2].message.content[0]).toMatchObject({ type: "text", text: "some text" });
 	});
 });
 
@@ -522,8 +527,9 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(2); // header + 1 message
-		expect(parsed[1]).toMatchObject({ type: "message", message: { content: "Keep" } });
+		expect(parsed).toHaveLength(3); // header + context map + 1 message
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({ type: "message", message: { content: "Keep" } });
 		expect(snapshot).not.toContain("compaction_trigger");
 	});
 
@@ -538,8 +544,9 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(2); // header + 1 message
-		expect(parsed[1]).toMatchObject({
+		expect(parsed).toHaveLength(3); // header + context map + 1 message
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({
 			type: "message",
 			message: {
 				role: "system",
@@ -558,7 +565,8 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
-		expect(parsed[1]).toMatchObject({
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+		expect(parsed[2]).toMatchObject({
 			type: "message",
 			message: {
 				content: "[Context Compacted] Parent context was compacted. (500 tokens summarized)",
@@ -607,8 +615,11 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		// Header (first entry) should not contain timestamp
 		expect(parsed[0]).not.toHaveProperty("timestamp");
 
+		// Context map
+		expect(parsed[1]).toMatchObject({ type: "message", message: { role: "system", content: expect.stringContaining("[SHARED CONTEXT]") } });
+
 		// Message 1 checks
-		const msg1 = parsed[1] as any;
+		const msg1 = parsed[2] as any;
 		expect(msg1).not.toHaveProperty("timestamp");
 		expect(msg1.message).not.toHaveProperty("api");
 		expect(msg1.message).not.toHaveProperty("provider");
@@ -628,7 +639,7 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(msg1.message.content[0].text).toBe("Hello");
 
 		// Message 2 checks
-		const msg2 = parsed[2] as any;
+		const msg2 = parsed[3] as any;
 		expect(msg2).not.toHaveProperty("timestamp");
 		expect(msg2.message).not.toHaveProperty("details");
 		expect(msg2.message).not.toHaveProperty("isError");
@@ -675,82 +686,38 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).toContain("[tool result omitted]");
 	});
 
-	it("lite tier keeps only the last 30 messages", () => {
-		const entries = Array.from({ length: 50 }, (_, i) => ({
+	it("all tiers keep only the last 80 messages", () => {
+		const entries = Array.from({ length: 100 }, (_, i) => ({
 			type: "message",
 			message: { role: "user" as const, content: `msg-${i}` },
 		}));
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
 		const parsed = parseSnapshot(snapshot);
-		// header + 30 messages = 31 total
-		expect(parsed).toHaveLength(31);
-		expect(snapshot).toContain("msg-49");
-		expect(snapshot).toContain("msg-20");
-		expect(snapshot).not.toContain("msg-19");
-	});
-
-	it("flash tier keeps only the last 50 messages", () => {
-		const entries = Array.from({ length: 70 }, (_, i) => ({
-			type: "message",
-			message: { role: "user" as const, content: `msg-${i}` },
-		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		const parsed = parseSnapshot(snapshot);
-		// header + 50 messages = 51 total
-		expect(parsed).toHaveLength(51);
-		expect(snapshot).toContain("msg-69");
-		expect(snapshot).toContain("msg-20");
-		expect(snapshot).not.toContain("msg-19");
-	});
-
-	it("full tier keeps only the last 80 messages", () => {
-		const entries = Array.from({ length: 100 }, (_, i) => ({
-			type: "message",
-			message: { role: "user" as const, content: `msg-${i}` },
-		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
-		const parsed = parseSnapshot(snapshot);
-		// header + 80 messages = 81 total
-		expect(parsed).toHaveLength(81);
+		// header + context map + 80 messages = 82 total
+		expect(parsed).toHaveLength(82);
 		expect(snapshot).toContain("msg-99");
 		expect(snapshot).toContain("msg-20");
 		expect(snapshot).not.toContain("msg-19");
 	});
 
-	it("lite tier respects PI_FLOW_LITE_MAX_MESSAGES env override", () => {
-		process.env.PI_FLOW_LITE_MAX_MESSAGES = "5";
-		const entries = Array.from({ length: 10 }, (_, i) => ({
-			type: "message",
-			message: { role: "user" as const, content: `msg-${i}` },
-		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(6); // header + 5
-		delete process.env.PI_FLOW_LITE_MAX_MESSAGES;
-	});
-
-	it("flash tier respects PI_FLOW_FLASH_MAX_MESSAGES env override", () => {
-		process.env.PI_FLOW_FLASH_MAX_MESSAGES = "7";
-		const entries = Array.from({ length: 15 }, (_, i) => ({
-			type: "message",
-			message: { role: "user" as const, content: `msg-${i}` },
-		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(8); // header + 7
-		delete process.env.PI_FLOW_FLASH_MAX_MESSAGES;
-	});
-
-	it("full tier respects PI_FLOW_FULL_MAX_MESSAGES env override", () => {
-		process.env.PI_FLOW_FULL_MAX_MESSAGES = "9";
-		const entries = Array.from({ length: 20 }, (_, i) => ({
-			type: "message",
-			message: { role: "user" as const, content: `msg-${i}` },
-		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
-		const parsed = parseSnapshot(snapshot);
-		expect(parsed).toHaveLength(10); // header + 9
-		delete process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	it("all tiers respect PI_FLOW_MAX_MESSAGES env override", () => {
+		const previous = process.env.PI_FLOW_MAX_MESSAGES;
+		process.env.PI_FLOW_MAX_MESSAGES = "5";
+		try {
+			const entries = Array.from({ length: 10 }, (_, i) => ({
+				type: "message",
+				message: { role: "user" as const, content: `msg-${i}` },
+			}));
+			const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+			const parsed = parseSnapshot(snapshot);
+			expect(parsed).toHaveLength(7); // header + context map + 5
+		} finally {
+			if (previous === undefined) {
+				delete process.env.PI_FLOW_MAX_MESSAGES;
+			} else {
+				process.env.PI_FLOW_MAX_MESSAGES = previous;
+			}
+		}
 	});
 
 	it("flash tier strips toolResult content to placeholder", () => {
@@ -839,10 +806,10 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).toContain("[toolResult result omitted]");
 	});
 
-	it("lite limit preserves session header inside branchEntries", () => {
+	it("message limit preserves session header inside branchEntries", () => {
 		const entries: unknown[] = [
 			{ type: "session", id: "test-session", version: 1 },
-			...Array.from({ length: 50 }, (_, i) => ({
+			...Array.from({ length: 100 }, (_, i) => ({
 				type: "message" as const,
 				message: { role: "user" as const, content: `msg-${i}` },
 			})),
@@ -853,10 +820,10 @@ describe("buildCore2Snapshot — tier compression", () => {
 		};
 		const snapshot = buildCore2Snapshot(source, { tier: "lite" });
 		const parsed = parseSnapshot(snapshot);
-		// Header inside branch + 30 messages = 31 total
-		expect(parsed).toHaveLength(31);
+		// Header inside branch + context map + 80 messages = 82 total
+		expect(parsed).toHaveLength(82);
 		expect(parsed[0]).toMatchObject({ type: "session", id: "test-session" });
-		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-99");
 		expect(snapshot).toContain("msg-20");
 		expect(snapshot).not.toContain("msg-19");
 	});
