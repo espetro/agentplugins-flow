@@ -237,7 +237,7 @@ describe("flow tool execute", () => {
 		const unchangedTool = { type: "message", message: { role: "toolResult", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }], timestamp: 5 } };
 		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project" } };
 		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }] } };
-		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: "[toolResult result omitted]" } });
+		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "[toolResult result omitted]" }] } });
 		const sessionBranch = [unchangedUser, unchangedAssistant, changedAssistant, droppedSystem, unchangedTool];
 
 		const tool = pi.getTool("flow");
@@ -391,7 +391,7 @@ describe("flow tool execute", () => {
 		expect(snapshot).toContain("Text before transition.");
 		expect(snapshot).toContain("Text after transition — [debug] completed.");
 		// Core-2 compresses tool results for all tiers.
-		expect(snapshot).toContain("[toolResult result omitted]");
+		expect(snapshot).toContain('[{"type":"text","text":"[toolResult result omitted]"}]');
 		expect(snapshot).toContain("flow-call-2");
 		expect(snapshot).toContain('"name":"flow"');
 		expect(snapshot).toContain("Current request should be inherited");

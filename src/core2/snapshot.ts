@@ -315,7 +315,9 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
 
 	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
 	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
-	msg.content = placeholder;
+	// Preserve array shape so downstream consumers that call .content.filter() don't crash.
+	// A text block is the canonical form for tool message content.
+	msg.content = [{ type: "text", text: placeholder }];
 	return { ...e, message: msg };
 }
 

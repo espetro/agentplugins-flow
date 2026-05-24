@@ -683,7 +683,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
 		expect(snapshot).not.toContain("tool output text");
-		expect(snapshot).toContain("[tool result omitted]");
+		expect(snapshot).toContain('[{"type":"text","text":"[tool result omitted]"}]');
 	});
 
 	it("all tiers keep only the last 80 messages", () => {
@@ -751,7 +751,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
 		expect(snapshot).not.toContain("short");
-		expect(snapshot).toContain("[tool result omitted]");
+		expect(snapshot).toContain('[{"type":"text","text":"[tool result omitted]"}]');
 	});
 
 	it("full tier strips toolResult content to placeholder", () => {
@@ -803,7 +803,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
 		expect(snapshot).not.toContain("model_change");
 		expect(snapshot).not.toContain("output");
-		expect(snapshot).toContain("[toolResult result omitted]");
+		expect(snapshot).toContain('[{"type":"text","text":"[toolResult result omitted]"}]');
 	});
 
 	it("message limit preserves session header inside branchEntries", () => {
