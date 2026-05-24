@@ -307,6 +307,8 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_FLOW_MAX_CONCURRENCY` | Override the default maximum concurrent flows (default 4, capped to CPU count). |
 | `PI_FLOW_IDLE_WAKEUP_MS` | Override the idle wake-up threshold in milliseconds (default 600000 = 10 minutes). |
 | `PI_FLOW_TOOL_OPTIMIZE` | Set to `1` to enable tool-call optimization. |
+| `PI_FLOW_TOOLS_TRACE` | Set to `1` or `0` to enable/disable the `trace` tool (default: `1`). |
+| `PI_FLOW_TOOLS_BATCH_READ` | Set to `1` or `0` to enable/disable the `batch_read` tool (default: follows `PI_FLOW_TOOL_OPTIMIZE`). |
 | `PI_FLOW_COMPLEXITY` | Override the default child-flow complexity (`snap`, `simple`, `moderate`, `complex`, `intricate`). |
 | `PI_TUI_MODE` | Set to `1` to route `logWarn`/`logError` to a log file instead of stderr, preventing on-screen text flash. Detected automatically when stdout is a TTY or `PI_FLOW_DEPTH > 0`. |
 | `PI_FLOW_LOG_FILE` | Override the default log file path (`$TMPDIR/pi-agent-flow.log`) for TUI-safe logging. Set to `/dev/null` to suppress entirely. |
@@ -345,6 +347,8 @@ Control runtime behavior via slash commands, CLI flags, environment variables, o
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
 | `body` | `/flow:settings body <lite\|full>` — Collapsed body verbosity. `lite` (default) = aim + cmd only; `full` = aim + cmd + msg. |
 | `tool-optimize` | `/flow:settings tool-optimize on\|off` — Enable/disable tool-call optimization. |
+| `trace` | `/flow:settings trace on\|off` — Enable/disable the `trace` tool. |
+| `batch-read` | `/flow:settings batch-read on\|off` — Enable/disable the `batch_read` tool. |
 | `structured-output` | `/flow:settings structured-output on\|off` — Enable/disable structured JSON output from flows. |
 | `complexity` | `/flow:settings complexity <snap\|simple\|moderate\|complex\|intricate>` — Set the child-flow complexity (budget + review). |
 | `max-concurrency` | `/flow:settings max-concurrency <n>` — Set maximum concurrent flows. |
@@ -362,6 +366,8 @@ Pass these when starting `pi`:
 | `--no-strategic-hint` | Disable adaptive `[Directive: ...]` hints after tool results. |
 | `--no-animation` | Disable all flow animation (instant render). |
 | `--no-glitch` | Disable glitch/scramble effect. |
+| `--tools-trace` | Enable the `trace` tool (default: `true`). |
+| `--tools-batch-read` | Enable the `batch_read` tool (default: follows `tool-optimize`). |
 
 ### Resolution priority
 
@@ -396,7 +402,11 @@ When the same setting is defined in multiple places, the value is resolved as:
     "structuredOutput": true,
     "bodyVerbosity": "lite",
     "complexity": "moderate",
-    "maxConcurrency": 3
+    "maxConcurrency": 3,
+    "tools": {
+      "trace": true,
+      "batchRead": false
+    }
   }
 }
 ```

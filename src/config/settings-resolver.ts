@@ -32,6 +32,8 @@ const PI_FLOW_NO_STEERING_ENV = "PI_FLOW_NO_STEERING";
 const PI_FLOW_NO_STRATEGIC_HINT_ENV = "PI_FLOW_NO_STRATEGIC_HINT";
 const PI_FLOW_NO_ANIMATION_ENV = "PI_FLOW_NO_ANIMATION";
 const PI_FLOW_NO_GLITCH_ENV = "PI_FLOW_NO_GLITCH";
+const PI_FLOW_TOOLS_TRACE_ENV = "PI_FLOW_TOOLS_TRACE";
+const PI_FLOW_TOOLS_BATCH_READ_ENV = "PI_FLOW_TOOLS_BATCH_READ";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,6 +56,8 @@ export interface ResolvedSettings {
 	activeRuntimeFlowMode: string | undefined;
 	bodyVerbosity: "lite" | "full";
 	debugMode: boolean;
+	traceEnabled: boolean;
+	batchReadEnabled: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +340,42 @@ export function resolveSettings(
 		if (parsed !== null) debugMode = parsed;
 	}
 
+	// Resolve traceEnabled: CLI flag > env var > settings.json > default (default: true)
+	let traceEnabled = true;
+	if (typeof flowSettings.tools?.trace === "boolean") {
+		traceEnabled = flowSettings.tools.trace;
+	}
+	const envTrace = process.env[PI_FLOW_TOOLS_TRACE_ENV];
+	if (envTrace !== undefined) {
+		const parsed = parseBoolean(envTrace);
+		if (parsed !== null) traceEnabled = parsed;
+	}
+	const cliTrace = pi.getFlag("tools-trace");
+	if (typeof cliTrace === "boolean") {
+		traceEnabled = cliTrace;
+	} else if (typeof cliTrace === "string") {
+		const parsed = parseBoolean(cliTrace);
+		if (parsed !== null) traceEnabled = parsed;
+	}
+
+	// Resolve batchReadEnabled: CLI flag > env var > settings.json > default (default: follows toolOptimize)
+	let batchReadEnabled = toolOptimize;
+	if (typeof flowSettings.tools?.batchRead === "boolean") {
+		batchReadEnabled = flowSettings.tools.batchRead;
+	}
+	const envBatchRead = process.env[PI_FLOW_TOOLS_BATCH_READ_ENV];
+	if (envBatchRead !== undefined) {
+		const parsed = parseBoolean(envBatchRead);
+		if (parsed !== null) batchReadEnabled = parsed;
+	}
+	const cliBatchRead = pi.getFlag("tools-batch-read");
+	if (typeof cliBatchRead === "boolean") {
+		batchReadEnabled = cliBatchRead;
+	} else if (typeof cliBatchRead === "string") {
+		const parsed = parseBoolean(cliBatchRead);
+		if (parsed !== null) batchReadEnabled = parsed;
+	}
+
 	return {
 		toolOptimize,
 		structuredOutput,
@@ -353,6 +393,8 @@ export function resolveSettings(
 		activeRuntimeFlowMode,
 		bodyVerbosity,
 		debugMode,
+		traceEnabled,
+		batchReadEnabled,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
 }

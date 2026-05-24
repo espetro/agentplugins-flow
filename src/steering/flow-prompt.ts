@@ -22,10 +22,32 @@ export interface BeforeAgentStartEvent {
 // Active tools helper
 // ---------------------------------------------------------------------------
 
-export function computeActiveTools(optimize: boolean): string[] {
-	return optimize
-		? ["batch_read", "flow", "trace", "ask_user"]
-		: ["read", "write", "edit", "batch", "bash", "flow", "trace", "ask_user"];
+export function computeActiveTools(
+	optimize: boolean,
+	traceEnabled: boolean = true,
+	batchReadEnabled: boolean = optimize,
+): string[] {
+	if (optimize) {
+		const tools: string[] = [];
+		if (batchReadEnabled) {
+			tools.push("batch_read");
+		}
+		tools.push("flow");
+		if (traceEnabled) {
+			tools.push("trace");
+		}
+		tools.push("ask_user");
+		return tools;
+	}
+	const tools: string[] = ["read", "write", "edit", "batch", "bash", "flow"];
+	if (traceEnabled) {
+		tools.push("trace");
+	}
+	if (batchReadEnabled) {
+		tools.push("batch_read");
+	}
+	tools.push("ask_user");
+	return tools;
 }
 
 // ---------------------------------------------------------------------------

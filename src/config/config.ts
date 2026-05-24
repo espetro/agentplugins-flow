@@ -37,6 +37,13 @@ export interface FlowSettings {
 	/** Whether to write the full child flow activation prompt to a temp file on every spawn. Default: false. */
 	debugMode?: boolean;
 
+	tools?: {
+		/** Enable the trace tool. Default: true. */
+		trace?: boolean;
+		/** Enable the batch_read tool. Default: follows toolOptimize. */
+		batchRead?: boolean;
+	};
+
 	/** Default child-flow complexity. Default: "moderate" (600s, 1x audit). */
 	complexity?: Complexity;
 
@@ -330,6 +337,18 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 	// Parse debug mode setting
 	if (typeof obj.debugMode === "boolean") {
 		result.debugMode = obj.debugMode;
+	}
+
+	// Parse nested tools settings
+	if (isPlainObject(obj.tools)) {
+		const tools: FlowSettings["tools"] = {};
+		if (typeof obj.tools.trace === "boolean") {
+			tools.trace = obj.tools.trace;
+		}
+		if (typeof obj.tools.batchRead === "boolean") {
+			tools.batchRead = obj.tools.batchRead;
+		}
+		result.tools = tools;
 	}
 
 	return result;

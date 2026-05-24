@@ -424,6 +424,36 @@ describe("loadFlowSettings", () => {
 		expect(result).toEqual({});
 	});
 
+	it("reads tools.trace setting", () => {
+		writeProjectSettings(tmpDir, {
+			flowSettings: {
+				tools: { trace: false },
+			},
+		});
+		const result = loadFlowSettings(tmpDir);
+		expect(result).toEqual({ tools: { trace: false } });
+	});
+
+	it("reads tools.batchRead setting", () => {
+		writeProjectSettings(tmpDir, {
+			flowSettings: {
+				tools: { batchRead: true },
+			},
+		});
+		const result = loadFlowSettings(tmpDir);
+		expect(result).toEqual({ tools: { batchRead: true } });
+	});
+
+	it("ignores invalid tools settings", () => {
+		writeProjectSettings(tmpDir, {
+			flowSettings: {
+				tools: { trace: "off", batchRead: 1, extra: true },
+			},
+		});
+		const result = loadFlowSettings(tmpDir);
+		expect(result).toEqual({ tools: {} });
+	});
+
 	it("gracefully handles invalid JSON", () => {
 		const dir = path.join(tmpDir, ".pi", "agent");
 		fs.mkdirSync(dir, { recursive: true });

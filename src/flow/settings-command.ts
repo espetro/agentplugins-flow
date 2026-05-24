@@ -297,7 +297,7 @@ function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSelectIte
 		{
 			value: "tools",
 			label: "Tool Settings",
-			description: `tool-optimize: ${toolOptimize ? "on" : "off"}, structured-output: ${structuredOutput ? "on" : "off"}`,
+			description: `tool-optimize: ${toolOptimize ? "on" : "off"}, structured-output: ${structuredOutput ? "on" : "off"}, trace: ${(settings.tools?.trace ?? true) ? "on" : "off"}, batch-read: ${(settings.tools?.batchRead ?? toolOptimize) ? "on" : "off"}`,
 			tooltip: "Configure tool optimization and structured output",
 		},
 		{
@@ -404,6 +404,20 @@ function getToolItems(settings: FlowSettings): SettingItem[] {
 			label: "structured-output",
 			description: "Structured JSON output from flows",
 			currentValue: (settings.structuredOutput ?? true) ? "on" : "off",
+			values: ["on", "off"],
+		},
+		{
+			id: "tools.trace",
+			label: "trace",
+			description: "Enable the trace tool",
+			currentValue: (settings.tools?.trace ?? true) ? "on" : "off",
+			values: ["on", "off"],
+		},
+		{
+			id: "tools.batchRead",
+			label: "batch-read",
+			description: "Enable the batch_read tool",
+			currentValue: (settings.tools?.batchRead ?? settings.toolOptimize ?? true) ? "on" : "off",
 			values: ["on", "off"],
 		},
 	];
@@ -650,7 +664,7 @@ function buildModelPickerSubmenu(
 export function setupSettingsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("flow:settings", {
 		description:
-			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
+			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, trace <on|off>, batch-read <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (!ctx.ui) {
 				return;
@@ -802,6 +816,10 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 											writeFlowSetting(cwd, "toolOptimize", value === "on");
 										} else if (id === "structuredOutput") {
 											writeFlowSetting(cwd, "structuredOutput", value === "on");
+										} else if (id === "tools.trace") {
+											writeFlowSetting(cwd, "tools.trace", value === "on");
+										} else if (id === "tools.batchRead") {
+											writeFlowSetting(cwd, "tools.batchRead", value === "on");
 										}
 										rebuild();
 										tui.requestRender();
@@ -1003,6 +1021,26 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 					ctx.ui.notify?.(`structuredOutput = ${parsed}`, "info");
 					break;
 				}
+				case "trace": {
+					const parsed = parseOnOff(value);
+					if (parsed === null) {
+						ctx.ui.notify?.("Usage: /flow:settings trace <on|off>", "error");
+						return;
+					}
+					writeFlowSetting(cwd, "tools.trace", parsed);
+					ctx.ui.notify?.(`tools.trace = ${parsed}`, "info");
+					break;
+				}
+				case "batch-read": {
+					const parsed = parseOnOff(value);
+					if (parsed === null) {
+						ctx.ui.notify?.("Usage: /flow:settings batch-read <on|off>", "error");
+						return;
+					}
+					writeFlowSetting(cwd, "tools.batchRead", parsed);
+					ctx.ui.notify?.(`tools.batchRead = ${parsed}`, "info");
+					break;
+				}
 							case "body": {
 								if (args[0] === "lite" || args[0] === "full") {
 									writeFlowSetting(cwd, "bodyVerbosity", args[0]);
@@ -1092,6 +1130,8 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 						`askUser.enabled: ${currentSettings.askUser?.enabled ?? false}`,
 						`askUser.timeout: ${currentSettings.askUser?.timeout ?? 300}`,
 						`debugMode: ${currentSettings.debugMode ?? false}`,
+						`tools.trace: ${currentSettings.tools?.trace ?? true}`,
+						`tools.batchRead: ${currentSettings.tools?.batchRead ?? currentSettings.toolOptimize ?? true}`,
 					];
 					if (loop) {
 						lines.push("");
@@ -1107,7 +1147,7 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 				}
 				default: {
 					ctx.ui.notify?.(
-						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|reset|show}",
+						"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
 						"error",
 					);
 				}

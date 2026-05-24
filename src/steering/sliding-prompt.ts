@@ -20,11 +20,11 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
 	`primary_flow:\n` +
-	`  available_tools: [trace, flow, ask_user]\n` +
+	`  available_tools: [trace, flow, scout, build, debug, audit, craft, ask_user]\n` +
 	`  output_format: "Zero preamble or filler. Be direct in answer or tool call."\n` +
 	`execution_rules:\n` +
 	`  mindset:\n` +
-	`    - "Answer directly if possible. Otherwise: for short, quick validations use trace tool; for parallel discovery and validation with multiple topics use flow | scout tool; otherwise investigate, plan, then transition."\n` +
+	`    - "Answer directly if possible. Otherwise: use flow | scout tool first for gathering full architectural context; reserve trace tool for single-file verbatim reads or validation after scouting; otherwise investigate, plan, then transition."\n` +
 	`  completeness:\n` +
 	`    - "Zero omissions. Process every item in any given range or list sequentially (e.g., P2 → P6). No placeholders, no truncation, no half-finished tasks. Complete the execution fully."\n` +
 	`collaboration_ask_user:\n` +

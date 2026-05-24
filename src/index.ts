@@ -320,6 +320,14 @@ export default function (pi: ExtensionAPI) {
 		description: "Write full child flow activation prompt to a temp file on every spawn.",
 		type: "boolean",
 	});
+	pi.registerFlag("tools-trace", {
+		description: "Enable the trace tool (default: true).",
+		type: "boolean",
+	});
+	pi.registerFlag("tools-batch-read", {
+		description: "Enable the batch_read tool (default: follows tool-optimize).",
+		type: "boolean",
+	});
 
 	// Wire up bundled notification channel
 	setupNotify(pi);
@@ -351,7 +359,7 @@ export default function (pi: ExtensionAPI) {
 		// Child flows (depth > 0) receive their tools via --tools CLI arg;
 		// overriding them here would strip bash/batch from children.
 		if (currentDepth === 0) {
-			pi.setActiveTools(computeActiveTools(resolved.toolOptimize));
+			pi.setActiveTools(computeActiveTools(resolved.toolOptimize, resolved.traceEnabled, resolved.batchReadEnabled));
 		}
 
 		// Register tools based on depth.
@@ -360,13 +368,13 @@ export default function (pi: ExtensionAPI) {
 		// batch_read is registered at all depths for read-only child operations.
 		// The bashProcessTracker is shared between the batch tool (launches bash ops)
 		// and the batch_bash_poll tool (checks on pending bash ops).
-		if (resolved.toolOptimize) {
+		if (resolved.batchReadEnabled) {
 			pi.registerTool(createBatchReadTool());
-			if (currentDepth > 0) {
-				bashTracker = new BashProcessTracker();
-				pi.registerTool(createBatchTool(bashTracker, resolved.toolOptimize));
-				pi.registerTool(createBatchBashPollTool(bashTracker));
-			}
+		}
+		if (resolved.toolOptimize && currentDepth > 0) {
+			bashTracker = new BashProcessTracker();
+			pi.registerTool(createBatchTool(bashTracker, resolved.toolOptimize));
+			pi.registerTool(createBatchBashPollTool(bashTracker));
 		}
 
 		// Override built-in bash with timed wrapper so the LLM sees execution-time classification.
@@ -395,7 +403,7 @@ export default function (pi: ExtensionAPI) {
 	// Skip for child flows — they get tools from --tools CLI arg.
 	pi.on("turn_start", () => {
 		if (currentDepth > 0 || !resolved) return;
-		pi.setActiveTools(computeActiveTools(resolved.toolOptimize));
+		pi.setActiveTools(computeActiveTools(resolved.toolOptimize, resolved.traceEnabled, resolved.batchReadEnabled));
 		resetDirectiveTracker();
 	});
 
@@ -531,7 +539,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Register the trace tool (available at all depths — quick verbatim reads)
 	pi.registerTool(createTraceTool({
-		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity } : undefined,
+		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity, traceEnabled: resolved.traceEnabled, batchReadEnabled: resolved.batchReadEnabled } : undefined,
 		getDepthConfig: () => depthConfig,
 		getLoadedFlowModelConfigs: () => resolved?.loadedFlowModelConfigs,
 		tierOverrideResolver: getTierOverride,
@@ -714,6 +722,8 @@ export default function (pi: ExtensionAPI) {
 					animationGlitch: resolved.animationGlitch,
 					bodyVerbosity: resolved.bodyVerbosity,
 					debugMode: resolved.debugMode,
+					traceEnabled: resolved.traceEnabled,
+					batchReadEnabled: resolved.batchReadEnabled,
 				}
 			: {
 					toolOptimize: true,
@@ -726,6 +736,8 @@ export default function (pi: ExtensionAPI) {
 					animationGlitch: true,
 					bodyVerbosity: "lite",
 					debugMode: false,
+					traceEnabled: true,
+					batchReadEnabled: true,
 				},
 	};
 

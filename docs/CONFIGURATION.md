@@ -93,6 +93,8 @@ Set flow runtime defaults under `flowSettings`:
 | `--flow-complexity [mode]` | Default child-flow complexity | `moderate` |
 | `--flow-max-concurrency [n]` | Maximum parallel flows | `4` |
 | `--tool-optimize` | Use unified `batch`/`batch_read` | `true` |
+| `--tools-trace` | Enable the `trace` tool | `true` |
+| `--tools-batch-read` | Enable the `batch_read` tool | follows `--tool-optimize` |
 | `--no-steering` | Disable root state steering hint injection | — |
 | `--steering-prompt <text>` | Provide a custom steering prompt (implies `--no-steering` override) | — |
 | `--no-strategic-hint` | Disable adaptive `[Directive: ...]` hints after tool results | — |
@@ -109,6 +111,8 @@ Set flow runtime defaults under `flowSettings`:
 | `PI_FLOW_STACK` | JSON array of ancestor flow names |
 | `PI_FLOW_PREVENT_CYCLES` | `"1"` or `"0"` |
 | `PI_FLOW_TOOL_OPTIMIZE` | `"1"` or `"0"` (overrides default tool optimization) |
+| `PI_FLOW_TOOLS_TRACE` | `"1"` or `"0"` (enable/disable the `trace` tool; default: `1`) |
+| `PI_FLOW_TOOLS_BATCH_READ` | `"1"` or `"0"` (enable/disable the `batch_read` tool; default: follows `PI_FLOW_TOOL_OPTIMIZE`) |
 | `PI_FLOW_COMPLEXITY` | Default child-flow complexity: `snap`, `simple`, `moderate`, `complex`, or `intricate` |
 | `PI_FLOW_MAX_CONCURRENCY` | Maximum parallel flows |
 | `PI_FLOW_SPAWN_COMMAND` | Override the spawn command for exotic runtime environments (e.g. bundled with pkg/nexe) |
@@ -153,6 +157,8 @@ Set flow runtime defaults under `flowSettings`:
 | `animation` | `/flow:settings animation on\|off` — Enable/disable all flow animations. |
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
 | `tool-optimize` | `/flow:settings tool-optimize on\|off` — Enable/disable tool-call optimization. |
+| `trace` | `/flow:settings trace on\|off` — Enable/disable the `trace` tool. |
+| `batch-read` | `/flow:settings batch-read on\|off` — Enable/disable the `batch_read` tool. |
 | `structured-output` | `/flow:settings structured-output on\|off` — Enable/disable structured JSON output from flows. |
 | `complexity` | `/flow:settings complexity <snap\|simple\|moderate\|complex\|intricate>` — Set the child-flow complexity (budget + review). |
 | `max-concurrency` | `/flow:settings max-concurrency <n>` — Set maximum concurrent flows. |

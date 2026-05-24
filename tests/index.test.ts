@@ -1325,6 +1325,8 @@ describe("main agent tool restriction", () => {
 		process.env.PI_FLOW_MAX_DEPTH = "2";
 		delete process.env.PI_FLOW_PREVENT_CYCLES;
 		delete process.env.PI_FLOW_TOOL_OPTIMIZE;
+		delete process.env.PI_FLOW_TOOLS_TRACE;
+		delete process.env.PI_FLOW_TOOLS_BATCH_READ;
 	});
 
 	afterEach(() => {
@@ -1483,6 +1485,62 @@ describe("main agent tool restriction", () => {
 
 		// Neither session_start nor turn_start should call setActiveTools
 		expect(pi.setActiveTools).not.toHaveBeenCalled();
+	});
+
+	it("excludes trace when tools-trace is false", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
+		process.env.PI_FLOW_TOOLS_TRACE = "0";
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		expect(pi.setActiveTools).toHaveBeenCalled();
+		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(calledWith).toEqual(["batch_read", "flow", "ask_user"]);
+		expect(calledWith).not.toContain("trace");
+	});
+
+	it("excludes batch_read when tools-batch-read is false even when optimized", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
+		process.env.PI_FLOW_TOOLS_BATCH_READ = "0";
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		expect(pi.setActiveTools).toHaveBeenCalled();
+		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(calledWith).toEqual(["flow", "trace", "ask_user"]);
+		expect(calledWith).not.toContain("batch_read");
+	});
+
+	it("includes batch_read when tools-batch-read is true even when not optimized", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "0";
+		process.env.PI_FLOW_TOOLS_BATCH_READ = "1";
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		expect(pi.setActiveTools).toHaveBeenCalled();
+		const calledWith = (pi.setActiveTools as ReturnType<typeof vi.fn>).mock.calls[0][0];
+		expect(calledWith).toEqual(["read", "write", "edit", "batch", "bash", "flow", "trace", "batch_read", "ask_user"]);
+	});
+
+	it("does not register batch_read when tools-batch-read is false", async () => {
+		process.env.PI_FLOW_TOOL_OPTIMIZE = "1";
+		process.env.PI_FLOW_TOOLS_BATCH_READ = "0";
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		expect(pi.getTool("batch_read")).toBeUndefined();
 	});
 });
 
