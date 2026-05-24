@@ -8,7 +8,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
-import { discoverFlows, getFlowTier } from "./flow/agents.js";
+import { discoverFlows, getFlowTier, type FlowConfig, type FlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "./tui/flow-colors.js";
@@ -49,7 +49,7 @@ import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
 } from "./flow/depth.js";
-import { buildCore2Snapshot } from "./core2/snapshot.js";
+import { buildCore2Snapshot, parseSharedContext, type SharedContext } from "./core2/snapshot.js";
 import {
 	resolveSettings,
 	type ResolvedSettings,
@@ -229,12 +229,13 @@ async function executeDispatchOps(
 	return parts.join("\n\n---\n\n");
 }
 
-function makeFlowDetailsFactory(projectFlowsDir: string | null) {
+function makeFlowDetailsFactory(projectFlowsDir: string | null, sharedContext?: SharedContext) {
 	return (results: SingleResult[]): FlowDetails => ({
 		mode: "flow",
 		flowStyle: "fork",
 		projectAgentsDir: projectFlowsDir,
 		results,
+		sharedContext,
 	});
 }
 
@@ -313,6 +314,10 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.registerFlag("body-full", {
 		description: "Use full collapsed body mode (aim + cmd + msg).",
+		type: "boolean",
+	});
+	pi.registerFlag("flow-debug", {
+		description: "Write full child flow activation prompt to a temp file on every spawn.",
 		type: "boolean",
 	});
 
@@ -555,14 +560,29 @@ export default function (pi: ExtensionAPI) {
 
 				const discovery = discoverFlows(ctx.cwd, "all");
 				const { flows } = discovery;
-				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir);
 
-				// Build the fork session snapshot. Core-2 preserves all conversation
-				// verbatim in chronological order, stripping only batch read/write/edit
-				// bodies (keeping first 3 + last 3 lines as orientation).
+				// Build the fork session snapshot. Core-2 applies a 6-stage sanitization
+				// pipeline that strips metadata noise irrelevant to child flow orientation
+				// while preserving chronological conversation history.
+				function resolveSnapshotTier(flows: FlowConfig[], flowParams: Array<Static<typeof FlowItem>>): FlowTier | undefined {
+					if (flowParams.length === 0) return undefined;
+					const tiers = flowParams.map((f) => {
+						const config = flows.find((flow) => flow.name === f.type.toLowerCase());
+						return config?.tier ?? getFlowTier(f.type);
+					});
+					// Most permissive: full > flash > lite
+					if (tiers.includes("full")) return "full";
+					if (tiers.includes("flash")) return "flash";
+					return tiers[0];
+				}
+
 				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
 					activeToolCallId: toolCallId,
+					tier: resolveSnapshotTier(flows, params.flow),
 				});
+
+				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
+				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir, sharedContext);
 
 
 
@@ -601,6 +621,7 @@ export default function (pi: ExtensionAPI) {
 						cwd: ctx.cwd,
 						loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
 						maxConcurrency: resolved.maxConcurrency,
+						debugMode: resolved.debugMode,
 
 						defaultComplexity: resolved.defaultComplexity,
 						signal,
@@ -692,6 +713,7 @@ export default function (pi: ExtensionAPI) {
 					animationEnabled: resolved.animationEnabled,
 					animationGlitch: resolved.animationGlitch,
 					bodyVerbosity: resolved.bodyVerbosity,
+					debugMode: resolved.debugMode,
 				}
 			: {
 					toolOptimize: true,
@@ -703,6 +725,7 @@ export default function (pi: ExtensionAPI) {
 					animationEnabled: true,
 					animationGlitch: true,
 					bodyVerbosity: "lite",
+					debugMode: false,
 				},
 	};
 

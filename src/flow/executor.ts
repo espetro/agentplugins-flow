@@ -105,6 +105,8 @@ export interface FlowExecutorDeps {
 	goalContinuationCallback?: (results: SingleResult[]) => Promise<void>;
 	/** Optional active goal context to inject into child flow prompts. */
 	goalContext?: GoalContext;
+	/** Whether to write the full child flow activation prompt to a temp file on every spawn. */
+	debugMode: boolean;
 }
 
 export interface ExecuteFlowParams {
@@ -346,6 +348,7 @@ async function executeSingleFlow(
 			model: candidateModel,
 			maxContextTokens,
 			goalContext,
+			debugMode: deps.debugMode,
 			tools: item._childTools,
 			preDispatchResults: item.preDispatchResults,
 			signal,

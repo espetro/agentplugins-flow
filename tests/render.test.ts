@@ -561,6 +561,32 @@ function makeToolResultMessage(text: string) {
 }
 
 describe("activity panel rendering", () => {
+	it("collapsed view shows sharedContext.totalTokens instead of own contextTokens", () => {
+		const result = makeResult({
+			usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 5000, turns: 1, toolCalls: 0 },
+		});
+		const details: FlowDetails = {
+			mode: "flow",
+			flowStyle: "fork",
+			projectAgentsDir: null,
+			results: [result],
+			sharedContext: {
+				messageCount: 10,
+				userMessageCount: 3,
+				assistantMessageCount: 7,
+				toolCalls: { bash: 2 },
+				totalTokens: 25000,
+				preview: "preview text",
+			},
+		};
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toContain("25.0k");
+		expect(headerLine).not.toContain(" 5.0k");
+	});
+
 	it("renders single flow with DIR, EXE, LOG lines", () => {
 		const result = makeResult({
 			type: "debug",
@@ -982,6 +1008,35 @@ describe("activity panel rendering", () => {
 });
 
 describe("expanded view rendering", () => {
+	it("single expanded shows sharedContext.totalTokens in inline stats", () => {
+		const result = makeResult({
+			type: "debug",
+			intent: "Trace error",
+			messages: [makeTextMessage("Found it.")],
+			usage: { input: 9800, output: 1300, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 10000, turns: 2, toolCalls: 1 },
+			model: "mimo-v2.5-pro",
+		});
+		const details: FlowDetails = {
+			mode: "flow",
+			flowStyle: "fork",
+			projectAgentsDir: null,
+			results: [result],
+			sharedContext: {
+				messageCount: 20,
+				userMessageCount: 5,
+				assistantMessageCount: 15,
+				toolCalls: { read: 3 },
+				totalTokens: 50000,
+				preview: "preview text",
+			},
+		};
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, true, makeTheme(), undefined);
+		const text = extractText(rendered);
+		expect(text).toContain("▲ 50.0k");
+		expect(text).not.toContain("▲  9.8k");
+	});
+
 	it("single expanded shows type name not icon", () => {
 		const result = makeResult({
 			type: "debug",

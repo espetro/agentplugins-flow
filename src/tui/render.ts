@@ -466,6 +466,7 @@ export function renderFlowResult(
 ): Container | Text {
 	const details = result.details as FlowDetails | undefined;
 	const streamingText = result.content?.[0]?.type === "text" ? result.content[0].text : undefined;
+	const sharedContext = details?.sharedContext;
 
 	// Resolve a stable id for this flow widget. Once an id is stored in
 	// state we keep reusing it to prevent mid-render id switches that would
@@ -510,7 +511,7 @@ export function renderFlowResult(
 			const ghostId = resolvedToolCallId || 'ghost';
 			if (expanded) {
 				const now = Date.now();
-				container = renderFlowExpanded(ghostResult, flowStatusIcon(ghostResult, theme), false, getFlowDisplayItems([]), getFlowOutput([]), theme, ghostId, now, false, streamingText || "", config);
+				container = renderFlowExpanded(ghostResult, flowStatusIcon(ghostResult, theme), false, getFlowDisplayItems([]), getFlowOutput([]), theme, ghostId, now, false, streamingText || "", config, undefined);
 			} else {
 				container = renderFlowCollapsed(ghostResult, flowStatusIcon(ghostResult, theme), false, streamingText || "", theme, undefined, ghostId, config);
 			}
@@ -518,9 +519,9 @@ export function renderFlowResult(
 			container = new Text(scrambleManager.renderStatic(streamingText || ""), 0, 0);
 		}
 	} else if (details.results.length === 1) {
-		container = renderSingleFlowResult(details.results[0], expanded, theme, streamingText, resolvedToolCallId, config);
+		container = renderSingleFlowResult(details.results[0], expanded, theme, streamingText, resolvedToolCallId, config, sharedContext);
 	} else {
-		container = renderMultiFlowResult(details, expanded, theme, resolvedToolCallId, config);
+		container = renderMultiFlowResult(details, expanded, theme, resolvedToolCallId, config, sharedContext);
 	}
 
 	// In-place mutation pattern: reuse the stored root container
@@ -583,6 +584,14 @@ export function renderSingleFlowResult(
 	streamingText?: string,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container | Text {
 	const id = toolCallId || "single";
 	const error = isFlowError(r);
@@ -593,9 +602,9 @@ export function renderSingleFlowResult(
 	const isComplete = isFlowStatusComplete(r);
 
 	if (expanded) {
-		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config);
+		return renderFlowExpanded(r, icon, error, displayItems, flowOutput, theme, id, now, isComplete, streamingText, config, sharedContext);
 	}
-	return renderFlowCollapsed(r, icon, error, flowOutput, theme, streamingText, id, config);
+	return renderFlowCollapsed(r, icon, error, flowOutput, theme, streamingText, id, config, sharedContext);
 }
 
 function renderFlowExpanded(
@@ -610,11 +619,35 @@ function renderFlowExpanded(
 	isComplete: boolean,
 	streamingText?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
 
 	const typeName = formatFlowTypeName(r.type);
+
+	if (sharedContext) {
+		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
+		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		const statsParts: string[] = [];
+		statsParts.push(`${sharedContext.userMessageCount} user`);
+		statsParts.push(`${sharedContext.assistantMessageCount} assistant`);
+		statsParts.push(`${sharedContext.totalTokens} tokens`);
+		for (const [name, count] of Object.entries(sharedContext.toolCalls)) {
+			statsParts.push(`${count}× ${name}`);
+		}
+		container.addChild(new Text(applyRole("stats", statsParts.join(" · "), theme, config), 0, 0));
+		container.addChild(new Spacer(1));
+		container.addChild(new Text(applyRole("prefixLabel", sectionHeader(typeName), theme, config), 0, 0));
+		container.addChild(new Spacer(1));
+	}
 	const initialDot = flowStatusIcon(r, theme);
 	let header = `${initialDot} ${applyRole("flowName", typeName, theme, config)}`;
 	const errorSegment = error && r.stopReason ? ` [${r.stopReason}]` : "";
@@ -641,7 +674,8 @@ function renderFlowExpanded(
 	}
 
 	// Stats: dashboard format
-	const inlineStats = formatCompactStats(r.usage, r.model);
+	const displayUsage = sharedContext ? { ...r.usage, input: sharedContext.totalTokens } : r.usage;
+	const inlineStats = formatCompactStats(displayUsage, r.model);
 	container.addChild(new DynamicScrambleText(
 		applyRole("stats", inlineStats, theme, config),
 		() => {
@@ -824,6 +858,14 @@ function renderFlowCollapsed(
 	streamingText?: string,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const id = toolCallId || "collapsed";
 	const now = Date.now();
@@ -837,8 +879,9 @@ function renderFlowCollapsed(
 
 	// Build header stats: ctxLabel · t/s
 	const statsParts: string[] = [];
-	if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
-		const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
+	const ctxTokens = sharedContext?.totalTokens ?? r.usage.contextTokens;
+	if (r.maxContextTokens !== undefined || ctxTokens > 0) {
+		const ctxLabel = formatContextLabel(ctxTokens, r.maxContextTokens);
 		statsParts.push(ctxLabel);
 	}
 	let displayStats = statsParts.join(" · ");
@@ -1009,6 +1052,14 @@ function renderMultiFlowResult(
 	theme: FlowTheme,
 	toolCallId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container | Text {
 	const baseId = toolCallId || "multi";
 	const results = details.results;
@@ -1018,9 +1069,9 @@ function renderMultiFlowResult(
 	const now = Date.now();
 
 	if (expanded) {
-		return renderMultiFlowExpanded(results, successCount, icon, theme, baseId, now, config);
+		return renderMultiFlowExpanded(results, successCount, icon, theme, baseId, now, config, sharedContext);
 	}
-	return renderMultiFlowCollapsed(results, theme, baseId, config);
+	return renderMultiFlowCollapsed(results, theme, baseId, config, sharedContext);
 }
 
 function renderMultiFlowExpanded(
@@ -1031,9 +1082,31 @@ function renderMultiFlowExpanded(
 	baseId: string,
 	now: number,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const mdTheme = getMarkdownTheme();
 	const container = new Container();
+
+	if (sharedContext) {
+		container.addChild(new Text(applyRole("prefixLabel", "── shared context ──", theme, config), 0, 0));
+		container.addChild(new Text(applyRole("aimContent", sharedContext.preview, theme, config), 0, 0));
+		const statsParts: string[] = [];
+		statsParts.push(`${sharedContext.userMessageCount} user`);
+		statsParts.push(`${sharedContext.assistantMessageCount} assistant`);
+		statsParts.push(`${sharedContext.totalTokens} tokens`);
+		for (const [name, count] of Object.entries(sharedContext.toolCalls)) {
+			statsParts.push(`${count}× ${name}`);
+		}
+		container.addChild(new Text(applyRole("stats", statsParts.join(" · "), theme, config), 0, 0));
+		container.addChild(new Spacer(1));
+	}
 
 	// Summary: just show count, no icon
 	container.addChild(new Text(
@@ -1167,6 +1240,14 @@ function renderActivityPanel(
 	theme: FlowTheme,
 	baseId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
 	const idPrefix = baseId || "panel";
 	const container = new Container();
@@ -1207,12 +1288,12 @@ function renderActivityPanel(
 		if (item.kind === "flow") {
 			renderStandaloneFlow(
 				container, results[item.index], item.index,
-				idPrefix, theme, now, config, isLastRoot,
+				idPrefix, theme, now, config, isLastRoot, sharedContext,
 			);
 		} else {
 			renderGroup(
 				container, groups[item.groupIndex], results,
-				idPrefix, theme, now, config, isLastRoot,
+				idPrefix, theme, now, config, isLastRoot, sharedContext,
 			);
 		}
 
@@ -1234,12 +1315,20 @@ function renderStandaloneFlow(
 	now: number,
 	config?: FlowColorConfig,
 	isLastRoot: boolean = false,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	const flowId = `${idPrefix}#${index}`;
 	const headerPrefix = isLastRoot ? "└─" : "├─";
 	const childPrefix = isLastRoot ? "   " : "│  ";
 
-	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config);
+	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, r, flowId, childPrefix, theme, now, config);
 
 	if (isFlowStatusComplete(r)) {
@@ -1259,6 +1348,14 @@ function renderGroup(
 	now: number,
 	config?: FlowColorConfig,
 	isLastRoot: boolean = false,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	// ─── Group header line ───
 	const headerPrefix = isLastRoot ? "" : "├─";
@@ -1275,7 +1372,7 @@ function renderGroup(
 		const buildHeaderPrefix = isLastRoot ? "├─" : "│  ├─";
 		const buildChildPrefix = isLastRoot ? "│  " : "│  │  "; // All builds: audit follows, tree line continues
 
-		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config);
+		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config, sharedContext);
 		renderFlowBody(container, r, flowId, buildChildPrefix, theme, now, config);
 
 		if (isFlowStatusComplete(r)) {
@@ -1292,7 +1389,7 @@ function renderGroup(
 	const auditHeaderPrefix = isLastRoot ? "└─" : "│  └─";
 	const auditChildPrefix = isLastRoot ? "   " : "│     ";
 
-	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config);
+	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, auditResult, auditFlowId, auditChildPrefix, theme, now, config);
 
 	if (isFlowStatusComplete(auditResult)) {
@@ -1314,6 +1411,14 @@ function renderFlowHeader(
 	theme: FlowTheme,
 	now: number,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): void {
 	const typeName = formatCollapsedFlowHeaderTypeName(r.type);
 	const modelLabel = formatModelLabel(r.model);
@@ -1336,7 +1441,8 @@ function renderFlowHeader(
 		// Standard flow: model + stats
 		const statsParts: string[] = [];
 		if (r.maxContextTokens !== undefined || r.usage.contextTokens > 0) {
-			const ctxLabel = formatContextLabel(r.usage.contextTokens, r.maxContextTokens);
+			const ctxTokens = sharedContext?.totalTokens ?? r.usage.contextTokens;
+			const ctxLabel = formatContextLabel(ctxTokens, r.maxContextTokens);
 			statsParts.push(ctxLabel);
 		}
 		let displayStats = statsParts.join(" · ");
@@ -1517,8 +1623,16 @@ function renderMultiFlowCollapsed(
 	theme: FlowTheme,
 	baseId?: string,
 	config?: FlowColorConfig,
+	sharedContext?: {
+		messageCount: number;
+		userMessageCount: number;
+		assistantMessageCount: number;
+		toolCalls: Record<string, number>;
+		totalTokens: number;
+		preview: string;
+	},
 ): Container {
-	return renderActivityPanel(results, theme, baseId, config);
+	return renderActivityPanel(results, theme, baseId, config, sharedContext);
 }
 
 

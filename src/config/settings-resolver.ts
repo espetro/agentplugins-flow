@@ -53,6 +53,7 @@ export interface ResolvedSettings {
 	loadedFlowModelConfigs: LoadedFlowModelConfigs;
 	activeRuntimeFlowMode: string | undefined;
 	bodyVerbosity: "lite" | "full";
+	debugMode: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +318,24 @@ export function resolveSettings(
 		if (parsed === "full" || parsed === "lite") bodyVerbosity = parsed as "full" | "lite";
 	}
 
+	// Resolve debugMode: CLI flag > env var > settings.json > default
+	let debugMode = false;
+	if (typeof flowSettings.debugMode === "boolean") {
+		debugMode = flowSettings.debugMode;
+	}
+	const envDebug = process.env["PI_FLOW_DEBUG"];
+	if (envDebug !== undefined) {
+		const parsed = parseBoolean(envDebug);
+		if (parsed !== null) debugMode = parsed;
+	}
+	const cliDebug = pi.getFlag("flow-debug");
+	if (typeof cliDebug === "boolean") {
+		debugMode = cliDebug;
+	} else if (typeof cliDebug === "string") {
+		const parsed = parseBoolean(cliDebug);
+		if (parsed !== null) debugMode = parsed;
+	}
+
 	return {
 		toolOptimize,
 		structuredOutput,
@@ -333,6 +352,7 @@ export function resolveSettings(
 		loadedFlowModelConfigs,
 		activeRuntimeFlowMode,
 		bodyVerbosity,
+		debugMode,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
 }

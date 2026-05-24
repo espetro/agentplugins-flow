@@ -1514,7 +1514,7 @@ describe("acceptance field propagation", () => {
 		expect(prompt).toContain("- scout");
 		expect(prompt).toContain("- build");
 		expect(prompt).toContain("- audit");
-		expect(prompt).toContain("Transition: on (depth 2/3 · stack: root state)");
+		// Transition line removed from activation prompt
 		expect(prompt).toContain("<activation flow=\"scout\"");
 
 		mockProc.emit("close", 0);
@@ -1551,7 +1551,7 @@ describe("acceptance field propagation", () => {
 		const prompt = args[args.indexOf("-p") + 1];
 
 		expect(prompt).not.toContain("Available flows:");
-		expect(prompt).toContain("Transition: off (depth 3/3 · stack: root state -> scout)");
+		// Transition line removed from activation prompt
 
 		mockProc.emit("close", 0);
 		await promise;

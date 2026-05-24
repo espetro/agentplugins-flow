@@ -125,10 +125,7 @@ describe("dump mechanism — end-to-end", () => {
 		expect(mdContent).toContain("Flow: scout");
 		expect(mdContent).toContain("## Session Snapshot (JSONL)");
 		expect(mdContent).toContain("## Activation Prompt (-p)");
-		expect(mdContent).toContain("## Compression Stats");
-		expect(mdContent).toContain("- Pre-sanitization: 0 bytes");
-		expect(mdContent).toContain("- Post-sanitization: 0 bytes");
-		expect(mdContent).toContain("- Reduction: 0%");
+		// Compression Stats section removed from dumps
 
 		expect(mdContent).toContain('"type":"session"');
 		expect(mdContent).toContain("<activation flow=\"scout\"");
@@ -435,5 +432,250 @@ describe("protocol schema validation", () => {
 	it("ignores non-JSON lines in both validators", () => {
 		expect(validateSnapshotJsonl("not json\n")).toEqual([]);
 		expect(validateStreamingStdout(["not json"])).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 4D. Debug mode tests
+// ---------------------------------------------------------------------------
+
+describe("debug mode — end-to-end", () => {
+	const debugDir = path.join("/tmp", "tmp", "session-unknown-unknown");
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Scrub pre-existing scout debug files from session directory to prevent flaky assertions.
+		if (fs.existsSync(debugDir)) {
+			for (const f of fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
+		}
+	});
+
+	afterEach(() => {
+		// Scrub any scout debug files left behind.
+		if (fs.existsSync(debugDir)) {
+			for (const f of fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
+		}
+		vi.restoreAllMocks();
+	});
+
+	it("writes activation prompt and session snapshot to a temp file when debugMode is enabled", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const snapshotJsonl = '{"type":"session"}\n{"type":"message"}\n';
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: snapshotJsonl,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		expect(debugFiles.length).toBe(1);
+
+		const debugPath = path.join(debugDir, debugFiles[0]);
+		const content = fs.readFileSync(debugPath, "utf-8");
+		expect(content).toContain("## Session Snapshot (JSONL)");
+		expect(content).toContain(snapshotJsonl);
+		expect(content).toContain("## Activation Prompt (-p)");
+		expect(content).toContain("<activation flow=\"scout\"");
+
+		// Cleanup.
+		try { fs.unlinkSync(debugPath); } catch { /* ignore */ }
+	});
+
+	it("does not write a debug file when debugMode is disabled", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const beforeFiles = fs.existsSync(debugDir)
+			? fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))
+			: [];
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: false,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		const afterFiles = fs.existsSync(debugDir)
+			? fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"))
+			: [];
+		expect(afterFiles.length).toBe(beforeFiles.length);
+	});
+
+	it("uses a unique filename to avoid race conditions under concurrency", async () => {
+		const mockProc1 = makeMockProcess();
+		const mockProc2 = makeMockProcess();
+		let spawnCall = 0;
+		vi.mocked(childProcess.spawn).mockImplementation(() => {
+			spawnCall++;
+			return spawnCall === 1 ? mockProc1 : mockProc2;
+		});
+
+		const snapshotJsonl = '{"type":"session"}\n{"type":"message"}\n';
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: snapshotJsonl,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise1 = runFlow(opts);
+		const promise2 = runFlow(opts);
+
+		setTimeout(() => {
+			mockProc1.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc1.emit("close", 0);
+		}, 10);
+
+		setTimeout(() => {
+			mockProc2.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc2.emit("close", 0);
+		}, 15);
+
+		await Promise.all([promise1, promise2]);
+
+		const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+		expect(debugFiles.length).toBe(2);
+
+		for (const f of debugFiles) {
+			const content = fs.readFileSync(path.join(debugDir, f), "utf-8");
+			expect(content).toContain("## Session Snapshot (JSONL)");
+			expect(content).toContain(snapshotJsonl);
+			expect(content).toContain("## Activation Prompt (-p)");
+			expect(content).toContain("<activation flow=\"scout\"");
+		}
+
+		// Cleanup.
+		for (const f of debugFiles) {
+			try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+		}
+	});
+
+	it("cleans up stale debug files older than max age", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		// Create a stale debug file manually in the session directory.
+		fs.mkdirSync(debugDir, { recursive: true });
+		const staleFile = path.join(debugDir, `pi-flow-debug-scout-0.abc123.txt`);
+		fs.writeFileSync(staleFile, "stale", { encoding: "utf-8" });
+		// Force mtime to be 8 days ago.
+		const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+		fs.utimesSync(staleFile, eightDaysAgo, eightDaysAgo);
+
+		const prevMaxAge = process.env.PI_FLOW_DUMP_MAX_AGE_HOURS;
+		process.env.PI_FLOW_DUMP_MAX_AGE_HOURS = "168";
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails,
+			debugMode: true,
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit(
+				"data",
+				Buffer.from(
+					'{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n',
+				),
+			);
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+
+		expect(fs.existsSync(staleFile)).toBe(false);
+
+		// Cleanup any newly created debug file.
+		if (fs.existsSync(debugDir)) {
+			const debugFiles = fs.readdirSync(debugDir).filter((f) => f.startsWith("pi-flow-debug-scout-"));
+			for (const f of debugFiles) {
+				try { fs.unlinkSync(path.join(debugDir, f)); } catch { /* ignore */ }
+			}
+		}
+
+		if (prevMaxAge === undefined) delete process.env.PI_FLOW_DUMP_MAX_AGE_HOURS;
+		else process.env.PI_FLOW_DUMP_MAX_AGE_HOURS = prevMaxAge;
 	});
 });

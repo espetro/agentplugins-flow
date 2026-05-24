@@ -73,7 +73,7 @@ describe("buildCore2Snapshot — retention", () => {
 		expect(snapshot).toContain("<pi-flow-steering-hint>");
 	});
 
-	it("preserves assistant reasoning and thinking verbatim", () => {
+	it("strips assistant reasoning and thinking", () => {
 		const entries = [
 			{
 				type: "message",
@@ -89,9 +89,9 @@ describe("buildCore2Snapshot — retention", () => {
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries));
-		expect(snapshot).toContain("SECRET_THINKING");
-		expect(snapshot).toContain("SECRET_REASONING");
-		expect(snapshot).toContain("THINKING_PART");
+		expect(snapshot).not.toContain("SECRET_THINKING");
+		expect(snapshot).not.toContain("SECRET_REASONING");
+		expect(snapshot).not.toContain("THINKING_PART");
 		expect(snapshot).toContain("Visible text");
 	});
 
@@ -118,6 +118,62 @@ describe("buildCore2Snapshot — retention", () => {
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		expect(snapshot).toContain("Prior flow result should be inherited verbatim");
 		expect(snapshot).toContain('"name":"flow"');
+	});
+
+	it("preserves id and strips parentId from entries", () => {
+		const entry = { type: "message", id: "msg-1", parentId: "parent-abc", message: { role: "user", content: "hi" } };
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).toContain('"id":"msg-1"');
+		expect(snapshot).not.toContain("parentId");
+	});
+
+	it("strips toolCallId from tool and toolResult messages", () => {
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", toolCallId: "tc-1", content: [{ type: "text", text: "output" }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("tc-1");
+		expect(snapshot).not.toContain("toolCallId");
+		expect(snapshot).toContain("output");
+	});
+
+	it("strips directive blocks from tool result text", () => {
+		const text =
+			"✔ 1 read\n--- src/file.ts (3 lines) ---\na\nb\nc\n\n[Directive: Close what you start. Dispatch a [build] or [scout] flow to verify before advancing.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Directive:");
+		expect(snapshot).toContain("--- src/file.ts (3 lines) ---");
+		expect(snapshot).toContain("a");
+	});
+
+	it("strips directive blocks from non-batch tool result text", () => {
+		const text =
+			"exit 0\n\n[Directive: Close what you start. Dispatch a [build] or [scout] flow to verify before advancing.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Directive:");
+		expect(snapshot).not.toContain("Dispatch a [build]");
+		expect(snapshot).toContain("exit 0");
+	});
+
+	it("strips legacy [Hint:] blocks from tool result text", () => {
+		const text = "hello world\n\n[Hint: Do something useful.]";
+		const entry = {
+			type: "message",
+			message: { role: "toolResult", content: [{ type: "text", text }] },
+		};
+		const snapshot = buildCore2Snapshot(makeSource([entry]));
+		expect(snapshot).not.toContain("[Hint:");
+		expect(snapshot).not.toContain("Do something useful");
+		expect(snapshot).toContain("hello world");
 	});
 
 	it("preserves batch bash and rg sections verbatim", () => {
@@ -410,7 +466,8 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		const snapshot = buildCore2Snapshot(source);
 		const parsed = parseSnapshot(snapshot);
 		expect(parsed).toHaveLength(2);
-		expect(parsed[0]).toMatchObject({ version: 1, id: "session-1", type: "session" });
+		expect(parsed[0]).toMatchObject({ version: 1, type: "session" });
+		expect(parsed[0]).toHaveProperty("id", "session-1");
 	});
 
 	it("strips activeToolCallId matching tool call and omits empty assistant message", () => {
@@ -439,7 +496,7 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 				message: {
 					role: "assistant",
 					content: [
-						{ type: "thinking", thinking: "some thought" },
+						{ type: "text", text: "some text" },
 						{ type: "toolCall", id: "active-call-1", name: "trace" }
 					]
 				}
@@ -449,7 +506,7 @@ describe("buildCore2Snapshot — nuance (batch body stripping)", () => {
 		const parsed = parseSnapshot(snapshot);
 		expect(parsed).toHaveLength(2); // header + assistant message
 		expect(parsed[1].message.content).toHaveLength(1);
-		expect(parsed[1].message.content[0]).toMatchObject({ type: "thinking", thinking: "some thought" });
+		expect(parsed[1].message.content[0]).toMatchObject({ type: "text", text: "some text" });
 	});
 });
 
@@ -507,5 +564,300 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 				content: "[Context Compacted] Parent context was compacted. (500 tokens summarized)",
 			},
 		});
+	});
+
+	it("strips API metadata and slims usage to context fields only", () => {
+		const entries = [
+			{
+				type: "message",
+				id: "msg-1",
+				timestamp: "2026-05-23T15:35:19.588Z",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Hello" }],
+					api: "openai-completions",
+					provider: "fireworks.ai",
+					model: "kimi-k2p6-turbo",
+					usage: { input: 100, output: 200, totalTokens: 300 },
+					cost: { input: 0.001, output: 0.002, total: 0.003 },
+					stopReason: "stop",
+					responseId: "resp-123",
+					responseModel: "kimi-k2p6",
+					timestamp: 1779550519587,
+				},
+			},
+			{
+				type: "message",
+				id: "msg-2",
+				timestamp: "2026-05-23T15:35:21.164Z",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-1",
+					toolName: "bash",
+					content: [{ type: "text", text: "exit 0" }],
+					details: { results: [{ op: "run", status: "success" }] },
+					isError: false,
+					timestamp: 1779550521164,
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		// Header (first entry) should not contain timestamp
+		expect(parsed[0]).not.toHaveProperty("timestamp");
+
+		// Message 1 checks
+		const msg1 = parsed[1] as any;
+		expect(msg1).not.toHaveProperty("timestamp");
+		expect(msg1.message).not.toHaveProperty("api");
+		expect(msg1.message).not.toHaveProperty("provider");
+		expect(msg1.message).not.toHaveProperty("model");
+		expect(msg1.message.usage).toEqual({
+			input: 100,
+			output: 200,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 300,
+		});
+		expect(msg1.message).not.toHaveProperty("cost");
+		expect(msg1.message).toHaveProperty("stopReason", "stop");
+		expect(msg1.message).not.toHaveProperty("responseId");
+		expect(msg1.message).not.toHaveProperty("responseModel");
+		expect(msg1.message).not.toHaveProperty("timestamp");
+		expect(msg1.message.content[0].text).toBe("Hello");
+
+		// Message 2 checks
+		const msg2 = parsed[2] as any;
+		expect(msg2).not.toHaveProperty("timestamp");
+		expect(msg2.message).not.toHaveProperty("details");
+		expect(msg2.message).not.toHaveProperty("isError");
+		expect(msg2.message).not.toHaveProperty("timestamp");
+		expect(msg2.message.content[0].text).toBe("exit 0");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tier-based compression tests
+// ---------------------------------------------------------------------------
+
+describe("buildCore2Snapshot — tier compression", () => {
+	it("lite tier strips toolResult content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "bash",
+					content: [{ type: "text", text: "long output here\nline2\nline3" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("long output here");
+		expect(snapshot).toContain("[toolResult: bash]");
+	});
+
+	it("lite tier strips tool content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "tool",
+					toolCallId: "tc-1",
+					content: "tool output text",
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("tool output text");
+		expect(snapshot).toContain("[tool result omitted]");
+	});
+
+	it("lite tier keeps only the last 30 messages", () => {
+		const entries = Array.from({ length: 50 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 30 messages = 31 total
+		expect(parsed).toHaveLength(31);
+		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("flash tier keeps only the last 50 messages", () => {
+		const entries = Array.from({ length: 70 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 50 messages = 51 total
+		expect(parsed).toHaveLength(51);
+		expect(snapshot).toContain("msg-69");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("full tier keeps only the last 80 messages", () => {
+		const entries = Array.from({ length: 100 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		const parsed = parseSnapshot(snapshot);
+		// header + 80 messages = 81 total
+		expect(parsed).toHaveLength(81);
+		expect(snapshot).toContain("msg-99");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("lite tier respects PI_FLOW_LITE_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_LITE_MAX_MESSAGES = "5";
+		const entries = Array.from({ length: 10 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(6); // header + 5
+		delete process.env.PI_FLOW_LITE_MAX_MESSAGES;
+	});
+
+	it("flash tier respects PI_FLOW_FLASH_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FLASH_MAX_MESSAGES = "7";
+		const entries = Array.from({ length: 15 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(8); // header + 7
+		delete process.env.PI_FLOW_FLASH_MAX_MESSAGES;
+	});
+
+	it("full tier respects PI_FLOW_FULL_MAX_MESSAGES env override", () => {
+		process.env.PI_FLOW_FULL_MAX_MESSAGES = "9";
+		const entries = Array.from({ length: 20 }, (_, i) => ({
+			type: "message",
+			message: { role: "user" as const, content: `msg-${i}` },
+		}));
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		const parsed = parseSnapshot(snapshot);
+		expect(parsed).toHaveLength(10); // header + 9
+		delete process.env.PI_FLOW_FULL_MAX_MESSAGES;
+	});
+
+	it("flash tier strips toolResult content to placeholder", () => {
+		const longText = "a".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "bash",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).not.toContain("a".repeat(10));
+		expect(snapshot).toContain("[toolResult: bash]");
+	});
+
+	it("flash tier strips tool content to placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "tool",
+					toolCallId: "tc-1",
+					content: "short",
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
+		expect(snapshot).not.toContain("short");
+		expect(snapshot).toContain("[tool result omitted]");
+	});
+
+	it("full tier strips toolResult content to placeholder", () => {
+		const longText = "b".repeat(600);
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					name: "trace",
+					content: [{ type: "text", text: longText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
+		expect(snapshot).not.toContain("b".repeat(10));
+		expect(snapshot).toContain("[toolResult: trace]");
+	});
+
+	it("lite tier significantly reduces snapshot size", () => {
+		const entries = Array.from({ length: 40 }, (_, i) => ({
+			type: "message",
+			message: {
+				role: i % 2 === 0 ? ("user" as const) : ("toolResult" as const),
+				content:
+					i % 2 === 0
+						? `user message ${i}`
+						: [{ type: "text" as const, text: "x".repeat(1000) }],
+			},
+		}));
+		const fullSnapshot = buildCore2Snapshot(makeSource(entries));
+		const liteSnapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(fullSnapshot!.length).toBeGreaterThan(liteSnapshot!.length * 2);
+	});
+
+	it("tier compression runs after sanitize and compaction", () => {
+		const entries = [
+			{ type: "model_change", model: "kimi" },
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "tc-1",
+					content: [{ type: "text", text: "output" }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		expect(snapshot).not.toContain("model_change");
+		expect(snapshot).not.toContain("output");
+		expect(snapshot).toContain("[toolResult result omitted]");
+	});
+
+	it("lite limit preserves session header inside branchEntries", () => {
+		const entries: unknown[] = [
+			{ type: "session", id: "test-session", version: 1 },
+			...Array.from({ length: 50 }, (_, i) => ({
+				type: "message" as const,
+				message: { role: "user" as const, content: `msg-${i}` },
+			})),
+		];
+		const source = {
+			getHeader: () => ({ version: 1, id: "test-session" }),
+			getBranch: () => entries,
+		};
+		const snapshot = buildCore2Snapshot(source, { tier: "lite" });
+		const parsed = parseSnapshot(snapshot);
+		// Header inside branch + 30 messages = 31 total
+		expect(parsed).toHaveLength(31);
+		expect(parsed[0]).toMatchObject({ type: "session", id: "test-session" });
+		expect(snapshot).toContain("msg-49");
+		expect(snapshot).toContain("msg-20");
+		expect(snapshot).not.toContain("msg-19");
 	});
 });

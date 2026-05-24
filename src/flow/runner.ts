@@ -52,7 +52,6 @@ import {
 import {
 	computeTransitionState,
 	buildGuardLine,
-	buildTransitionRule,
 	buildFlowListSection,
 	buildLineage,
 	computeChildPropagation,
@@ -213,6 +212,61 @@ function atomicWriteFileSync(targetPath: string, data: string): void {
 	fs.renameSync(tmpPath, targetPath);
 }
 
+function parseSessionSnapshotInfo(jsonl: string | null): { sessionId?: string; firstUserText?: string } {
+	const result: { sessionId?: string; firstUserText?: string } = {};
+	if (!jsonl) return result;
+	for (const line of jsonl.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line) as Record<string, unknown>;
+			if (entry.type === "session" && entry.id && typeof entry.id === "string") {
+				result.sessionId = entry.id;
+			}
+			if (
+				entry.type === "message" &&
+				entry.message &&
+				typeof entry.message === "object" &&
+				!result.firstUserText
+			) {
+				const msg = entry.message as Record<string, unknown>;
+				if (msg.role === "user" && msg.content) {
+					let text = "";
+					if (typeof msg.content === "string") {
+						text = msg.content;
+					} else if (Array.isArray(msg.content)) {
+						const firstText = msg.content.find(
+							(c: unknown) =>
+								c && typeof c === "object" && (c as Record<string, unknown>).type === "text",
+						) as Record<string, unknown> | undefined;
+						text = typeof firstText?.text === "string" ? firstText.text : "";
+					}
+					if (text.trim()) {
+						result.firstUserText = text.trim();
+					}
+				}
+			}
+		} catch {
+			/* ignore non-JSON lines */
+		}
+	}
+	return result;
+}
+
+function sanitizeForFilesystem(text: string, maxLength: number): string {
+	const safe = text
+		.slice(0, maxLength)
+		.replace(/[^a-zA-Z0-9_-]/g, "_")
+		.replace(/^_+|_+$/g, "");
+	return safe || "unknown";
+}
+
+function getDebugDir(cwd: string, jsonl: string | null): string {
+	const { sessionId, firstUserText } = parseSessionSnapshotInfo(jsonl);
+	const safeText = sanitizeForFilesystem(firstUserText ?? "", 20);
+	const idShort = sanitizeForFilesystem((sessionId ?? "unknown").slice(0, 8), 8);
+	return path.join(cwd, "tmp", `session-${safeText}-${idShort}`);
+}
+
 // ---------------------------------------------------------------------------
 // Dump TTL cleanup
 // ---------------------------------------------------------------------------
@@ -250,6 +304,50 @@ function cleanupStaleDumps(dumpPath: string, maxAgeHours = 168): void {
 		}
 	} catch (err) {
 		logWarn(`[pi-agent-flow] cleanupStaleDumps failed: ${err}`);
+	}
+}
+
+/**
+ * Delete stale debug dump files from session directories under the repo tmp/ path.
+ * Called once at the start of each debug block to prevent unbounded accumulation.
+ * Silently skips on any error (defensive).
+ */
+function cleanupStaleDebugDumps(cwd: string, maxAgeHours = 168): void {
+	try {
+		const baseDir = path.join(cwd, "tmp");
+		if (!fs.existsSync(baseDir)) return;
+		const entries = fs.readdirSync(baseDir);
+		const nowMs = Date.now();
+		const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+		let deleted = 0;
+		for (const entry of entries) {
+			if (!entry.startsWith("session-")) continue;
+			const sessionDir = path.join(baseDir, entry);
+			try {
+				const stat = fs.statSync(sessionDir);
+				if (!stat.isDirectory()) continue;
+				const files = fs.readdirSync(sessionDir);
+				for (const file of files) {
+					const filePath = path.join(sessionDir, file);
+					try {
+						const stats = fs.statSync(filePath);
+						if (nowMs - stats.mtimeMs > maxAgeMs) {
+							fs.unlinkSync(filePath);
+							deleted++;
+						}
+					} catch { /* ignore per-file errors */ }
+				}
+				// Remove empty session directories
+				if (fs.readdirSync(sessionDir).length === 0) {
+					fs.rmdirSync(sessionDir);
+				}
+			} catch { /* ignore per-directory errors */ }
+		}
+		if (deleted > 0) {
+			logWarn(`[pi-agent-flow] Cleaned ${deleted} stale debug file(s) from ${baseDir}`);
+		}
+	} catch (err) {
+		logWarn(`[pi-agent-flow] cleanupStaleDebugDumps failed: ${err}`);
 	}
 }
 
@@ -406,7 +504,6 @@ function buildFlowArgs(
 
 	// Phase 2: Activation — role, tools, depth, transition rules (dynamically generated)
 	const guardLine = buildGuardLine(currentDepth, effectiveMaxDepth, preventCycles, parentFlowStack);
-	const transitionRule = buildTransitionRule(canTransition, guardLine);
 	const flowListSection = buildFlowListSection(canTransition, discoveredFlows);
 
 	const effectiveTier = flow.tier ?? getFlowTier(flow.name);
@@ -414,7 +511,6 @@ function buildFlowArgs(
 	const activation =
 		`\n\n<activation flow="${flow.name}" depth="${currentDepth}" tools="${availableTools}" tier="${effectiveTier}" lineage="${lineage}">\n` +
 		`You are a [${flow.name}] agent operating at depth ${currentDepth}.\n` +
-		`${transitionRule}\n` +
 		`${flowListSection}` +
 		`Do not attempt to use any tool outside the available set — it will fail.\n` +
 		`</activation>`;
@@ -516,6 +612,8 @@ export interface RunFlowOptions {
 	tools?: string[];
 	/** Pre-dispatch results — injected into the child's activation prompt. */
 	preDispatchResults?: string;
+	/** Whether to write the full child flow activation prompt to a temp file on every spawn. */
+	debugMode?: boolean;
 }
 
 /**
@@ -672,14 +770,15 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			opts.preDispatchResults,
 		);
 
+		// Extract the activation prompt once for reuse by both dump and debug blocks.
+		const promptIndex = piArgs.indexOf("-p");
+		const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
+
 		// Dump verbatim child payload to disk for debugging when requested.
 		const dumpPath = process.env[FLOW_DUMP_SNAPSHOT_ENV] || inheritedCliArgs.dumpPath;
 		if (dumpPath) {
 			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
 			cleanupStaleDumps(dumpPath, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
-
-			const promptIndex = piArgs.indexOf("-p");
-			const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
 
 			const effectiveTier = flow.tier ?? getFlowTier(flow.name);
 			const sanitizationHeader = `<!-- pi-agent-flow dump | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
@@ -701,14 +800,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				``,
 				prompt,
 			);
-			markdownParts.push(
-				``,
-				`## Compression Stats`,
-				``,
-				`- Pre-sanitization: 0 bytes`,
-				`- Post-sanitization: 0 bytes`,
-				`- Reduction: 0%`,
-			);
+			// Compression Stats section removed — zeroed values provide no signal
 			const markdown = markdownParts.join("\n");
 			const uniqueDumpPath = makeUniqueDumpPath(dumpPath, flow.name);
 			const uniqueTxtPath = makeUniqueDumpTxtPath(uniqueDumpPath);
@@ -718,6 +810,31 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				logError(`[pi-agent-flow] Snapshot dumped to ${uniqueDumpPath}`);
 			} catch (err) {
 				logError(`[pi-agent-flow] Snapshot dump FAILED: ${err}`);
+			}
+		}
+
+		// Debug mode: write the activation prompt and shared session snapshot to a dedicated temp file.
+		if (opts.debugMode) {
+			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
+			cleanupStaleDebugDumps(cwd, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
+
+			const safeFlowName = flow.name.replace(/[^\w.-]+/g, "_");
+			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+			const debugDir = getDebugDir(cwd, forkSessionSnapshotJsonl);
+			fs.mkdirSync(debugDir, { recursive: true });
+			const debugPath = path.join(debugDir, `pi-flow-debug-${safeFlowName}-${uniqueSuffix}.txt`);
+			try {
+				const parts: string[] = [];
+				if (forkSessionSnapshotJsonl) {
+					parts.push("## Session Snapshot (JSONL)");
+					parts.push(forkSessionSnapshotJsonl);
+				}
+				parts.push("## Activation Prompt (-p)");
+				parts.push(prompt);
+				atomicWriteFileSync(debugPath, parts.join("\n\n"));
+				logWarn(`[pi-agent-flow] Debug prompt written to ${debugPath}`);
+			} catch (err) {
+				logWarn(`[pi-agent-flow] Debug prompt write FAILED: ${err}`);
 			}
 		}
 

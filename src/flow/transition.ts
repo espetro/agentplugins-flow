@@ -45,9 +45,6 @@ export function buildGuardLine(
 	return `depth ${currentDepth}/${effectiveMaxDepth} · stack: ${stackLabel}`;
 }
 
-export function buildTransitionRule(canTransition: boolean, guardLine: string): string {
-	return `Transition: ${canTransition ? "on" : "off"} (${guardLine})`;
-}
 
 export function buildFlowListSection(
 	canTransition: boolean,

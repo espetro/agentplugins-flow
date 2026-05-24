@@ -4,6 +4,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import { getFlowFinalText } from "../snapshot/runner-events.js";
+import type { SharedContext } from "../core2/snapshot.js";
 
 /** Aggregated token usage from a flow run. */
 export interface UsageStats {
@@ -65,6 +66,7 @@ export interface FlowDetails {
 	flowStyle: "fork";
 	projectAgentsDir: string | null;
 	results: SingleResult[];
+	sharedContext?: SharedContext;
 }
 
 /** Metrics emitted after each flow completes. */
@@ -105,6 +107,8 @@ export interface PiAgentFlowAPI {
 		steeringStrategicHint: boolean;
 		animationEnabled: boolean;
 		animationGlitch: boolean;
+		bodyVerbosity: "lite" | "full";
+		debugMode: boolean;
 	};
 }
 
