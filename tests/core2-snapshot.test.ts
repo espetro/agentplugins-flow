@@ -653,45 +653,77 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildCore2Snapshot — tier compression", () => {
-	it("lite tier strips toolResult content to placeholder", () => {
+	it("all tiers preserve toolResult content and optimize it (no placeholders)", () => {
 		const entries = [
 			{
 				type: "message",
 				message: {
 					role: "toolResult",
-					toolCallId: "tc-1",
-					name: "bash",
-					content: [{ type: "text", text: "long output here\nline2\nline3" }],
+					name: "trace",
+					content: [{ type: "text", text: "verbatim output preserved" }],
 				},
 			},
 		];
 		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		expect(snapshot).not.toContain("long output here");
-		expect(snapshot).toContain("[toolResult: bash]");
+		expect(snapshot).toContain("verbatim output preserved");
+		expect(snapshot).not.toContain("[toolResult: trace]");
 	});
 
-	it("lite tier strips tool content to placeholder", () => {
+	it("verbose standalone bash output (> 50 lines) is truncated to 30 head and 20 tail lines", () => {
+		const body = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
 		const entries = [
 			{
 				type: "message",
 				message: {
-					role: "tool",
-					toolCallId: "tc-1",
-					content: "tool output text",
+					role: "toolResult",
+					name: "bash",
+					content: [{ type: "text", text: body }],
 				},
 			},
 		];
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		expect(snapshot).not.toContain("tool output text");
-		expect(snapshot).toContain('[{"type":"text","text":"[tool result omitted]"}]');
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		const toolMsg = parsed.find((e: any) => e.message?.role === "toolResult") as any;
+		const textContent = toolMsg.message.content[0].text;
+		expect(textContent).toContain("line 1\nline 2\nline 3");
+		expect(textContent).toContain("line 30");
+		expect(textContent).toContain("[...10 lines of bash output truncated...]");
+		expect(textContent).toContain("line 41");
+		expect(textContent).toContain("line 60");
+		expect(textContent).not.toContain("line 31\n");
 	});
 
-	it("all tiers keep only the last 80 messages", () => {
+	it("verbose batched bash section output (> 50 lines) is truncated to 30 head and 20 tail lines", () => {
+		const body = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
+		const batchText = `✔ 1 bash\n\n--- bash [abc] exit 0 ---\n${body}`;
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-1",
+					content: [{ type: "text", text: batchText }],
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		const toolMsg = parsed.find((e: any) => e.message?.role === "toolResult") as any;
+		const textContent = toolMsg.message.content[0].text;
+		expect(textContent).toContain("line 1\nline 2\nline 3");
+		expect(textContent).toContain("line 30");
+		expect(textContent).toContain("[...10 lines of bash output truncated...]");
+		expect(textContent).toContain("line 41");
+		expect(textContent).toContain("line 60");
+		expect(textContent).not.toContain("line 31\n");
+	});
+
+	it("message limit is always applied (defaults to 80) regardless of tier option", () => {
 		const entries = Array.from({ length: 100 }, (_, i) => ({
 			type: "message",
 			message: { role: "user" as const, content: `msg-${i}` },
 		}));
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
 		// header + context map + 80 messages = 82 total
 		expect(parsed).toHaveLength(82);
@@ -708,7 +740,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 				type: "message",
 				message: { role: "user" as const, content: `msg-${i}` },
 			}));
-			const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
+			const snapshot = buildCore2Snapshot(makeSource(entries));
 			const parsed = parseSnapshot(snapshot);
 			expect(parsed).toHaveLength(7); // header + context map + 5
 		} finally {
@@ -718,92 +750,6 @@ describe("buildCore2Snapshot — tier compression", () => {
 				process.env.PI_FLOW_MAX_MESSAGES = previous;
 			}
 		}
-	});
-
-	it("flash tier strips toolResult content to placeholder", () => {
-		const longText = "a".repeat(600);
-		const entries = [
-			{
-				type: "message",
-				message: {
-					role: "toolResult",
-					toolCallId: "tc-1",
-					name: "bash",
-					content: [{ type: "text", text: longText }],
-				},
-			},
-		];
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		expect(snapshot).not.toContain("a".repeat(10));
-		expect(snapshot).toContain("[toolResult: bash]");
-	});
-
-	it("flash tier strips tool content to placeholder", () => {
-		const entries = [
-			{
-				type: "message",
-				message: {
-					role: "tool",
-					toolCallId: "tc-1",
-					content: "short",
-				},
-			},
-		];
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "flash" });
-		expect(snapshot).not.toContain("short");
-		expect(snapshot).toContain('[{"type":"text","text":"[tool result omitted]"}]');
-	});
-
-	it("full tier strips toolResult content to placeholder", () => {
-		const longText = "b".repeat(600);
-		const entries = [
-			{
-				type: "message",
-				message: {
-					role: "toolResult",
-					toolCallId: "tc-1",
-					name: "trace",
-					content: [{ type: "text", text: longText }],
-				},
-			},
-		];
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "full" });
-		expect(snapshot).not.toContain("b".repeat(10));
-		expect(snapshot).toContain("[toolResult: trace]");
-	});
-
-	it("lite tier significantly reduces snapshot size", () => {
-		const entries = Array.from({ length: 40 }, (_, i) => ({
-			type: "message",
-			message: {
-				role: i % 2 === 0 ? ("user" as const) : ("toolResult" as const),
-				content:
-					i % 2 === 0
-						? `user message ${i}`
-						: [{ type: "text" as const, text: "x".repeat(1000) }],
-			},
-		}));
-		const fullSnapshot = buildCore2Snapshot(makeSource(entries));
-		const liteSnapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		expect(fullSnapshot!.length).toBeGreaterThan(liteSnapshot!.length * 2);
-	});
-
-	it("tier compression runs after sanitize and compaction", () => {
-		const entries = [
-			{ type: "model_change", model: "kimi" },
-			{
-				type: "message",
-				message: {
-					role: "toolResult",
-					toolCallId: "tc-1",
-					content: [{ type: "text", text: "output" }],
-				},
-			},
-		];
-		const snapshot = buildCore2Snapshot(makeSource(entries), { tier: "lite" });
-		expect(snapshot).not.toContain("model_change");
-		expect(snapshot).not.toContain("output");
-		expect(snapshot).toContain('[{"type":"text","text":"[toolResult result omitted]"}]');
 	});
 
 	it("message limit preserves session header inside branchEntries", () => {
@@ -818,7 +764,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 			getHeader: () => ({ version: 1, id: "test-session" }),
 			getBranch: () => entries,
 		};
-		const snapshot = buildCore2Snapshot(source, { tier: "lite" });
+		const snapshot = buildCore2Snapshot(source);
 		const parsed = parseSnapshot(snapshot);
 		// Header inside branch + context map + 80 messages = 82 total
 		expect(parsed).toHaveLength(82);
@@ -826,5 +772,109 @@ describe("buildCore2Snapshot — tier compression", () => {
 		expect(snapshot).toContain("msg-99");
 		expect(snapshot).toContain("msg-20");
 		expect(snapshot).not.toContain("msg-19");
+	});
+
+	it("deduplicates repeated identical bash commands, keeping only the latest run's output", () => {
+		const entries = [
+			// Turn 1
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "npm run build" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-1",
+					content: [{ type: "text", text: "first build failed" }]
+				}
+			},
+			// Turn 2
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "bash-2", name: "bash", arguments: { command: "npm run build" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-2",
+					content: [{ type: "text", text: "second build passed" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		// First toolResult should be omitted/replaced with placeholder
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("Bash output omitted")) as any;
+		expect(firstResult).toBeDefined();
+		expect(firstResult.message.content[0].text).toBe("[Bash output omitted; command was re-run later]");
+
+		// Second toolResult should be preserved verbatim
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("second build passed")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("deduplicates repeated read/write/edit operations on the same file path", () => {
+		const entries = [
+			// Turn 1
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-1", name: "batch_read", arguments: { o: [{ o: "read", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-1",
+					content: [{ type: "text", text: "file a content old" }]
+				}
+			},
+			// Turn 2
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-2", name: "batch_read", arguments: { o: [{ o: "read", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-2",
+					content: [{ type: "text", text: "file a content new" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+
+		// First toolResult should be omitted/replaced with placeholder
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("File read output omitted")) as any;
+		expect(firstResult).toBeDefined();
+		expect(firstResult.message.content[0].text).toBe("[File read output omitted; file was accessed/modified later]");
+
+		// Second toolResult should be preserved verbatim
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("file a content new")) as any;
+		expect(secondResult).toBeDefined();
 	});
 });

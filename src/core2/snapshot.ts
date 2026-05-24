@@ -76,11 +76,12 @@ export function buildCore2Snapshot(
 	}
 
 	const branchEntries = sessionManager.getBranch();
+	const optimizedEntries = optimizeSharedContext(branchEntries);
 	const lines: string[] = [];
 
 	// Emit session header once, unless getBranch() already includes it as the
 	// first entry (some session managers include the header in the branch).
-	const firstBranch = branchEntries[0];
+	const firstBranch = optimizedEntries[0];
 	const headerId = (header as Record<string, unknown>)?.id;
 	const firstId =
 		firstBranch && typeof firstBranch === "object"
@@ -100,14 +101,14 @@ export function buildCore2Snapshot(
 	}
 
 	const processedEntries: unknown[] = [];
-	for (const entry of branchEntries) {
+	for (const entry of optimizedEntries) {
 		let processedEntry = sanitizeSnapshotEntry(entry);
 		if (!processedEntry) continue;
 
 		processedEntry = maybeStripCompaction(processedEntry);
 		if (!processedEntry) continue;
 
-		processedEntry = compressSnapshotEntry(processedEntry, options?.tier);
+		processedEntry = truncateStandaloneBashResult(processedEntry);
 
 		if (options?.activeToolCallId) {
 			processedEntry = stripActiveToolCall(processedEntry, options.activeToolCallId);
@@ -117,7 +118,7 @@ export function buildCore2Snapshot(
 		processedEntries.push(processedEntry);
 	}
 
-	const finalEntries = applyMessageLimit(processedEntries, options?.tier);
+	const finalEntries = applyMessageLimit(processedEntries);
 	const entriesWithMap = insertContextMap(finalEntries);
 
 	for (const entry of entriesWithMap) {
@@ -280,13 +281,163 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 }
 
 // ---------------------------------------------------------------------------
-// Tier-based context compression
+// Shared context optimizations (Deduplication)
+// ---------------------------------------------------------------------------
+
+function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
+	const toolCallMap = new Map<string, { toolName: string; keys: string[]; isReadWrite: boolean; op: string }>();
+	const lastExecution = new Map<string, string>();
+
+	// Scan to populate toolCallMap and lastExecution
+	for (const entry of branchEntries) {
+		if (!entry || typeof entry !== "object") continue;
+		const e = entry as Record<string, unknown>;
+		if (e.type === "message" && e.message && typeof e.message === "object") {
+			const msg = e.message as Record<string, unknown>;
+			
+			// Gather tool calls from content array and toolCalls/tool_calls field
+			const tcs = (msg.toolCalls || msg.tool_calls || []) as any[];
+			const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
+			const allCalls = [...tcs, ...contentBlocks.filter((b) => b && b.type === "toolCall")];
+
+			for (const tc of allCalls) {
+				const id = tc.id || tc.toolCallId || tc.tool_call_id;
+				const name = tc.name || tc.toolCall?.name;
+				if (!id || !name) continue;
+
+				if (name === "bash" && tc.arguments) {
+					const cmd = (tc.arguments.command || tc.arguments.c || "").trim();
+					if (cmd) {
+						toolCallMap.set(id, { toolName: "bash", keys: [`bash:${cmd}`], isReadWrite: false, op: "bash" });
+						lastExecution.set(`bash:${cmd}`, id);
+					}
+				} else if ((name === "batch" || name === "batch_read") && tc.arguments) {
+					const ops = tc.arguments.ops || tc.arguments.o || [];
+					if (Array.isArray(ops)) {
+						const keys: string[] = [];
+						let opType = "read";
+						for (const op of ops) {
+							const operation = op.o;
+							const path = (op.p || "").trim();
+							if (path && (operation === "read" || operation === "write" || operation === "edit")) {
+								const key = `${operation}:${path}`;
+								keys.push(key);
+								opType = operation;
+								lastExecution.set(key, id);
+							}
+						}
+						if (keys.length > 0) {
+							toolCallMap.set(id, { toolName: name, keys, isReadWrite: true, op: opType });
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Re-process branch entries using the maps
+	return branchEntries.map((entry) => {
+		if (!entry || typeof entry !== "object") return entry;
+		const e = entry as Record<string, unknown>;
+		if (e.type !== "message" || !e.message || typeof e.message !== "object") return entry;
+		const msg = { ...(e.message as Record<string, unknown>) };
+
+		if (msg.role !== "tool" && msg.role !== "toolResult") return entry;
+		const toolCallId = msg.toolCallId || msg.tool_call_id;
+		if (typeof toolCallId !== "string") return entry;
+
+		const info = toolCallMap.get(toolCallId);
+		if (!info) return entry;
+
+		const isLatest = info.keys.some((k) => lastExecution.get(k) === toolCallId);
+
+		if (!isLatest) {
+			const newContent = info.isReadWrite
+				? `[File ${info.op} output omitted; file was accessed/modified later]`
+				: `[Bash output omitted; command was re-run later]`;
+			
+			const contentVal = typeof msg.content === "string" 
+				? newContent 
+				: [{ type: "text", text: newContent }];
+			return {
+				...e,
+				message: {
+					...msg,
+					content: contentVal,
+				},
+			};
+		}
+
+		return entry;
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Standalone bash result truncation
+// ---------------------------------------------------------------------------
+
+function truncateStandaloneBashResult(entry: unknown): unknown {
+	if (!entry || typeof entry !== "object") return entry;
+	const e = entry as Record<string, unknown>;
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") return entry;
+	const msg = e.message as Record<string, unknown>;
+
+	if (msg.role !== "tool" && msg.role !== "toolResult") return entry;
+
+	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+	if (toolName !== "bash") return entry;
+
+	let text: string | undefined;
+	let textIndex: number | undefined;
+
+	if (typeof msg.content === "string") {
+		text = msg.content;
+	} else if (Array.isArray(msg.content)) {
+		for (let idx = 0; idx < msg.content.length; idx++) {
+			const part = msg.content[idx] as Record<string, unknown>;
+			if (part.type === "text" && typeof part.text === "string") {
+				text = part.text;
+				textIndex = idx;
+				break;
+			}
+		}
+	}
+
+	if (!text) return entry;
+
+	const lines = text.split("\n");
+	const head = 30;
+	const tail = 20;
+	if (lines.length <= head + tail) return entry;
+
+	const kept = [...lines.slice(0, head), `[...${lines.length - head - tail} lines of bash output truncated...]`, ...lines.slice(-tail)];
+	const truncatedText = kept.join("\n");
+
+	const newMsg = { ...msg };
+	if (typeof msg.content === "string") {
+		newMsg.content = truncatedText;
+	} else if (textIndex !== undefined) {
+		newMsg.content = (msg.content as Array<Record<string, unknown>>).map((part, idx) => {
+			if (idx === textIndex) {
+				return { ...part, text: truncatedText };
+			}
+			return part;
+		});
+	}
+
+	return {
+		...e,
+		message: newMsg,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Unified context message limits
 // ---------------------------------------------------------------------------
 
 const DEFAULT_MAX_MESSAGES = 80;
 
-function getTierMaxMessages(tier: FlowTier | undefined): number {
-	if (!tier) return Number.MAX_SAFE_INTEGER;
+function getTierMaxMessages(): number {
 	const env = process.env.PI_FLOW_MAX_MESSAGES;
 	if (!env) return DEFAULT_MAX_MESSAGES;
 	const n = Number(env);
@@ -294,35 +445,7 @@ function getTierMaxMessages(tier: FlowTier | undefined): number {
 }
 
 /**
- * Compress a single snapshot entry based on tier.
- *
- * All tiers strip tool/toolResult content to placeholders (e.g. [toolResult: bash])
- * so the child flow sees what tools were used without receiving full verbatim
- * output, keeping the snapshot compact and focused on conversation history.
- */
-function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unknown {
-	if (!tier) return entry;
-	if (!entry || typeof entry !== "object") return entry;
-	const e = entry as Record<string, unknown>;
-	if (e.type !== "message" || !e.message || typeof e.message !== "object") {
-		return entry;
-	}
-	const msg = { ...(e.message as Record<string, unknown>) };
-	const role = msg.role;
-	if (role !== "tool" && role !== "toolResult") {
-		return entry;
-	}
-
-	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
-	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
-	// Preserve array shape so downstream consumers that call .content.filter() don't crash.
-	// A text block is the canonical form for tool message content.
-	msg.content = [{ type: "text", text: placeholder }];
-	return { ...e, message: msg };
-}
-
-/**
- * Apply array-level message limit based on tier: keep only the last N messages.
+ * Apply array-level message limit: keep only the last N messages.
  * Header/session entries at the start of the branch are preserved; only
  * `type: "message"` entries count toward the limit.
  */
@@ -342,8 +465,8 @@ function insertContextMap(entries: unknown[]): unknown[] {
 	];
 }
 
-function applyMessageLimit(entries: unknown[], tier: FlowTier | undefined): unknown[] {
-	const max = getTierMaxMessages(tier);
+function applyMessageLimit(entries: unknown[]): unknown[] {
+	const max = getTierMaxMessages();
 	if (max >= Number.MAX_SAFE_INTEGER) return entries;
 
 	// Extract leading header/session entries so they survive the slice
@@ -407,7 +530,10 @@ function isBatchSectionHeader(line: string): boolean {
 		/^--- write: (.+) \((\d+) bytes\) ---$/.test(line) ||
 		/^--- write: (.+) ---$/.test(line) ||
 		/^--- edit: (.+) \(([^)]*)\) ---$/.test(line) ||
-		/^--- edit: (.+) ---$/.test(line)
+		/^--- edit: (.+) ---$/.test(line) ||
+		/^--- bash \[.+\] (exit (\d+)|pending|error) ---$/.test(line) ||
+		/^--- \[.+\] (exit (\d+)|interrupted) ---$/.test(line) ||
+		/^--- \[.+\] still running ---$/.test(line)
 	);
 }
 
@@ -427,12 +553,25 @@ export function stripBatchBodies(text: string): string {
 				body.push(lines[i]);
 				i++;
 			}
-			if (body.length > 6) {
-				out.push(...body.slice(0, 3));
-				out.push(`[...${body.length - 6} lines truncated...]`);
-				out.push(...body.slice(-3));
+			const isBash = line.includes("--- bash [") || line.includes("--- [");
+			if (isBash) {
+				const head = 30;
+				const tail = 20;
+				if (body.length > head + tail) {
+					out.push(...body.slice(0, head));
+					out.push(`[...${body.length - head - tail} lines of bash output truncated...]`);
+					out.push(...body.slice(-tail));
+				} else {
+					out.push(...body);
+				}
 			} else {
-				out.push(...body);
+				if (body.length > 6) {
+					out.push(...body.slice(0, 3));
+					out.push(`[...${body.length - 6} lines truncated...]`);
+					out.push(...body.slice(-3));
+				} else {
+					out.push(...body);
+				}
 			}
 		} else {
 			out.push(line);
