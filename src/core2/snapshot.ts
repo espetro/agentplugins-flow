@@ -209,6 +209,14 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 			delete msg.toolCallId;
 		}
 
+		// Defensive: upstream host assumes content is always an array for tool/toolResult
+		// messages. Normalize string / null / undefined into a block array so .filter()
+		// never explodes on the platform side.
+		if ((msg.role === "toolResult" || msg.role === "tool") && !Array.isArray(msg.content)) {
+			const text = typeof msg.content === "string" ? msg.content : "";
+			msg.content = text ? [{ type: "text", text }] : [];
+		}
+
 		// Strip block-level thinking/reasoning elements from content array
 		if (Array.isArray(msg.content)) {
 			const filteredContent = msg.content.filter((block: any) => {
