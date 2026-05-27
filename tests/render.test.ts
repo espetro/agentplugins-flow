@@ -848,7 +848,7 @@ describe("activity panel rendering", () => {
 		const text = extractText(rendered);
 		expect(text).toContain("├─");
 		expect(text).toContain("└─");
-		expect(text).toContain("│");
+		expect(text).not.toContain("│  ");
 		expect(text).toContain("debug");
 		expect(text).toContain("scout");
 	});
@@ -2178,6 +2178,50 @@ describe("flow status dot rendering", () => {
 		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
 		expect(auditHeader).toBeDefined();
 		expect(auditHeader).toContain("└─");
+	});
+
+	it("standalone flow children always use three-space prefix, never tree continuation", () => {
+		const result1 = makeResult({
+			type: "scout",
+			exitCode: 0,
+			status: "done",
+			messages: [
+				makeToolCallMessage("bash", { command: "echo hello" }),
+				makeTextMessage("Done"),
+			],
+		});
+		const result2 = makeResult({
+			type: "build",
+			exitCode: 0,
+			status: "done",
+			messages: [
+				makeToolCallMessage("bash", { command: "npm test" }),
+				makeTextMessage("Passed"),
+			],
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result1, result2] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
+		const text = extractText(rendered);
+		const lines = text.split("\n");
+
+		// First flow (scout) is not last root — its children must NOT use "│  "
+		const scoutLines = lines.slice(0, lines.findIndex((l) => l.includes("build")));
+		for (const line of scoutLines) {
+			if (line.includes("cmd ▸") || line.includes("msg ▸") || line.includes("aim ▸")) {
+				expect(line).not.toContain("│  ");
+				expect(line).toMatch(/^\s{3}/);
+			}
+		}
+
+		// Second flow (build) is last root — its children also use three spaces
+		const buildLines = lines.slice(lines.findIndex((l) => l.includes("build")));
+		for (const line of buildLines) {
+			if (line.includes("cmd ▸") || line.includes("msg ▸") || line.includes("aim ▸")) {
+				expect(line).not.toContain("│  ");
+				expect(line).toMatch(/^\s{3}/);
+			}
+		}
 	});
 
 

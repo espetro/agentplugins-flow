@@ -412,7 +412,7 @@ function renderStandaloneFlow(
 ): void {
 	const flowId = `${idPrefix}#${index}`;
 	const headerPrefix = isLastRoot ? "└─" : "├─";
-	const childPrefix = isLastRoot ? "   " : "│  ";
+	const childPrefix = "   ";
 
 	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, r, flowId, childPrefix, theme, now, config);
