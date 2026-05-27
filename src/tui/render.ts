@@ -367,19 +367,16 @@ function renderActivityPanel(
 		}
 	}
 
-	for (let itemIdx = 0; itemIdx < orderedItems.length; itemIdx++) {
-		const item = orderedItems[itemIdx];
-		const isLastRoot = itemIdx === orderedItems.length - 1;
-
+	for (const item of orderedItems) {
 		if (item.kind === "flow") {
 			renderStandaloneFlow(
 				container, results[item.index], item.index,
-				idPrefix, theme, now, config, isLastRoot, sharedContext,
+				idPrefix, theme, now, config, sharedContext,
 			);
 		} else {
 			renderGroup(
 				container, groups[item.groupIndex], results,
-				idPrefix, theme, now, config, isLastRoot, sharedContext,
+				idPrefix, theme, now, config, sharedContext,
 			);
 		}
 
@@ -400,7 +397,6 @@ function renderStandaloneFlow(
 	theme: FlowTheme,
 	now: number,
 	config?: FlowColorConfig,
-	isLastRoot: boolean = false,
 	sharedContext?: {
 		messageCount: number;
 		userMessageCount: number;
@@ -433,7 +429,6 @@ function renderGroup(
 	theme: FlowTheme,
 	now: number,
 	config?: FlowColorConfig,
-	isLastRoot: boolean = false,
 	sharedContext?: {
 		messageCount: number;
 		userMessageCount: number;
@@ -477,7 +472,7 @@ function renderGroup(
 		default:
 			initialDot = theme.fg("muted", "?");
 	}
-	const dotPlaceholder = stripAnsi(initialDot) + " ";
+	const dotPlaceholder = stripAnsi(initialDot);
 
 	// ─── Group header line (flush-left, scintillating dot, DynamicScrambleText) ───
 	const groupLabel = "audit-loop";
@@ -489,7 +484,7 @@ function renderGroup(
 	const plainHeader = dotPlaceholder + " " + groupLabel;
 
 	const headerSegments: HeaderSegment[] = [
-		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(
+		{ text: dotPlaceholder + " ", style: (_s) => getScintillatingStatusDot(
 			{ ...results[group.buildIndices[0]], status: groupStatus } as SingleResult,
 			theme, Date.now(), groupFlowId,
 		) + " " },
