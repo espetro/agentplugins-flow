@@ -211,16 +211,15 @@ Agent work is organized into two tiers. **Access is not the boundary — intent 
 **Question:** "Do the thing, but stay in your lane."  
 **Mutations:** Yes — reads, writes, edits, tests, ships. Each flow has a strict mission profile. No mission drift.
 
-| Flow | Tools | maxDepth | Tier | Notes |
-|------|-------|----------|------|-------|
-
-| `trace` | batch, bash, find, grep, ls, web | 0 | lite | Read files verbatim, run checks, explore codebase. Standalone tool — zero required fields. |
-| `scout` | batch, bash, find, grep, ls, web | 0 | lite | Deep dive architecture mapping and bash execution. |
-| `build` | batch, bash, find, grep, ls, web | 0 | flash | Implement, test, verify, ship. The craftsman. |
-| `audit` | batch, bash, find, grep, ls, web | 0 | flash | Audit security, quality, correctness; provide feedback — no code edits. |
-| `debug` | batch, bash, find, grep, ls, web | 0 | lite | Investigate root cause AND fix the bug. |
-| `ideas` | batch, bash, web | 0 | full | Generate ideas and explore possibilities using inherited context. |
-| `craft` | batch, bash, find, grep, ls, web | 0 | full | Plan structure, break down requirements, and design solutions. |
+| Flow | Tools | maxDepth | Tier | Context Profile | Notes |
+|------|-------|----------|------|-----------------|-------|
+| `trace` | batch, bash, find, grep, ls, web | 0 | lite | `files-first` | Read files verbatim, run checks, explore codebase. Standalone tool — zero required fields. |
+| `scout` | batch, bash, find, grep, ls, web | 0 | lite | `discovery-first` | Deep dive architecture mapping and bash execution. |
+| `build` | batch, bash, find, grep, ls, web | 0 | flash | `edits-first` | Implement, test, verify, ship. The craftsman. |
+| `audit` | batch, bash, find, grep, ls, web | 0 | flash | `code-first` | Audit security, quality, correctness; provide feedback — no code edits. |
+| `debug` | batch, bash, find, grep, ls, web | 0 | lite | `errors-first` | Investigate root cause AND fix the bug. |
+| `ideas` | batch, bash, web | 0 | full | `intent-first` | Generate ideas and explore possibilities using inherited context. |
+| `craft` | batch, bash, find, grep, ls, web | 0 | full | `intent-first` | Plan structure, break down requirements, and design solutions. |
 
 > **None of these flows have `ask_user`.** If user input is needed, a flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user.
 >
@@ -303,6 +302,9 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 |----------|--------|
 | `PI_FLOW_DUMP_SNAPSHOT` | Base path for snapshot dumps. Each flow appends `.<flowName>.<timestamp>` before the extension so parallel flows don't collide. Must be **exported** in the shell before `pi` starts. See [Payload dump workflow](#payload-dump-workflow) below. |
 | `PI_FLOW_DUMP_MAX_AGE_HOURS` | Max age of dump files before auto-cleanup deletes them (default 168 = 7 days). |
+| `PI_FLOW_CONTEXT_THRESHOLD` | Token threshold before context compression kicks in (default 70_000). |
+| `PI_FLOW_CONTEXT_COMPRESSION` | Override compression level: `none`, `light`, `medium`, `aggressive`. Bypasses auto-detection. |
+| `PI_FLOW_EMERGENCY_WARP` | Set to `1` or `true` to enable emergency warp fallback when aggressive compression still exceeds 100k tokens. |
 | `PI_FLOW_MAX_DEPTH` | Override the default transition depth limit. |
 | `PI_FLOW_MAX_CONCURRENCY` | Override the default maximum concurrent flows (default 4, capped to CPU count). |
 | `PI_FLOW_IDLE_WAKEUP_MS` | Override the idle wake-up threshold in milliseconds (default 600000 = 10 minutes). |
@@ -352,6 +354,7 @@ Control runtime behavior via slash commands, CLI flags, environment variables, o
 | `batch-read` | `/flow:settings batch-read on\|off` — Enable/disable the `batch_read` tool. |
 | `structured-output` | `/flow:settings structured-output on\|off` — Enable/disable structured JSON output from flows. |
 | `complexity` | `/flow:settings complexity <snap\|simple\|moderate\|complex\|intricate>` — Set the child-flow complexity (budget + review). |
+| `context-compression` | `/flow:settings context-compression <auto\|light\|medium\|aggressive>` — Set forked child context compression level. |
 | `max-concurrency` | `/flow:settings max-concurrency <n>` — Set maximum concurrent flows. |
 | `ask-user` | `/flow:settings ask-user enabled <on\|off>` — Enable/disable ask_user countdown. `/flow:settings ask-user timeout <seconds>` — Set auto-dismiss timeout. |
 | `reset` | `/flow:settings reset` — Reset all settings to their defaults. |
@@ -397,6 +400,7 @@ When the same setting is defined in multiple places, the value is resolved as:
     "structuredOutput": true,
     "bodyVerbosity": "lite",
     "complexity": "moderate",
+    "contextCompression": "auto",
     "maxConcurrency": 3,
     "tools": {
       "trace": true,

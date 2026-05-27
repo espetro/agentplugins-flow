@@ -95,6 +95,7 @@ export async function executeSingleFlow(
 			maxContextTokens,
 			goalContext,
 			debugMode: deps.debugMode,
+			compressionStats: deps.compressionStats,
 			tools: item._childTools,
 			preDispatchResults: item.preDispatchResults,
 			signal,

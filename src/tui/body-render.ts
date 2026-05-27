@@ -82,7 +82,7 @@ function renderFlowExpanded(
 
 	// Stats: dashboard format
 	const displayUsage = sharedContext ? { ...r.usage, input: sharedContext.totalTokens } : r.usage;
-	const inlineStats = formatCompactStats(displayUsage, r.model);
+	const inlineStats = formatCompactStats(displayUsage, r.model, undefined, { compressionLevel: r.compressionStats?.level });
 	container.addChild(new DynamicScrambleText(
 		applyRole("stats", inlineStats, theme, config),
 		() => {
@@ -518,7 +518,7 @@ function renderMultiFlowExpanded(
 		));
 
 		// Stats: dashboard format
-		const flowStats = formatCompactStats(r.usage, r.model);
+		const flowStats = formatCompactStats(r.usage, r.model, undefined, { compressionLevel: r.compressionStats?.level });
 		container.addChild(new DynamicScrambleText(
 			applyRole("stats", flowStats, theme, config),
 			() => {
@@ -612,7 +612,7 @@ function renderMultiFlowExpanded(
 	// Total stats: dashboard format
 	const totalUsage = aggregateFlowUsage(results);
 	const totalModel = results[0]?.model;
-	const totalStats = formatCompactStats(totalUsage, totalModel);
+	const totalStats = formatCompactStats(totalUsage, totalModel, undefined, { compressionLevel: results[0]?.compressionStats?.level });
 	container.addChild(new Spacer(1));
 	container.addChild(new Text(applyRole("stats", totalStats, theme, config), 0, 0));
 

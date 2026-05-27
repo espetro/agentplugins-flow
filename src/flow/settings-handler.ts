@@ -152,6 +152,15 @@ export function getCategoryHandler(
 				tui.requestRender();
 			};
 		}
+		case "compression": {
+			return (id, value) => {
+				if (id === "contextCompression") {
+					writeFlowSetting(cwd, "contextCompression", value);
+				}
+				rebuild();
+				tui.requestRender();
+			};
+		}
 		default: {
 			return () => {};
 		}
@@ -314,12 +323,22 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 			}
 			break;
 		}
+		case "context-compression": {
+			const validModes = ["auto", "light", "medium", "aggressive"] as const;
+			if (!validModes.includes(value as any)) {
+				ctx.ui.notify?.("Usage: /flow:settings context-compression <auto|light|medium|aggressive>", "error");
+				return;
+			}
+			writeFlowSetting(cwd, "contextCompression", value);
+			ctx.ui.notify?.(`contextCompression = ${value}`, "info");
+			break;
+		}
 		case "reset": {
 			writeFlowSetting(cwd, "", {});
 			ctx.ui.notify?.("Flow settings reset to defaults", "info");
 			break;
 		}
-		case "show": {
+		case "show": {	
 			const currentSettings = loadFlowSettings(cwd);
 			const loop = getLoop(cwd);
 			const lines = [
@@ -328,8 +347,8 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 				`structuredOutput: ${currentSettings.structuredOutput ?? true}`,
 				`complexity: ${currentSettings.complexity ?? "moderate"}`,
 				`maxConcurrency: ${currentSettings.maxConcurrency ?? 4}`,
+				`contextCompression: ${currentSettings.contextCompression ?? "auto"}`,
 				`steering.enabled: ${currentSettings.steering?.enabled ?? true}`,
-	
 				`animation.enabled: ${currentSettings.animation?.enabled ?? true}`,
 				`animation.glitch: ${currentSettings.animation?.glitch ?? true}`,
 				`askUser.enabled: ${currentSettings.askUser?.enabled ?? false}`,
@@ -352,7 +371,7 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 		}
 		default: {
 			ctx.ui.notify?.(
-				"Unknown subcommand. Usage: /flow:settings {steering|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
+				"Unknown subcommand. Usage: /flow:settings {steering|animation|glitch|tool-optimize|structured-output|body|complexity|context-compression|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
 				"error",
 			);
 		}

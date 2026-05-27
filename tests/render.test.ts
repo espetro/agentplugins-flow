@@ -1849,7 +1849,7 @@ describe("in-place mutation pattern", () => {
 // Flow status dot rendering
 // ---------------------------------------------------------------------------
 describe("flow status dot rendering", () => {
-	it("group header shows aggregate status icon", () => {
+	it("group header is muted and omits aggregate status icon", () => {
 		const buildResult = makeResult({
 			type: "build",
 			exitCode: -1,
@@ -1868,7 +1868,7 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("●");
+		expect(groupHeader).not.toMatch(/[●○✓✗⊘?]/);
 		expect(groupHeader).toContain("audit-loop");
 	});
 
@@ -2133,6 +2133,53 @@ describe("flow status dot rendering", () => {
 		// (previously: const blankLine = lines.find((l) => l === "│  │" || l.trim() === "│  │"); expect(blankLine).toBeDefined();)
 	});
 
+	it("group as last root item uses └─ and indents children", () => {
+		const scoutResult = makeResult({
+			type: "scout",
+			exitCode: 0,
+			status: "done",
+			model: "openai/gpt-4o",
+			usage: { input: 5000, output: 500, contextTokens: 5000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: -1,
+			pingPongMeta: { loopIteration: 1 },
+			status: "running",
+			model: "openai/gpt-4o",
+			usage: { input: 1000, output: 200, contextTokens: 120_000, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			auditParentType: "build",
+			status: "awaiting",
+			model: "openai/gpt-4o",
+			usage: { input: 0, output: 0, contextTokens: 120_000, turns: 0, toolCalls: 0 },
+			maxContextTokens: 260_000,
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [scoutResult, buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const lines = text.split("\n");
+
+		const groupHeader = lines.find((l) => l.includes("audit-loop"));
+		expect(groupHeader).toBeDefined();
+		expect(groupHeader).toContain("└─");
+		expect(groupHeader).toContain("audit-loop");
+
+		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
+		expect(buildHeader).toBeDefined();
+		expect(buildHeader).toContain("   ├─");
+
+		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
+		expect(auditHeader).toBeDefined();
+		expect(auditHeader).toContain("   └─");
+	});
+
 
 	it("regular completed build in activity panel shows summary instead of [finished]", () => {
 		const buildResult = makeResult({
@@ -2228,8 +2275,6 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("✓");
-		expect(groupHeader).toContain("2 cycles · pass");
 		expect(groupHeader).toContain("audit-loop");
 	});
 
@@ -2252,8 +2297,6 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("○");
-		expect(groupHeader).toContain("cycle 1");
 		expect(groupHeader).toContain("audit-loop");
 	});
 });

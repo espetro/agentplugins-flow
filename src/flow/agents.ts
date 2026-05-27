@@ -21,6 +21,24 @@ export type FlowScope = "user" | "project" | "both" | "bundled" | "all";
 
 export type FlowTier = "lite" | "flash" | "full";
 
+export type ToolResultCategory =
+	| "error"
+	| "stackTrace"
+	| "testFailure"
+	| "fileContent"
+	| "bashSuccess"
+	| "grepResult"
+	| "gitDiff"
+	| "userMessage"
+	| "designDecision"
+	| "other";
+
+export interface ContextProfile {
+	name: string;
+	keepCategories: ToolResultCategory[];
+	compressCategories: ToolResultCategory[];
+}
+
 export interface FlowConfig {
 	name: string;
 	description: string;
@@ -30,6 +48,7 @@ export interface FlowConfig {
 	maxDepth?: number;
 	inheritContext?: boolean;
 	tier?: FlowTier;
+	contextProfile?: ContextProfile;
 	systemPrompt: string;
 	source: "user" | "project" | "bundled";
 	filePath: string;
@@ -147,7 +166,7 @@ function parseFlowFile(filePath: string, source: "user" | "project" | "bundled")
 	// Warn about unknown frontmatter keys
 	const knownKeys = new Set([
 		"name", "description", "tools", "model", "thinking",
-		"maxDepth", "inheritContext", "tier",
+		"maxDepth", "inheritContext", "tier", "contextProfile",
 	]);
 	for (const key of Object.keys(frontmatter)) {
 		if (!knownKeys.has(key)) {
@@ -213,6 +232,16 @@ function parseFlowFile(filePath: string, source: "user" | "project" | "bundled")
 		}
 	}
 
+	// Parse contextProfile from frontmatter
+	let contextProfile: ContextProfile | undefined;
+	if (typeof frontmatter.contextProfile === "string") {
+		const profileName = frontmatter.contextProfile.trim().toLowerCase();
+		contextProfile = resolveContextProfile(profileName);
+		if (!contextProfile) {
+			logWarn(`[pi-agent-flow] Ignoring unknown contextProfile "${frontmatter.contextProfile}" in "${filePath}".`);
+		}
+	}
+
 	return {
 		name,
 		description,
@@ -222,10 +251,55 @@ function parseFlowFile(filePath: string, source: "user" | "project" | "bundled")
 		maxDepth,
 		inheritContext,
 		tier: tier ?? getFlowTier(name),
+		contextProfile,
 		systemPrompt: body,
 		source,
 		filePath,
 	};
+}
+
+/** Resolve a context profile name to its definition. */
+function resolveContextProfile(name: string): ContextProfile | undefined {
+	switch (name) {
+		case "files-first":
+			return {
+				name: "files-first",
+				keepCategories: ["fileContent", "error"],
+				compressCategories: ["bashSuccess", "grepResult", "other"],
+			};
+		case "errors-first":
+			return {
+				name: "errors-first",
+				keepCategories: ["error", "stackTrace", "testFailure"],
+				compressCategories: ["bashSuccess", "fileContent", "grepResult", "gitDiff", "other"],
+			};
+		case "edits-first":
+			return {
+				name: "edits-first",
+				keepCategories: ["fileContent", "gitDiff", "error"],
+				compressCategories: ["bashSuccess", "grepResult", "other"],
+			};
+		case "discovery-first":
+			return {
+				name: "discovery-first",
+				keepCategories: ["grepResult", "fileContent", "error"],
+				compressCategories: ["bashSuccess", "other"],
+			};
+		case "intent-first":
+			return {
+				name: "intent-first",
+				keepCategories: ["userMessage", "designDecision"],
+				compressCategories: ["bashSuccess", "fileContent", "grepResult", "gitDiff", "error", "stackTrace", "testFailure", "other"],
+			};
+		case "code-first":
+			return {
+				name: "code-first",
+				keepCategories: ["fileContent", "error"],
+				compressCategories: ["bashSuccess", "grepResult", "stackTrace", "testFailure", "other"],
+			};
+		default:
+			return undefined;
+	}
 }
 
 /** Load all flow definitions from a directory. */

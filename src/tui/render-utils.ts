@@ -3,6 +3,7 @@
  */
 
 import type { UsageStats } from "../types/flow.js";
+import { formatCompressionIndicator } from "./context-display.js";
 
 /**
  * Format a token count to exactly 5 characters with leading spaces.
@@ -51,7 +52,7 @@ export function formatCompactStats(
 	usage: Partial<UsageStats>,
 	model?: string,
 	maxWidth?: number,
-	options: { skipTokens?: boolean; skipContext?: boolean; hideModel?: boolean } = {},
+	options: { skipTokens?: boolean; skipContext?: boolean; hideModel?: boolean; compressionLevel?: string } = {},
 ): string {
 	const tokenParts = [`▲ ${formatFixedTokens(usage.input || 0)}`];
 	let runtimeParts = [formatTps(usage.smoothedTps)];
@@ -62,6 +63,12 @@ export function formatCompactStats(
 
 	const displayModel = options.hideModel ? undefined : (model ? model.replace(/^[^/]+\//, "").toLowerCase() : undefined);
 	let result = parts.join(" - ") + (displayModel ? ` - ${displayModel}` : "");
+	if (options.compressionLevel) {
+		const indicator = formatCompressionIndicator(options.compressionLevel);
+		if (indicator) {
+			result += ` · ${indicator}`;
+		}
+	}
 	if (maxWidth && visibleLength(result) > maxWidth) {
 		// Drop model first.
 		let narrow = parts.join(" - ");

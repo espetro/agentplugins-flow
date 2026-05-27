@@ -18,7 +18,7 @@ import type { SingleResult } from "../types/flow.js";
 
 import {
 	FlowGroup, GroupDetectionResult, detectGroups,
-	flowStatusIcon, getFlowStatus, isFlowStatusComplete, isFlowRunning, isFlowAwaiting,
+	flowStatusIcon, getFlowStatus, isFlowStatusComplete,
 	hashStrToSeed, getScintillatingStatusDot,
 } from "./grouping.js";
 
@@ -41,7 +41,7 @@ import {
 // Re-export all extracted symbols for backward compatibility
 export {
 	FlowGroup, GroupDetectionResult, detectGroups,
-	flowStatusIcon, getFlowStatus, isFlowStatusComplete, isFlowRunning, isFlowAwaiting,
+	flowStatusIcon, getFlowStatus, isFlowStatusComplete,
 	hashStrToSeed, getScintillatingStatusDot,
 } from "./grouping.js";
 
@@ -443,59 +443,12 @@ function renderGroup(
 	},
 ): void {
 	// ─── Group header line ───
-	// Collect all children for aggregate status computation
-	const childIndices = [...group.buildIndices, group.auditIndex];
-	const children = childIndices.map((idx) => results[idx]);
-
-	// Compute aggregate status icon
-	const anyRunning = children.some((r) => isFlowRunning(r));
-	const anyAwaiting = children.some((r) => isFlowAwaiting(r));
-	const anyError = children.some((r) => isFlowError(r));
-	const allComplete = children.every((r) => isFlowStatusComplete(r));
-
-	const buildChildren = group.buildIndices.map((idx) => results[idx]);
-	const anyPass = buildChildren.some((r) => r.pingPongMeta?.finalVerdict === "pass");
-
-	let aggregateIcon: string;
-	if (anyRunning) {
-		aggregateIcon = theme.fg("accent", "●");
-	} else if (anyAwaiting) {
-		aggregateIcon = theme.fg("muted", "○");
-	} else if (allComplete && anyPass) {
-		aggregateIcon = theme.fg("success", "✓");
-	} else if (anyError) {
-		aggregateIcon = theme.fg("error", "✗");
-	} else if (allComplete) {
-		aggregateIcon = theme.fg("muted", "⊘");
-	} else {
-		aggregateIcon = theme.fg("muted", "?");
-	}
-
-	// Compute cycle counter badge from build metadata
-	const maxCycles = Math.max(...buildChildren.map((r) => r.pingPongMeta?.cycles ?? 0));
-	const hasPingPong = buildChildren.some((r) => r.pingPongMeta !== undefined);
-	let badgeText = "";
-	if (hasPingPong && maxCycles > 0) {
-		const anyIncomplete = children.some((r) => !isFlowStatusComplete(r));
-		if (anyIncomplete) {
-			badgeText = `cycle ${maxCycles}`;
-		} else {
-			const finalVerdict = buildChildren.find((r) => r.pingPongMeta?.finalVerdict)?.pingPongMeta?.finalVerdict ?? "";
-			const cyclesLabel = maxCycles === 1 ? "1 cycle" : `${maxCycles} cycles`;
-			badgeText = finalVerdict ? `${cyclesLabel} · ${finalVerdict}` : cyclesLabel;
-		}
-	}
-
-	// Build header parts
-	const treePart = isLastRoot ? "" : "├─ ";
-	const label = " audit-loop";
-	const badge = badgeText ? ` · ${badgeText}` : "";
+	const treePart = isLastRoot ? "└─ " : "├─ ";
+	const groupIndent = isLastRoot ? "   " : "│  ";
 
 	const headerLine =
 		applyRole("treeChars", treePart, theme, config) +
-		aggregateIcon +
-		applyRole("groupHeader", label, theme, config) +
-		applyRole("groupHeader", badge, theme, config);
+		applyRole("groupHeader", "audit-loop", theme, config);
 
 	container.addChild(new Text(headerLine, 0, 0));
 
@@ -505,9 +458,8 @@ function renderGroup(
 		const r = results[buildIdx];
 		const flowId = `${idPrefix}#${buildIdx}`;
 		const isLastBuild = b === group.buildIndices.length - 1;
-		// Audit always follows the last build, so every build uses ├─; only audit gets └─
-		const buildHeaderPrefix = isLastRoot ? "├─" : "│  ├─";
-		const buildChildPrefix = isLastRoot ? "│  " : "│  │  "; // All builds: audit follows, tree line continues
+		const buildHeaderPrefix = groupIndent + "├─";
+		const buildChildPrefix = groupIndent + "│  ";
 
 		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config, sharedContext);
 		renderFlowBody(container, r, flowId, buildChildPrefix, theme, now, config);
@@ -523,8 +475,8 @@ function renderGroup(
 	const auditIdx = group.auditIndex;
 	const auditResult = results[auditIdx];
 	const auditFlowId = `${idPrefix}#${auditIdx}`;
-	const auditHeaderPrefix = isLastRoot ? "└─" : "│  └─";
-	const auditChildPrefix = isLastRoot ? "   " : "│     ";
+	const auditHeaderPrefix = groupIndent + "└─";
+	const auditChildPrefix = groupIndent + "   ";
 
 	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, auditResult, auditFlowId, auditChildPrefix, theme, now, config);

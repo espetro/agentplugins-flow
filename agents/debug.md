@@ -4,6 +4,7 @@ description: Hypothesis driven root cause analysis minimal instrumentation targe
 tools: batch bash find grep ls
 maxDepth: 0
 tier: lite
+contextProfile: errors-first
 ---
 
 mission: Find why the bug happens not the first plausible story prove it with runtime or test evidence apply the smallest safe fix verify then clean up. Treat conversation history as background only.

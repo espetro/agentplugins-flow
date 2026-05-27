@@ -49,6 +49,9 @@ export interface FlowSettings {
 	/** Default child-flow complexity. Default: "moderate" (600s, 1x audit). */
 	complexity?: Complexity;
 
+	/** Context compression mode for forked child agents. Default: "auto". */
+	contextCompression?: "auto" | "light" | "medium" | "aggressive";
+
 	steering?: {
 		/** Skip entire steering system message when false. Default: true. */
 		enabled?: boolean;
@@ -344,6 +347,14 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 			tools.batchRead = obj.tools.batchRead;
 		}
 		result.tools = tools;
+	}
+
+	// Parse context compression setting
+	if (
+		typeof obj.contextCompression === "string" &&
+		(obj.contextCompression === "auto" || obj.contextCompression === "light" || obj.contextCompression === "medium" || obj.contextCompression === "aggressive")
+	) {
+		result.contextCompression = obj.contextCompression;
 	}
 
 	return result;

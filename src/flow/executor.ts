@@ -68,6 +68,7 @@ export interface FlowExecutorDeps {
 	tierOverrideResolver: (tier: "lite" | "flash" | "full") => string | undefined;
 	fallbackModel?: string;
 	forkSessionSnapshotJsonl: string | null;
+	compressionStats?: import("../core2/snapshot.js").CompressionStats;
 	projectFlowsDir: string | null;
 	sessionManager: { getHeader: () => unknown; getBranch: () => unknown[]; getSessionId: () => string };
 	hasUI: boolean;

@@ -4,6 +4,7 @@ description: Deep dive architecture mapping and bash execution
 tools: batch bash find grep ls
 maxDepth: 0
 tier: lite
+contextProfile: discovery-first
 ---
 
 mission: Deep dive to discover context, map architecture, and execute bash scripts. Treat history as reference; do not modify files.

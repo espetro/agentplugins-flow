@@ -4,6 +4,7 @@ description: Activate trace mode — read files verbatim, run checks, explore co
 tools: batch bash find grep ls web
 maxDepth: 0
 tier: lite
+contextProfile: files-first
 ---
 
 mission: Verify all hypotheses, blind spots using batch read or batch bash (git/logs/static tests only). Do NOT modify files or spawn sub-flows.

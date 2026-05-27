@@ -4,7 +4,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import { getFlowFinalText } from "../snapshot/runner-events.js";
-import type { SharedContext } from "../core2/snapshot.js";
+import type { SharedContext, CompressionStats } from "../core2/snapshot.js";
 
 /** Aggregated token usage from a flow run. */
 export interface UsageStats {
@@ -44,6 +44,8 @@ export interface SingleResult {
 	maxContextTokens?: number;
 	/** Structured JSON output parsed from the flow's final response. */
 	structuredOutput?: import("./output.js").FlowStructuredOutput;
+	/** Context compression stats if compression was applied during this flow. */
+	compressionStats?: CompressionStats;
 	/** Lifecycle status for ping-pong flow rendering. Optional — falls back to exitCode inference when absent. */
 	status?: "pending" | "awaiting" | "running" | "done" | "error" | "skipped";
 	/** If this result was auto-spawned as an audit, the type of the parent flow it audited. */

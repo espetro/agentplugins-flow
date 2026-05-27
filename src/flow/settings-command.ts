@@ -40,6 +40,7 @@ import {
 	getAskUserItems,
 	getLoopItems,
 	getModelConfigItems,
+	getCompressionItems,
 	buildInputSubmenu,
 	buildModelPickerSubmenu,
 	_moduleRefs,
@@ -56,6 +57,7 @@ export {
 	getAskUserItems,
 	getLoopItems,
 	getModelConfigItems,
+	getCompressionItems,
 	buildInputSubmenu,
 	buildModelPickerSubmenu,
 	type TooltipSelectItem,
@@ -247,7 +249,7 @@ export class SettingsList implements Component {
 export function setupSettingsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("flow:settings", {
 		description:
-			"Manage flow settings. Subcommands: steering <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, trace <on|off>, batch-read <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
+			"Manage flow settings. Subcommands: steering <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, trace <on|off>, batch-read <on|off>, complexity <mode>, context-compression <auto|light|medium|aggressive>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (!ctx.ui) {
 				return;
@@ -342,6 +344,8 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 									items = getLoopItems(currentSettings, cwd);
 								} else if (currentCategory === "debug") {
 									items = getDebugItems(currentSettings);
+								} else if (currentCategory === "compression") {
+									items = getCompressionItems(currentSettings);
 								} else {
 									items = [];
 								}

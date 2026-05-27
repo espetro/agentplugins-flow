@@ -46,7 +46,8 @@ export type SettingsCategory =
 	| "ask-user"
 	| "model-config"
 	| "loop"
-	| "debug";
+	| "debug"
+	| "compression";
 
 export interface TooltipSelectItem extends SelectItem {
 	tooltip?: string;
@@ -107,6 +108,12 @@ export function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSe
 			label: "Session Settings",
 			description: `complexity: ${complexity} · body: ${settings.bodyVerbosity ?? "lite"}`,
 			tooltip: "Set default complexity and concurrency",
+		},
+		{
+			value: "compression",
+			label: "Context Compression",
+			description: `mode: ${settings.contextCompression ?? "auto"}`,
+			tooltip: "Forked child context compression level",
 		},
 		{
 			value: "ask-user",
@@ -226,6 +233,18 @@ export function getDebugItems(settings: FlowSettings): SettingItem[] {
 			description: "Write full child flow prompt to disk on every spawn",
 			currentValue: (settings.debugMode ?? false) ? "on" : "off",
 			values: ["on", "off"],
+		},
+	];
+}
+
+export function getCompressionItems(settings: FlowSettings): SettingItem[] {
+	return [
+		{
+			id: "contextCompression",
+			label: "context-compression",
+			description: "Forked child context compression level",
+			currentValue: settings.contextCompression ?? "auto",
+			values: ["auto", "light", "medium", "aggressive"],
 		},
 	];
 }

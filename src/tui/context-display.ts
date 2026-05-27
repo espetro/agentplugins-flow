@@ -41,3 +41,14 @@ export function mergeStreamingContextTokens(
 	if (ctxEstimate <= 0 && resolved <= 0) return resolved;
 	return Math.max(resolved, ctxEstimate);
 }
+
+/** Format a compression level as a short indicator for the TUI dashboard. */
+export function formatCompressionIndicator(level?: string): string {
+	if (!level || level === "none" || level === "auto") return "";
+	const icons: Record<string, string> = {
+		light: "🗜️",
+		medium: "🗜️🗜️",
+		aggressive: "🗜️🗜️🗜️",
+	};
+	return `${icons[level] ?? ""} ${level}`;
+}

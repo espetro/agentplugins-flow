@@ -4,6 +4,7 @@ description: Generate ideas explore possibilities think creatively using inherit
 tools: batch bash find grep ls
 maxDepth: 0
 tier: full
+contextProfile: intent-first
 ---
 
 mission: During this ideas flow your mission is to generate and compare possible directions. Use inherited context as background and constraints but avoid anchoring too tightly on prior solutions.

@@ -20,6 +20,7 @@ import {
 } from "./config.js";
 import { getInheritedCliArgs } from "../snapshot/cli-args.js";
 import { parseComplexity, type Complexity, DEFAULT_COMPLEXITY } from "../flow/complexity.js";
+import type { CompressionLevel } from "../core2/snapshot.js";
 import { logWarn } from "./log.js";
 import { resolveBoolean, resolveString, resolveNumber, type ResolveContext } from "./resolver-helpers.js";
 
@@ -39,6 +40,7 @@ export interface ResolvedSettings {
 	discoveredFlows: FlowConfig[]; loadedFlowModelConfigs: LoadedFlowModelConfigs;
 	activeRuntimeFlowMode: string | undefined; bodyVerbosity: "lite" | "full";
 	debugMode: boolean; traceEnabled: boolean; batchReadEnabled: boolean;
+	contextCompression?: CompressionLevel;
 }
 
 export function resolveSettings(
@@ -145,12 +147,18 @@ export function resolveSettings(
 	const traceEnabled = resolveBoolean(ctx, { cliFlag: "tools-trace", envVar: PI_FLOW_TOOLS_TRACE_ENV, settingsPath: ["tools", "trace"], defaultValue: true });
 	const batchReadEnabled = resolveBoolean(ctx, { cliFlag: "tools-batch-read", envVar: PI_FLOW_TOOLS_BATCH_READ_ENV, settingsPath: ["tools", "batchRead"], defaultValue: toolOptimize });
 
+	let contextCompression: CompressionLevel | undefined;
+	if (flowSettings.contextCompression && flowSettings.contextCompression !== "auto") {
+		contextCompression = flowSettings.contextCompression as CompressionLevel;
+	}
+
 	return {
 		toolOptimize, structuredOutput, maxConcurrency, defaultComplexity,
 		steeringEnabled, steeringCustomPrompt,
 		animationEnabled, animationGlitch, askUserEnabled, askUserTimeout,
 		discoveredFlows, loadedFlowModelConfigs, activeRuntimeFlowMode,
 		bodyVerbosity, debugMode, traceEnabled, batchReadEnabled,
+		contextCompression,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
 }

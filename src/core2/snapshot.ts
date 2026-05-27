@@ -7,8 +7,127 @@
  */
 
 import { stripDirectives } from "../steering/tool-utils.js";
-import type { FlowTier } from "../flow/agents.js";
+import type { FlowTier, ContextProfile, ToolResultCategory } from "../flow/agents.js";
 import { logWarn } from "../config/log.js";
+
+export type CompressionLevel = "none" | "light" | "medium" | "aggressive";
+
+export interface CompressionStats {
+	preBytes: number;
+	postBytes: number;
+	level: CompressionLevel;
+	profileName?: string;
+	messagesDropped: number;
+	syntheticSummary?: string;
+}
+
+/**
+ * Build a snapshot with optional context compression. If the estimated token
+ * count exceeds the threshold (or an override is set), a second pass applies
+ * the resolved compression level and profile.
+ */
+export function buildSnapshotWithCompression(
+	sessionManager: SessionSnapshotSource,
+	options?: BuildCore2SnapshotOptions,
+	maxContextTokens?: number,
+): { snapshot: string | null; stats?: CompressionStats } {
+	const rawSnapshot = buildCore2Snapshot(sessionManager, options);
+	if (!rawSnapshot) return { snapshot: null };
+
+	const estimatedTokens = estimateTotalContextTokens(rawSnapshot);
+
+	const thresholdEnv = process.env.PI_FLOW_CONTEXT_THRESHOLD;
+	const threshold = thresholdEnv ? Number(thresholdEnv) : 70_000;
+	const overrideRaw = process.env.PI_FLOW_CONTEXT_COMPRESSION?.trim().toLowerCase();
+	const envOverride =
+		overrideRaw === "none" || overrideRaw === "light" || overrideRaw === "medium" || overrideRaw === "aggressive"
+			? overrideRaw
+			: undefined;
+	const override = options?.compressionLevel ?? envOverride;
+
+	const effectiveThreshold =
+		maxContextTokens && maxContextTokens > 0 && Number.isFinite(maxContextTokens)
+			? Math.min(threshold, Math.floor(maxContextTokens * 0.6))
+			: threshold;
+
+	const lightThreshold = effectiveThreshold;
+	const mediumThreshold = Math.floor(effectiveThreshold * 1.21);
+	const aggressiveThreshold = Math.floor(effectiveThreshold * 1.43);
+
+	let level: CompressionLevel;
+	if (override) {
+		level = override;
+	} else if (estimatedTokens < lightThreshold) {
+		return { snapshot: rawSnapshot };
+	} else if (estimatedTokens < mediumThreshold) {
+		level = "light";
+	} else if (estimatedTokens < aggressiveThreshold) {
+		level = "medium";
+	} else {
+		level = "aggressive";
+	}
+
+	if (level === "none") return { snapshot: rawSnapshot };
+
+	const stats: CompressionStats = {
+		preBytes: rawSnapshot.length,
+		postBytes: 0,
+		level,
+		messagesDropped: 0,
+	};
+	const compressedSnapshot = buildCore2Snapshot(sessionManager, {
+		...options,
+		compressionLevel: level,
+		compressionProfile: options?.compressionProfile,
+		compressionStats: stats,
+	});
+
+	if (stats && compressedSnapshot) {
+		stats.preBytes = rawSnapshot.length;
+		stats.postBytes = compressedSnapshot.length;
+	}
+
+	// Emergency warp fallback: if aggressive compression is still too large,
+	// and PI_FLOW_EMERGENCY_WARP is enabled, distill to a minimal snapshot.
+	if (
+		level === "aggressive" &&
+		compressedSnapshot &&
+		estimateTotalContextTokens(compressedSnapshot) > (maxContextTokens ?? 100_000) * 0.6 &&
+		(process.env.PI_FLOW_EMERGENCY_WARP === "1" || process.env.PI_FLOW_EMERGENCY_WARP === "true")
+	) {
+		const allEntries = compressedSnapshot
+			.split("\n")
+			.filter((l) => l.length > 0)
+			.map((l) => {
+				try {
+					return JSON.parse(l);
+				} catch (e) {
+					logWarn(`[pi-agent-flow] Failed to parse JSONL line in emergency warp: ${e}`);
+					return null;
+				}
+			})
+			.filter((e) => e !== null);
+		const summary = generateSyntheticSummary(allEntries);
+		const lastMessages = allEntries.slice(-2);
+		const distilled = [
+			allEntries[0],
+			CONTEXT_MAP_ENTRY,
+			{
+				type: "message",
+				message: {
+					role: "system",
+					content: `[Emergency Warp] Context exceeds safe limits after aggressive compression. Distilled summary:\n${summary ?? "(no summary generated)"}`,
+				},
+			},
+			...lastMessages,
+		];
+		const emergencySnapshot = distilled.map((e) => JSON.stringify(e)).join("\n") + "\n";
+		stats.postBytes = emergencySnapshot.length;
+		return { snapshot: emergencySnapshot, stats };
+	}
+
+	return { snapshot: compressedSnapshot, stats };
+}
 
 export interface SessionSnapshotSource {
 	getHeader: () => unknown;
@@ -22,6 +141,10 @@ export interface BuildCore2SnapshotOptions {
 	depth?: number;
 	activeToolCallId?: string;
 	tier?: FlowTier;
+	compressionLevel?: CompressionLevel;
+	compressionProfile?: ContextProfile;
+	/** If provided, compression stats are written here after the snapshot is built. */
+	compressionStats?: CompressionStats;
 }
 
 /** Normalize toolCalls field from various input shapes. */
@@ -41,6 +164,106 @@ function normalizeToolCallId(tc: unknown): string | undefined {
 	if (!tc || typeof tc !== "object") return undefined;
 	const t = tc as Record<string, unknown>;
 	return (t.id as string | undefined) || (t.toolCallId as string | undefined) || (t[SNAKE_TOOL_CALL_ID] as string | undefined);
+}
+
+/** Rough token estimate for a snapshot string (1 token ≈ 4 chars). */
+export function estimateTotalContextTokens(snapshotJsonl: string): number {
+	return Math.ceil(snapshotJsonl.length / 4);
+}
+
+/** Extract plain text from a message entry for scoring / classification. */
+function extractMessageText(msg: Record<string, unknown>): string {
+	if (typeof msg.content === "string") {
+		return msg.content;
+	}
+	if (Array.isArray(msg.content)) {
+		return msg.content
+			.filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+			.map((b: any) => b.text)
+			.join("\n");
+	}
+	return "";
+}
+
+/** Classify a tool/toolResult message into a category for profile-aware compression. */
+function classifyToolResult(entry: unknown): ToolResultCategory {
+	if (!entry || typeof entry !== "object") return "other";
+	const e = entry as Record<string, unknown>;
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") return "other";
+	const msg = e.message as Record<string, unknown>;
+	if (msg.role !== "tool" && msg.role !== "toolResult") return "other";
+
+	const text = extractMessageText(msg);
+	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : "";
+
+	// Error / stack-trace heuristics
+	if (
+		text.includes("Error:") ||
+		text.includes("error:") ||
+		text.includes("FAIL") ||
+		text.includes("failed") ||
+		text.includes("Exception") ||
+		text.includes("exception") ||
+		text.includes("AssertionError") ||
+		text.includes("TypeError") ||
+		text.includes("ReferenceError")
+	) {
+		// Stack trace detection: lines starting with "  at " or "    at "
+		const stackPattern = /^\s+at\s+\S+/gm;
+		if (stackPattern.test(text)) return "stackTrace";
+		return "error";
+	}
+
+	// Test failure
+	if (
+		text.includes("Test failed") ||
+		text.includes("test failure") ||
+		text.includes("Assertion failed") ||
+		text.includes("expected") && text.includes("received") ||
+		text.includes("✕") ||
+		text.includes("FAIL") && text.includes("test")
+	) {
+		return "testFailure";
+	}
+
+	// Git diff
+	if (
+		text.includes("diff --git") ||
+		text.includes("--- a/") ||
+		text.includes("+++ b/") ||
+		text.includes("@@ -")
+	) {
+		return "gitDiff";
+	}
+
+	// Batch file operations (read / write / edit)
+	if (
+		text.includes("--- read:") ||
+		text.includes("--- write:") ||
+		text.includes("--- edit:") ||
+		text.includes("--- delete:") ||
+		(text.includes("✔") && (text.includes("read") || text.includes("write") || text.includes("edit")))
+	) {
+		return "fileContent";
+	}
+
+	// Grep / find / ls results
+	if (
+		text.includes("--- rg:") ||
+		text.includes("--- find:") ||
+		text.includes("--- ls:") ||
+		text.includes("grep results") ||
+		/^[^\n]+:\d+:.+/m.test(text)
+	) {
+		return "grepResult";
+	}
+
+	// Bash success
+	if (toolName === "bash" || text.includes("--- bash [") || text.includes("--- [") && text.includes("exit")) {
+		return "bashSuccess";
+	}
+
+	return "other";
 }
 
 /** Synthetic system message providing the context architecture map. */
@@ -128,8 +351,8 @@ export function buildCore2Snapshot(
 		processedEntry = maybeStripCompaction(processedEntry);
 		if (!processedEntry) continue;
 
-		processedEntry = compressSnapshotEntry(processedEntry, options?.tier);
-		processedEntry = truncateStandaloneBashResult(processedEntry);
+		processedEntry = compressSnapshotEntry(processedEntry, options?.tier, options?.compressionLevel, options?.compressionProfile);
+		processedEntry = truncateStandaloneBashResult(processedEntry, options?.compressionLevel, options?.compressionProfile);
 
 		if (options?.activeToolCallId) {
 			processedEntry = stripActiveToolCall(processedEntry, options.activeToolCallId);
@@ -140,16 +363,30 @@ export function buildCore2Snapshot(
 	}
 
 	const finalEntries = applyMessageLimit(processedEntries, options?.tier);
-	const entriesWithMap = insertContextMap(finalEntries);
+	const compressedResult = applyContextCompression(finalEntries, options?.compressionLevel, options?.compressionProfile);
+	const entriesWithMap = insertContextMap(compressedResult.entries);
 
 	for (const entry of entriesWithMap) {
 		const line = JSON.stringify(entry);
 		// Strip batch read/write/edit bodies from tool result messages
-		const processed = maybeStripBatchBodies(line);
+		const processed = maybeStripBatchBodies(line, options?.compressionLevel);
 		lines.push(processed);
 	}
 
-	return `${lines.join("\n")}\n`;
+	const snapshot = `${lines.join("\n")}\n`;
+
+	if (options?.compressionStats) {
+		const preBytes = processedEntries.reduce((sum: number, e) => sum + JSON.stringify(e).length, 0);
+		const postBytes = snapshot.length;
+		options.compressionStats.preBytes = preBytes;
+		options.compressionStats.postBytes = postBytes;
+		options.compressionStats.level = options.compressionLevel ?? "none";
+		options.compressionStats.profileName = options.compressionProfile?.name;
+		options.compressionStats.messagesDropped = compressedResult.droppedCount;
+		options.compressionStats.syntheticSummary = compressedResult.syntheticSummary;
+	}
+
+	return snapshot;
 }
 
 /**
@@ -405,7 +642,7 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 // Standalone bash result truncation
 // ---------------------------------------------------------------------------
 
-function truncateStandaloneBashResult(entry: unknown): unknown {
+function truncateStandaloneBashResult(entry: unknown, level?: CompressionLevel, profile?: ContextProfile): unknown {
 	if (!entry || typeof entry !== "object") return entry;
 	const e = entry as Record<string, unknown>;
 	if (e.type !== "message" || !e.message || typeof e.message !== "object") return entry;
@@ -415,6 +652,9 @@ function truncateStandaloneBashResult(entry: unknown): unknown {
 
 	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
 	if (toolName !== "bash") return entry;
+
+	// Respect profile: if bashSuccess is in keepCategories, skip truncation
+	if (profile?.keepCategories?.includes("bashSuccess")) return entry;
 
 	let text: string | undefined;
 	let textIndex: number | undefined;
@@ -435,8 +675,21 @@ function truncateStandaloneBashResult(entry: unknown): unknown {
 	if (!text) return entry;
 
 	const lines = text.split("\n");
-	const head = 30;
-	const tail = 20;
+	let head: number;
+	let tail: number;
+	if (level === "light") {
+		head = 15;
+		tail = 10;
+	} else if (level === "medium") {
+		head = 10;
+		tail = 5;
+	} else if (level === "aggressive") {
+		head = 5;
+		tail = 3;
+	} else {
+		head = 30;
+		tail = 20;
+	}
 	if (lines.length <= head + tail) return entry;
 
 	const kept = [...lines.slice(0, head), `[...${lines.length - head - tail} lines of bash output truncated...]`, ...lines.slice(-tail)];
@@ -488,13 +741,21 @@ function getTierMaxMessages(tier: FlowTier | undefined): number {
 }
 
 /**
- * Compress a single snapshot entry based on tier.
+ * Compress a single snapshot entry based on tier and optional compression level.
  *
- * All tiers strip tool/toolResult content to placeholders (e.g. [toolResult: bash])
- * so the child flow sees what tools were used without receiving full verbatim
- * output, keeping the snapshot compact and focused on conversation history.
+ * When no compression level is set, all tiers strip tool/toolResult content to
+ * placeholders (e.g. [toolResult: bash]) — the legacy behavior.
+ *
+ * When a compression level is active, the profile determines which categories
+ * are essential (kept verbatim) vs non-essential (compressed to placeholder).
+ * Aggressive always compresses everything regardless of profile.
  */
-function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unknown {
+function compressSnapshotEntry(
+	entry: unknown,
+	tier: FlowTier | undefined,
+	level?: CompressionLevel,
+	profile?: ContextProfile,
+): unknown {
 	if (!tier) return entry;
 	if (!entry || typeof entry !== "object") return entry;
 	const e = entry as Record<string, unknown>;
@@ -507,6 +768,33 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
 		return entry;
 	}
 
+	// Legacy behavior when no compression level is active
+	if (!level || level === "none") {
+		const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+		const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
+		msg.content = [{ type: "text", text: placeholder }];
+		return { ...e, message: msg };
+	}
+
+	// Aggressive compresses all tool results regardless of profile
+	if (level === "aggressive") {
+		const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
+		const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
+		msg.content = [{ type: "text", text: placeholder }];
+		return { ...e, message: msg };
+	}
+
+	// Profile-aware selective compression for light / medium
+	const category = classifyToolResult(entry);
+	const keep = profile?.keepCategories ?? [];
+	const compress = profile?.compressCategories ?? [];
+
+	if (keep.includes(category)) {
+		// Keep this tool result verbatim
+		return entry;
+	}
+
+	// Compress to placeholder (default for unknown categories too)
 	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
 	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
 	msg.content = [{ type: "text", text: placeholder }];
@@ -568,6 +856,374 @@ function applyMessageLimit(entries: unknown[], tier: FlowTier | undefined): unkn
 }
 
 // ---------------------------------------------------------------------------
+// Context compression (token-gate progressive reduction)
+// ---------------------------------------------------------------------------
+
+function scoreMessageForProfile(entry: unknown, profile?: ContextProfile): number {
+	if (!entry || typeof entry !== "object") return 1;
+	const e = entry as Record<string, unknown>;
+	if (e.type !== "message" || !e.message || typeof e.message !== "object") return 1;
+	const msg = e.message as Record<string, unknown>;
+
+	// Base score: newer messages win ties via caller sorting
+	let score = 10;
+
+	if (profile?.name === "intent-first") {
+		if (msg.role === "user") return 100;
+		if (msg.role === "assistant") {
+			const text = extractMessageText(msg);
+			if (/\b(decision|design|plan|architecture|goal|objective)\b/i.test(text)) return 90;
+			return 50;
+		}
+		return 5;
+	}
+
+	if (profile?.name === "files-first") {
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const cat = classifyToolResult(entry);
+			if (cat === "fileContent") return 90;
+			if (cat === "error") return 80;
+			return 20;
+		}
+		if (msg.role === "assistant") {
+			const content = msg.content;
+			if (Array.isArray(content)) {
+				const hasFileOps = content.some((block: any) => {
+					if (block?.type === "toolCall") {
+						const name = block.name || block.toolCall?.name;
+						return name === "batch" || name === "batch_read";
+					}
+					return false;
+				});
+				if (hasFileOps) return 85;
+			}
+		}
+		return 40;
+	}
+
+	if (profile?.name === "errors-first") {
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const cat = classifyToolResult(entry);
+			if (cat === "error" || cat === "stackTrace" || cat === "testFailure") return 100;
+			return 15;
+		}
+		return 40;
+	}
+
+	if (profile?.name === "edits-first") {
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const cat = classifyToolResult(entry);
+			if (cat === "fileContent" || cat === "gitDiff") return 95;
+			if (cat === "error") return 80;
+			return 20;
+		}
+		return 40;
+	}
+
+	if (profile?.name === "discovery-first") {
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const cat = classifyToolResult(entry);
+			if (cat === "grepResult") return 95;
+			if (cat === "fileContent") return 80;
+			if (cat === "error") return 70;
+			return 20;
+		}
+		return 40;
+	}
+
+	if (profile?.name === "code-first") {
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const cat = classifyToolResult(entry);
+			if (cat === "fileContent") return 100;
+			if (cat === "error") return 80;
+			return 15;
+		}
+		return 40;
+	}
+
+	// Default scoring
+	if (msg.role === "user") return 60;
+	if (msg.role === "assistant") return 50;
+	if (msg.role === "toolResult" || msg.role === "tool") {
+		const cat = classifyToolResult(entry);
+		if (cat === "error") return 45;
+		return 30;
+	}
+	return 20;
+}
+
+function stripOldSystemMessages(entries: unknown[], _profile?: ContextProfile): unknown[] {
+	return entries.filter((entry) => {
+		if (!entry || typeof entry !== "object") return true;
+		const e = entry as Record<string, unknown>;
+		if (e.type !== "message" || !e.message || typeof e.message !== "object") return true;
+		const msg = e.message as Record<string, unknown>;
+		if (msg.role !== "system") return true;
+		// Keep the context map entry (it hasn't been inserted yet here, but be defensive)
+		const text = extractMessageText(msg);
+		if (text.includes("[SHARED CONTEXT]") || text.includes("<context-seal>")) return true;
+		// Drop old system messages
+		return false;
+	});
+}
+
+function generateSyntheticSummary(droppedEntries: unknown[]): string | undefined {
+	if (droppedEntries.length === 0) return undefined;
+
+	const files = new Set<string>();
+	const commands = new Set<string>();
+	const errors = new Set<string>();
+	const decisions = new Set<string>();
+
+	for (const entry of droppedEntries) {
+		if (!entry || typeof entry !== "object") continue;
+		const e = entry as Record<string, unknown>;
+		if (e.type !== "message" || !e.message || typeof e.message !== "object") continue;
+		const msg = e.message as Record<string, unknown>;
+		const text = extractMessageText(msg);
+
+		// Extract file paths from read/write/edit headers
+		const fileMatches = text.match(/--- (?:read|write|edit|delete): ([^\s()]+)/g);
+		if (fileMatches) {
+			for (const m of fileMatches) {
+				const path = m.replace(/^--- (?:read|write|edit|delete): /, "").trim();
+				if (path) files.add(path);
+			}
+		}
+
+		// Extract bash commands — permissive header matching + fallback scan
+		let foundBash = false;
+		const bashHeaderPattern = /--- bash(?:\s*\[.*?\])?\s*(?:exit\s*\d+|pending|error)?\s*---\s*([\s\S]*?)(?=\n---|\n###\s|$)/g;
+		let bashMatch: RegExpExecArray | null;
+		while ((bashMatch = bashHeaderPattern.exec(text)) !== null) {
+			const block = bashMatch[1].trim();
+			const firstLine = block.split("\n").find((l) => l.trim().length > 0);
+			if (firstLine) {
+				commands.add(firstLine.trim().slice(0, 120));
+				foundBash = true;
+			}
+		}
+		if (!foundBash) {
+			// Fallback: scan for bash-like lines or JSONL tool call blocks
+			const fallbackBash: string[] = [];
+			const bashLikeRe = /\bbash\b.*?:\s*(.+)/gim;
+			let m: RegExpExecArray | null;
+			while ((m = bashLikeRe.exec(text)) !== null) {
+				fallbackBash.push(m[1].trim());
+			}
+			const jsonCmdRe = /"command"\s*:\s*"([^"]+)"/g;
+			while ((m = jsonCmdRe.exec(text)) !== null) {
+				fallbackBash.push(m[1].trim());
+			}
+			if (fallbackBash.length > 0) {
+				for (const cmd of fallbackBash) {
+					if (cmd) commands.add(cmd.slice(0, 120));
+				}
+			}
+		}
+		// Also extract from tool call arguments if present
+		const tcs = (msg.toolCalls ?? msg.tool_calls ?? []) as unknown[];
+		for (const tc of tcs) {
+			if (!tc || typeof tc !== "object") continue;
+			const t = tc as Record<string, unknown>;
+			const args = (t as any).arguments ?? (t as any).function?.arguments;
+			if (args && typeof args === "object") {
+				const a = args as Record<string, unknown>;
+				if (typeof a.command === "string") commands.add(a.command);
+				if (typeof a.c === "string") commands.add(a.c);
+			}
+		}
+		if (Array.isArray(msg.content)) {
+			for (const block of msg.content) {
+				if (block && typeof block === "object" && block.type === "toolCall" && block.arguments) {
+					const args = block.arguments as Record<string, unknown>;
+					if (typeof args.command === "string") commands.add(args.command);
+					if (typeof args.c === "string") commands.add(args.c);
+				}
+			}
+		}
+
+		// Extract errors (first line only, capped)
+		const errorPattern = /\b(Error|FAIL|failed|Exception|AssertionError)\b/i;
+		if (errorPattern.test(text)) {
+			const firstErrorLine = text.split("\n").find((l) => errorPattern.test(l));
+			if (firstErrorLine) {
+				const truncated = firstErrorLine.trim().slice(0, 120);
+				if (truncated) errors.add(truncated);
+			}
+		}
+
+		// Extract decisions with word boundaries
+		const decisionPattern = /\b(decision|design|plan|agreed|chose|selected|will use)\b/i;
+		if (decisionPattern.test(text)) {
+			const decisionLine = text.split("\n").find((l) => decisionPattern.test(l));
+			if (decisionLine) {
+				const truncated = decisionLine.trim().slice(0, 120);
+				if (truncated) decisions.add(truncated);
+			}
+		}
+	}
+
+	// Fallback: if regex-based extraction found nothing, do a simple keyword scan
+	if (files.size === 0 && commands.size === 0 && errors.size === 0 && decisions.size === 0) {
+		for (const entry of droppedEntries) {
+			if (!entry || typeof entry !== "object") continue;
+			const e = entry as Record<string, unknown>;
+			if (e.type !== "message" || !e.message || typeof e.message !== "object") continue;
+			const msg = e.message as Record<string, unknown>;
+			const text = extractMessageText(msg);
+			const lines = text.split("\n");
+			for (const line of lines) {
+				const trimmed = line.trim();
+				if (!trimmed) continue;
+				if (/\b(?:src\/|lib\/|tests\/|\.ts|\.js|\.json|\.md)\b/.test(trimmed)) {
+					const path = trimmed.split(/\s+/)[0];
+					if (path && path.includes("/")) files.add(path.slice(0, 120));
+				}
+				if (/^(?:npm|yarn|pnpm|node|git|cargo|go|python|pytest|eslint|tsc|vitest|docker|kubectl|make|curl|wget)\b/.test(trimmed)) {
+					commands.add(trimmed.slice(0, 120));
+				}
+				if (/\b(error|fail|exception|panic|timeout)\b/i.test(trimmed)) {
+					errors.add(trimmed.slice(0, 120));
+				}
+				if (/\b(decided|decision|plan|design|agreed|selected|will|should|recommend)\b/i.test(trimmed)) {
+					decisions.add(trimmed.slice(0, 120));
+				}
+			}
+		}
+	}
+
+	if (files.size === 0 && commands.size === 0 && errors.size === 0 && decisions.size === 0) {
+		return undefined;
+	}
+
+	const parts: string[] = ["[Context summary — earlier messages omitted]"];
+	if (files.size > 0) {
+		parts.push(`Files: ${Array.from(files).slice(0, 10).join(", ")}${files.size > 10 ? "…" : ""}`);
+	}
+	if (commands.size > 0) {
+		parts.push(`Commands: ${Array.from(commands).slice(0, 5).join(", ")}${commands.size > 5 ? "…" : ""}`);
+	}
+	if (errors.size > 0) {
+		parts.push(`Errors: ${Array.from(errors).slice(0, 3).join("; ")}${errors.size > 3 ? "…" : ""}`);
+	}
+	if (decisions.size > 0) {
+		parts.push(`Decisions: ${Array.from(decisions).slice(0, 3).join("; ")}${decisions.size > 3 ? "…" : ""}`);
+	}
+
+	return parts.join("\n");
+}
+
+interface CompressionResult {
+	entries: unknown[];
+	droppedCount: number;
+	syntheticSummary?: string;
+}
+
+function applyContextCompression(
+	entries: unknown[],
+	level: CompressionLevel | undefined,
+	profile?: ContextProfile,
+): CompressionResult {
+	if (!level || level === "none") {
+		return { entries, droppedCount: 0 };
+	}
+
+	// Count current messages
+	const messageIndices: number[] = [];
+	for (let i = 0; i < entries.length; i++) {
+		const e = entries[i];
+		if (e && typeof e === "object" && (e as Record<string, unknown>).type === "message") {
+			messageIndices.push(i);
+		}
+	}
+	const currentMessageCount = messageIndices.length;
+
+	let targetMessageCount: number;
+	if (level === "light") {
+		targetMessageCount = Math.max(5, Math.floor(currentMessageCount * 0.6));
+	} else if (level === "medium") {
+		targetMessageCount = Math.max(5, Math.floor(currentMessageCount * 0.4));
+	} else {
+		targetMessageCount = Math.max(3, 15);
+	}
+
+	if (currentMessageCount <= targetMessageCount) {
+		let result = entries;
+		if (level === "medium" || level === "aggressive") {
+			result = stripOldSystemMessages(result, profile);
+		}
+		return { entries: result, droppedCount: 0 };
+	}
+
+	// Need to drop messages — prioritize based on profile score
+	let headerEnd = 0;
+	for (; headerEnd < entries.length; headerEnd++) {
+		const e = entries[headerEnd];
+		if (e && typeof e === "object") {
+			const type = (e as Record<string, unknown>).type;
+			if (type === "session" || type === "header") continue;
+		}
+		break;
+	}
+
+	const headers = entries.slice(0, headerEnd);
+	const rest = entries.slice(headerEnd);
+
+	const scored = rest.map((entry, idx) => ({
+		entry,
+		originalIndex: headerEnd + idx,
+		score: scoreMessageForProfile(entry, profile),
+		isMessage: entry && typeof entry === "object" && (entry as Record<string, unknown>).type === "message",
+	}));
+
+	// Separate messages from non-messages (e.g. compaction events, etc.)
+	const messageScored = scored.filter((s) => s.isMessage);
+	const nonMessageScored = scored.filter((s) => !s.isMessage);
+
+	// Sort messages by score desc, then originalIndex desc (prefer newer)
+	messageScored.sort((a, b) => {
+		if (b.score !== a.score) return b.score - a.score;
+		return b.originalIndex - a.originalIndex;
+	});
+
+	// Keep top N messages
+	const keptMessages = messageScored.slice(0, targetMessageCount);
+	const droppedMessages = messageScored.slice(targetMessageCount);
+
+	// Combine kept messages with all non-messages, sort by original index
+	const combined = [...nonMessageScored, ...keptMessages];
+	combined.sort((a, b) => a.originalIndex - b.originalIndex);
+
+	const droppedEntries = droppedMessages.map((d) => d.entry);
+	const syntheticSummaryText = generateSyntheticSummary(droppedEntries);
+
+	let result = [...headers, ...combined.map((c) => c.entry)];
+
+	if (level === "medium" || level === "aggressive") {
+		result = stripOldSystemMessages(result, profile);
+	}
+
+	if (syntheticSummaryText) {
+		// Insert synthetic summary after headers but before other entries
+		const syntheticEntry = {
+			type: "message",
+			message: {
+				role: "system",
+				content: [{ type: "text", text: syntheticSummaryText }],
+			},
+		};
+		result.splice(headerEnd, 0, syntheticEntry);
+	}
+
+	return {
+		entries: result,
+		droppedCount: droppedMessages.length,
+		syntheticSummary: syntheticSummaryText,
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Batch body stripping
 // ---------------------------------------------------------------------------
 
@@ -605,8 +1261,8 @@ function isBatchSectionHeader(line: string): boolean {
 	);
 }
 
-/** Replace batch section bodies with first 3 + last 3 lines as orientation. */
-function stripBatchBodies(text: string): string {
+/** Replace batch section bodies with first N + last N lines as orientation. */
+function stripBatchBodies(text: string, level?: CompressionLevel): string {
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
 	const out: string[] = [];
 	let i = 0;
@@ -623,8 +1279,12 @@ function stripBatchBodies(text: string): string {
 			}
 			const isBash = line.includes("--- bash [") || line.includes("--- [");
 			if (isBash) {
-				const head = 30;
-				const tail = 20;
+				let head: number;
+				let tail: number;
+				if (level === "light") { head = 15; tail = 10; }
+				else if (level === "medium") { head = 10; tail = 5; }
+				else if (level === "aggressive") { head = 5; tail = 3; }
+				else { head = 30; tail = 20; }
 				if (body.length > head + tail) {
 					out.push(...body.slice(0, head));
 					out.push(`[...${body.length - head - tail} lines of bash output truncated...]`);
@@ -633,10 +1293,16 @@ function stripBatchBodies(text: string): string {
 					out.push(...body);
 				}
 			} else {
-				if (body.length > 6) {
-					out.push(...body.slice(0, 3));
-					out.push(`[...${body.length - 6} lines truncated...]`);
-					out.push(...body.slice(-3));
+				let head: number;
+				let tail: number;
+				if (level === "light") { head = 2; tail = 2; }
+				else if (level === "medium") { head = 1; tail = 1; }
+				else if (level === "aggressive") { head = 0; tail = 0; }
+				else { head = 3; tail = 3; }
+				if (body.length > head + tail) {
+					out.push(...body.slice(0, head));
+					out.push(`[...${body.length - head - tail} lines truncated...]`);
+					out.push(...body.slice(-tail));
 				} else {
 					out.push(...body);
 				}
@@ -651,7 +1317,7 @@ function stripBatchBodies(text: string): string {
 }
 
 /** If the JSONL line is a tool/toolResult message, strip batch bodies from its text. */
-function maybeStripBatchBodies(line: string): string {
+function maybeStripBatchBodies(line: string, level?: CompressionLevel): string {
 	// Fast path: skip non-tool messages without parsing JSON.
 	if (!line.includes('"role":"tool"') && !line.includes('"role":"toolResult"')) {
 		return line;
@@ -696,7 +1362,7 @@ function maybeStripBatchBodies(line: string): string {
 		return line;
 	}
 
-	const stripped = stripBatchBodies(text);
+	const stripped = stripBatchBodies(text, level);
 	const cleaned = stripDirectives(stripped);
 	if (cleaned === text) {
 		return line;

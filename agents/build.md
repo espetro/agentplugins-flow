@@ -4,6 +4,7 @@ description: Implement features fix bugs write tests deploy and ship
 tools: batch bash find grep ls
 maxDepth: 0
 tier: flash
+contextProfile: edits-first
 ---
 
 mission: Implement and verify changes. Verify first then ship. Prior conversation is background reference only.

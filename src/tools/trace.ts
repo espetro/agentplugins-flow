@@ -13,7 +13,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { runFlowWithLiveSession } from "../flow/flow-live.js";
 import { discoverFlows, getFlowTier, type FlowConfig } from "../flow/agents.js";
-import { buildCore2Snapshot, parseSharedContext } from "../core2/snapshot.js";
+import { buildSnapshotWithCompression, parseSharedContext } from "../core2/snapshot.js";
 import {
 	resolveFlowModelCandidates,
 	resolveModelContextWindow,
@@ -28,6 +28,7 @@ import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
 import { getFlowOutput, type SingleResult, type FlowDetails } from "../types/flow.js";
 import { executeOperations } from "../batch/execute.js";
 import { runBashWithLimits } from "../batch/batch-bash.js";
+import { logWarn } from "../config/log.js";
 import { runWebOps } from "./web-ops.js";
 import type { FileOpInput } from "../batch/constants.js";
 import type { WebOpInput } from "./web-ops.js";
@@ -198,7 +199,7 @@ export const TraceParams = Type.Object({
 });
 
 export interface TraceToolOptions {
-	getSettings?: () => { toolOptimize: boolean; structuredOutput: boolean; bodyVerbosity: "lite" | "full" } | undefined;
+	getSettings?: () => { toolOptimize: boolean; structuredOutput: boolean; bodyVerbosity: "lite" | "full"; contextCompression?: import("../core2/snapshot.js").CompressionLevel } | undefined;
 	getDepthConfig?: () => { currentDepth: number; maxDepth: number; ancestorFlowStack: string[]; preventCycles: boolean } | undefined;
 	getLoadedFlowModelConfigs?: () => LoadedFlowModelConfigs | undefined;
 	tierOverrideResolver?: (tier: "lite" | "flash" | "full") => string | undefined;
@@ -231,16 +232,26 @@ function resolveTraceRuntime(
 	});
 	const resolvedModel = candidates[0];
 	const maxContextTokens = resolveModelContextWindow(resolvedModel);
-	const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
-		activeToolCallId: toolCallId,
-		tier: traceFlow.tier ?? getFlowTier("trace"),
-	});
+	const { snapshot: forkSessionSnapshotJsonl, stats: compressionStats } = buildSnapshotWithCompression(
+		ctx.sessionManager,
+		{
+			activeToolCallId: toolCallId,
+			tier: traceFlow.tier ?? getFlowTier("trace"),
+			compressionProfile: traceFlow.contextProfile,
+			compressionLevel: opts.getSettings?.()?.contextCompression,
+		},
+		maxContextTokens,
+	);
 	const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
+	if (compressionStats) {
+		logWarn(`[pi-agent-flow] Context compression applied: ${compressionStats.level} (${compressionStats.preBytes} → ${compressionStats.postBytes} bytes, ${compressionStats.messagesDropped} messages dropped)`);
+	}
 	return {
 		resolvedModel,
 		maxContextTokens,
 		forkSessionSnapshotJsonl,
 		sharedContext,
+		compressionStats,
 		intent,
 	};
 }
@@ -291,6 +302,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				maxContextTokens,
 				forkSessionSnapshotJsonl,
 				sharedContext,
+				compressionStats,
 			} = runtime;
 
 			const makeDetails = (results: SingleResult[]): FlowDetails => ({
@@ -336,6 +348,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 					complexity: params.complexity ?? "simple",
 					model: resolvedModel,
 					maxContextTokens,
+					compressionStats,
 					preDispatchResults,
 					makeDetails,
 					signal,

@@ -20,7 +20,7 @@ import {
 	getFlowOutput,
 	normalizeFlowResult,
 } from "../types/flow.js";
-import { parseSharedContext } from "../core2/snapshot.js";
+import { parseSharedContext, type CompressionStats } from "../core2/snapshot.js";
 import { extractStructuredOutput, generateCommandsFromHistory } from "../snapshot/structured-output.js";
 import { computeInitialContextTokens, mergeStreamingContextTokens } from "../tui/context-display.js";
 import { logWarn, logError } from '../config/log.js';
@@ -150,6 +150,7 @@ export interface RunFlowOptions {
 	tools?: string[];
 	preDispatchResults?: string;
 	debugMode?: boolean;
+	compressionStats?: CompressionStats;
 }
 
 export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
@@ -218,6 +219,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		startedAtMs,
 		...(deadlineAtMs !== undefined ? { deadlineAtMs } : {}),
 		...(resolvedMaxContextTokens !== undefined ? { maxContextTokens: resolvedMaxContextTokens } : {}),
+		...(opts.compressionStats ? { compressionStats: opts.compressionStats } : {}),
 	};
 
 	if (initialContextTokens > 0) {

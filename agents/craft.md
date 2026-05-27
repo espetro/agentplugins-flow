@@ -4,6 +4,7 @@ description: Plan structure break down requirements design solutions
 tools: batch bash find grep ls
 maxDepth: 0
 tier: full
+contextProfile: intent-first
 ---
 
 mission: During this craft flow your mission is to design a clear well structured plan for implementation. Think architecturally evaluate the full landscape design for clean migration and treat the conversation history above as background reference only.

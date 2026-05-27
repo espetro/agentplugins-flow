@@ -51,7 +51,11 @@ import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
 } from "./flow/depth.js";
-import { buildCore2Snapshot, parseSharedContext, type SharedContext } from "./core2/snapshot.js";
+import { buildSnapshotWithCompression, parseSharedContext, type SharedContext } from "./core2/snapshot.js";
+import {
+	resolveFlowModelCandidates,
+	resolveModelContextWindow,
+} from "./config/config.js";
 import {
 	resolveSettings,
 	type ResolvedSettings,
@@ -560,7 +564,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Register the trace tool (available at all depths — quick verbatim reads)
 	pi.registerTool(createTraceTool({
-		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity, traceEnabled: resolved.traceEnabled, batchReadEnabled: resolved.batchReadEnabled } : undefined,
+		getSettings: () => resolved ? { toolOptimize: resolved.toolOptimize, structuredOutput: resolved.structuredOutput, bodyVerbosity: resolved.bodyVerbosity, traceEnabled: resolved.traceEnabled, batchReadEnabled: resolved.batchReadEnabled, contextCompression: resolved.contextCompression } : undefined,
 		getDepthConfig: () => depthConfig,
 		getLoadedFlowModelConfigs: () => resolved?.loadedFlowModelConfigs,
 		tierOverrideResolver: getTierOverride,
@@ -603,15 +607,58 @@ export default function (pi: ExtensionAPI) {
 					return tiers[0];
 				}
 
-				const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
-					activeToolCallId: toolCallId,
-					tier: resolveSnapshotTier(flows, params.flow),
-				});
+				function resolveSnapshotMaxContextTokens(
+					flowConfigs: FlowConfig[],
+					flowParams: Array<Static<typeof FlowItem>>,
+					strategy: import("./config/config.js").LoadedFlowModelConfigs["strategy"],
+					tierOverrideResolver: (tier: "lite" | "flash" | "full") => string | undefined,
+					fallbackModel?: string,
+				): number | undefined {
+					let minTokens: number | undefined;
+					for (const f of flowParams) {
+						const config = flowConfigs.find((flow) => flow.name === f.type.toLowerCase());
+						const tier = config?.tier ?? getFlowTier(f.type);
+						const { primary } = resolveFlowModelCandidates({
+							tier,
+							flowModel: config?.model,
+							cliTierOverride: tierOverrideResolver(tier),
+							strategy,
+							fallbackModel,
+						});
+						const tokens = resolveModelContextWindow(primary);
+						if (tokens !== undefined) {
+							minTokens = minTokens === undefined ? tokens : Math.min(minTokens, tokens);
+						}
+					}
+					return minTokens;
+				}
+
+				const firstFlow = params.flow[0];
+				const firstFlowConfig = flows.find((f) => f.name === (firstFlow?.type ?? "").toLowerCase());
+				const maxContextTokens = resolveSnapshotMaxContextTokens(
+					flows,
+					params.flow,
+					resolved.loadedFlowModelConfigs.strategy,
+					getTierOverride,
+					inheritedCliArgs.fallbackModel,
+				);
+				const { snapshot: forkSessionSnapshotJsonl, stats: compressionStats } = buildSnapshotWithCompression(
+					ctx.sessionManager,
+					{
+						activeToolCallId: toolCallId,
+						tier: resolveSnapshotTier(flows, params.flow),
+						compressionProfile: firstFlowConfig?.contextProfile,
+						compressionLevel: resolved?.contextCompression,
+					},
+					maxContextTokens,
+				);
+
+				if (compressionStats) {
+					logWarn(`[pi-agent-flow] Context compression applied: ${compressionStats.level} (${compressionStats.preBytes} → ${compressionStats.postBytes} bytes, ${compressionStats.messagesDropped} messages dropped)`);
+				}
 
 				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
 				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir, sharedContext);
-
-				const firstFlow = params.flow[0];
 				beginFlowLiveSession(toolCallId, {
 					sharedContext,
 					intent: firstFlow?.intent ?? "",
@@ -665,6 +712,7 @@ export default function (pi: ExtensionAPI) {
 							tierOverrideResolver: getTierOverride,
 							fallbackModel: inheritedCliArgs.fallbackModel,
 							forkSessionSnapshotJsonl,
+							compressionStats,
 							projectFlowsDir: discovery.projectFlowsDir,
 							sessionManager: ctx.sessionManager,
 							hasUI: ctx.hasUI,
@@ -738,6 +786,7 @@ export default function (pi: ExtensionAPI) {
 					debugMode: resolved.debugMode,
 					traceEnabled: resolved.traceEnabled,
 					batchReadEnabled: resolved.batchReadEnabled,
+					contextCompression: resolved.contextCompression,
 				}
 			: {
 					toolOptimize: true,
@@ -751,6 +800,7 @@ export default function (pi: ExtensionAPI) {
 					debugMode: false,
 					traceEnabled: true,
 					batchReadEnabled: true,
+					contextCompression: undefined,
 				},
 	};
 
