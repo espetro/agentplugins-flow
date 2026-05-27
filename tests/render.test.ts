@@ -1868,7 +1868,7 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).not.toMatch(/[●○✓✗⊘?]/);
+		expect(groupHeader).toMatch(/[●○]\s+audit-loop/);
 		expect(groupHeader).toContain("audit-loop");
 	});
 
@@ -2123,11 +2123,11 @@ describe("flow status dot rendering", () => {
 
 		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
 		expect(buildHeader).toBeDefined();
-		expect(buildHeader).toContain("│  ├─");
+		expect(buildHeader).toContain("├─");
 
 		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
 		expect(auditHeader).toBeDefined();
-		expect(auditHeader).toContain("│  └─");
+		expect(auditHeader).toContain("└─");
 
 		// Blank lines between builds and before audit capstone removed for compact tree
 		// (previously: const blankLine = lines.find((l) => l === "│  │" || l.trim() === "│  │"); expect(blankLine).toBeDefined();)
@@ -2173,11 +2173,11 @@ describe("flow status dot rendering", () => {
 
 		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
 		expect(buildHeader).toBeDefined();
-		expect(buildHeader).toContain("   ├─");
+		expect(buildHeader).toContain("├─");
 
 		const auditHeader = lines.find((l) => l.includes("audit") && !l.includes("audit-loop"));
 		expect(auditHeader).toBeDefined();
-		expect(auditHeader).toContain("   └─");
+		expect(auditHeader).toContain("└─");
 	});
 
 

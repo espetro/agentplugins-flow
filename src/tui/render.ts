@@ -10,15 +10,16 @@ import type { FlowDetails } from "../types/flow.js";
 import { isFlowError, isFlowSuccess } from "../types/flow.js";
 import { getFlowDisplayItems } from "../types/ui.js";
 import { getFlowOutput } from "../types/flow.js";
-import { scrambleManager, runScrambleTimer } from "./scramble/index.js";
+import { scrambleManager, runScrambleTimer, DynamicScrambleText } from "./scramble/index.js";
 import { buildBootPhaseSingleResult, getFlowLiveState } from "./flow-live-state.js";
 import type { FlowColorConfig, FlowTheme } from "./flow-colors.js";
 import { applyRole } from "./flow-colors.js";
 import type { SingleResult } from "../types/flow.js";
+import { stripAnsi } from "./render-utils.js";
 
 import {
 	FlowGroup, GroupDetectionResult, detectGroups,
-	flowStatusIcon, getFlowStatus, isFlowStatusComplete,
+	flowStatusIcon, getFlowStatus, isFlowStatusComplete, isFlowRunning,
 	hashStrToSeed, getScintillatingStatusDot,
 } from "./grouping.js";
 
@@ -442,24 +443,83 @@ function renderGroup(
 		preview: string;
 	},
 ): void {
-	// ─── Group header line ───
-	const treePart = isLastRoot ? "└─ " : "├─ ";
-	const groupIndent = isLastRoot ? "   " : "│  ";
+	// ─── Group status (aggregate from children) ───
+	const allIndices = [...group.buildIndices, group.auditIndex];
+	let groupIsRunning = false;
+	let groupHasAwaiting = false;
+	let groupAllComplete = true;
+	for (const idx of allIndices) {
+		const r = results[idx];
+		if (isFlowRunning(r)) groupIsRunning = true;
+		if (getFlowStatus(r) === "awaiting") groupHasAwaiting = true;
+		if (!isFlowStatusComplete(r)) groupAllComplete = false;
+	}
+
+	const groupFlowId = `${idPrefix}#group-${group.buildIndices[0]}`;
+	const groupStatus: string = groupIsRunning ? "running" : groupHasAwaiting ? "awaiting" : groupAllComplete ? "done" : "running";
+
+	// Status dot for the group header
+	let initialDot: string;
+	switch (groupStatus) {
+		case "running":
+		case "pending":
+			initialDot = theme.fg("warning", "●");
+			break;
+		case "awaiting":
+			initialDot = theme.fg("muted", "○");
+			break;
+		case "done":
+			initialDot = theme.fg("success", "●");
+			break;
+		case "error":
+			initialDot = theme.fg("error", "✗");
+			break;
+		default:
+			initialDot = theme.fg("muted", "?");
+	}
+	const dotPlaceholder = stripAnsi(initialDot) + " ";
+
+	// ─── Group header line (flush-left, scintillating dot, DynamicScrambleText) ───
+	const headerTreePart = isLastRoot ? "└─" : "├─";
+	const groupLabel = " audit-loop";
 
 	const headerLine =
-		applyRole("treeChars", treePart, theme, config) +
-		applyRole("groupHeader", "audit-loop", theme, config);
+		applyRole("treeChars", headerTreePart, theme, config) +
+		" " + initialDot +
+		applyRole("groupHeader", groupLabel, theme, config);
 
-	container.addChild(new Text(headerLine, 0, 0));
+	const plainHeader = headerTreePart + " " + dotPlaceholder + groupLabel;
+
+	const headerSegments: HeaderSegment[] = [
+		{ text: headerTreePart + " ", style: (s) => applyRole("treeChars", s, theme, config) },
+		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(
+			{ ...results[group.buildIndices[0]], status: groupStatus } as SingleResult,
+			theme, Date.now(), groupFlowId,
+		) + " " },
+		{ text: groupLabel, style: (s) => applyRole("groupHeader", s, theme, config) },
+	];
+
+	container.addChild(new DynamicScrambleText(
+		headerLine,
+		() => {
+			const now = Date.now();
+			const result = scrambleManager.updateText(groupFlowId, 'header', plainHeader, now, groupAllComplete, true);
+			return reconstructHeader(result.content, headerSegments);
+		},
+		true,
+	));
+
+	if (groupAllComplete) {
+		scrambleManager.completeFlow(groupFlowId);
+	}
 
 	// ─── Build children ───
 	for (let b = 0; b < group.buildIndices.length; b++) {
 		const buildIdx = group.buildIndices[b];
 		const r = results[buildIdx];
 		const flowId = `${idPrefix}#${buildIdx}`;
-		const isLastBuild = b === group.buildIndices.length - 1;
-		const buildHeaderPrefix = groupIndent + "├─";
-		const buildChildPrefix = groupIndent + "│  ";
+		const buildHeaderPrefix = "├─";
+		const buildChildPrefix = "│  ";
 
 		renderFlowHeader(container, r, flowId, buildHeaderPrefix, theme, now, config, sharedContext);
 		renderFlowBody(container, r, flowId, buildChildPrefix, theme, now, config);
@@ -467,16 +527,14 @@ function renderGroup(
 		if (isFlowStatusComplete(r)) {
 			scrambleManager.completeFlow(flowId);
 		}
-
-		// No blank line between builds or before audit capstone — compact tree
 	}
 
 	// ─── Audit capstone ───
 	const auditIdx = group.auditIndex;
 	const auditResult = results[auditIdx];
 	const auditFlowId = `${idPrefix}#${auditIdx}`;
-	const auditHeaderPrefix = groupIndent + "└─";
-	const auditChildPrefix = groupIndent + "   ";
+	const auditHeaderPrefix = "└─";
+	const auditChildPrefix = "   ";
 
 	renderFlowHeader(container, auditResult, auditFlowId, auditHeaderPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, auditResult, auditFlowId, auditChildPrefix, theme, now, config);
@@ -484,6 +542,4 @@ function renderGroup(
 	if (isFlowStatusComplete(auditResult)) {
 		scrambleManager.completeFlow(auditFlowId);
 	}
-
-	// No extra spacer — renderActivityPanel handles uniform inter-item spacing
 }
