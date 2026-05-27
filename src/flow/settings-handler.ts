@@ -6,7 +6,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadFlowSettings, writeFlowSetting, loadFlowModelConfigs, writeGlobalFlowMode, writeFlowModelConfig, type FlowSettings } from "../config/config.js";
 import { logWarn } from "../config/log.js";
 import { configureSteering } from "../steering/sliding-prompt.js";
-import { configureStrategicHint } from "../steering/tool-utils.js";
+
 import { scrambleManager } from "../tui/scramble/index.js";
 import { getLoop } from "./loop.js";
 import type { SettingsCategory } from "./settings-items.js";
@@ -29,10 +29,6 @@ export function getCategoryHandler(
 						enabled: boolValue,
 						customPrompt: currentSettings.steering?.customPrompt,
 					});
-				} else if (id === "steering.strategicHint") {
-					const boolValue = value === "on";
-					writeFlowSetting(cwd, "steering.strategicHint", boolValue);
-					configureStrategicHint(boolValue);
 				} else if (id === "steering.customPrompt") {
 					if (value === "(default)") {
 						writeFlowSetting(cwd, "steering.customPrompt", undefined);
@@ -188,17 +184,6 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 			ctx.ui.notify?.(`steering.enabled = ${parsed}`, "info");
 			break;
 		}
-		case "strategic-hint": {
-			const parsed = parseOnOff(value);
-			if (parsed === null) {
-				ctx.ui.notify?.("Usage: /flow:settings strategic-hint <on|off>", "error");
-				return;
-			}
-			writeFlowSetting(cwd, "steering.strategicHint", parsed);
-			configureStrategicHint(parsed);
-			ctx.ui.notify?.(`steering.strategicHint = ${parsed}`, "info");
-			break;
-		}
 		case "animation": {
 			const parsed = parseOnOff(value);
 			if (parsed === null) {
@@ -344,7 +329,7 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 				`complexity: ${currentSettings.complexity ?? "moderate"}`,
 				`maxConcurrency: ${currentSettings.maxConcurrency ?? 4}`,
 				`steering.enabled: ${currentSettings.steering?.enabled ?? true}`,
-				`steering.strategicHint: ${currentSettings.steering?.strategicHint ?? true}`,
+	
 				`animation.enabled: ${currentSettings.animation?.enabled ?? true}`,
 				`animation.glitch: ${currentSettings.animation?.glitch ?? true}`,
 				`askUser.enabled: ${currentSettings.askUser?.enabled ?? false}`,
@@ -367,7 +352,7 @@ export async function handleTextCommand(args: string, ctx: ExtensionCommandConte
 		}
 		default: {
 			ctx.ui.notify?.(
-				"Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
+				"Unknown subcommand. Usage: /flow:settings {steering|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
 				"error",
 			);
 		}

@@ -1,7 +1,7 @@
 /**
  * /flow:settings slash command registration.
  *
- * Subcommands: steering, strategic-hint, animation, glitch,
+ * Subcommands: steering, animation, glitch,
  * tool-optimize, structured-output, complexity, max-concurrency, reset
  *
  * When called with no arguments, opens an interactive TUI overlay.
@@ -10,7 +10,7 @@ import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { loadFlowSettings, writeFlowSetting, type FlowSettings } from "../config/config.js";
 import { configureSteering } from "../steering/sliding-prompt.js";
-import { configureStrategicHint } from "../steering/tool-utils.js";
+
 import { scrambleManager } from "../tui/scramble/index.js";
 import {
 	Container,
@@ -247,7 +247,7 @@ export class SettingsList implements Component {
 export function setupSettingsCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("flow:settings", {
 		description:
-			"Manage flow settings. Subcommands: steering <on|off>, strategic-hint <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, trace <on|off>, batch-read <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
+			"Manage flow settings. Subcommands: steering <on|off>, animation <on|off>, glitch <on|off>, tool-optimize <on|off>, structured-output <on|off>, trace <on|off>, batch-read <on|off>, complexity <mode>, max-concurrency <n>, ask-user {enabled <on|off> | timeout <seconds>}, debug <on|off>, reset. Call with no args for interactive TUI.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			if (!ctx.ui) {
 				return;
@@ -290,7 +290,7 @@ export function setupSettingsCommand(pi: ExtensionAPI): void {
 									if (item.value === "reset") {
 										writeFlowSetting(cwd, "", {});
 										configureSteering({ enabled: true, customPrompt: undefined });
-										configureStrategicHint(true);
+
 										scrambleManager.setAnimationConfig({ enabled: true, glitch: true });
 										ctx.ui.notify?.("Flow settings reset to defaults", "info");
 										rebuild();

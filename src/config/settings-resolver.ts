@@ -24,7 +24,6 @@ import { logWarn } from "./log.js";
 import { resolveBoolean, resolveString, resolveNumber, type ResolveContext } from "./resolver-helpers.js";
 
 const PI_FLOW_NO_STEERING_ENV = "PI_FLOW_NO_STEERING";
-const PI_FLOW_NO_STRATEGIC_HINT_ENV = "PI_FLOW_NO_STRATEGIC_HINT";
 const PI_FLOW_NO_ANIMATION_ENV = "PI_FLOW_NO_ANIMATION";
 const PI_FLOW_NO_GLITCH_ENV = "PI_FLOW_NO_GLITCH";
 const PI_FLOW_TOOLS_TRACE_ENV = "PI_FLOW_TOOLS_TRACE";
@@ -34,7 +33,7 @@ const PI_FLOW_TOOL_OPTIMIZE_ENV = "PI_FLOW_TOOL_OPTIMIZE";
 export interface ResolvedSettings {
 	toolOptimize: boolean; structuredOutput: boolean; maxConcurrency: number;
 	defaultComplexity: Complexity; steeringEnabled: boolean;
-	steeringCustomPrompt: string | undefined; steeringStrategicHint: boolean;
+	steeringCustomPrompt: string | undefined;
 	animationEnabled: boolean; animationGlitch: boolean;
 	askUserEnabled: boolean; askUserTimeout: number;
 	discoveredFlows: FlowConfig[]; loadedFlowModelConfigs: LoadedFlowModelConfigs;
@@ -115,7 +114,7 @@ export function resolveSettings(
 		if (hwConcurrency > 0) maxConcurrency = Math.min(maxConcurrency, hwConcurrency);
 	}
 	const steeringEnabled = resolveBoolean(ctx, { cliFlag: "no-steering", envVar: PI_FLOW_NO_STEERING_ENV, settingsPath: ["steering", "enabled"], defaultValue: true, invert: true });
-	const steeringStrategicHint = resolveBoolean(ctx, { cliFlag: "no-strategic-hint", envVar: PI_FLOW_NO_STRATEGIC_HINT_ENV, settingsPath: ["steering", "strategicHint"], defaultValue: true, invert: true });
+
 	const animationEnabled = resolveBoolean(ctx, { cliFlag: "no-animation", envVar: PI_FLOW_NO_ANIMATION_ENV, settingsPath: ["animation", "enabled"], defaultValue: true, invert: true });
 	const animationGlitch = resolveBoolean(ctx, { cliFlag: "no-glitch", envVar: PI_FLOW_NO_GLITCH_ENV, settingsPath: ["animation", "glitch"], defaultValue: true, invert: true });
 	const askUserEnabled = typeof flowSettings.askUser?.enabled === "boolean" ? flowSettings.askUser.enabled : false;
@@ -148,7 +147,7 @@ export function resolveSettings(
 
 	return {
 		toolOptimize, structuredOutput, maxConcurrency, defaultComplexity,
-		steeringEnabled, steeringCustomPrompt, steeringStrategicHint,
+		steeringEnabled, steeringCustomPrompt,
 		animationEnabled, animationGlitch, askUserEnabled, askUserTimeout,
 		discoveredFlows, loadedFlowModelConfigs, activeRuntimeFlowMode,
 		bodyVerbosity, debugMode, traceEnabled, batchReadEnabled,

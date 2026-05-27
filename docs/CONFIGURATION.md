@@ -97,7 +97,7 @@ Set flow runtime defaults under `flowSettings`:
 | `--tools-batch-read` | Enable the `batch_read` tool | follows `--tool-optimize` |
 | `--no-steering` | Disable root state steering hint injection | — |
 | `--steering-prompt <text>` | Provide a custom steering prompt (implies `--no-steering` override) | — |
-| `--no-strategic-hint` | Disable adaptive `[Directive: ...]` hints after tool results | — |
+
 | `--no-animation` | Disable all flow animation (instant render) | — |
 | `--no-glitch` | Disable glitch/scramble effect | — |
 | `--dump <path>` | Base path for snapshot dumps (alternative to `PI_FLOW_DUMP_SNAPSHOT`) | — |
@@ -122,8 +122,6 @@ Set flow runtime defaults under `flowSettings`:
 | `PI_FLOW_DEBUG_CONTEXT` | Set to `1` to emit context-compression telemetry to stderr |
 | `PI_OFFLINE` | Always set to `1` for child flow processes |
 | `PI_FLOW_NO_STEERING` | Set to `1` to disable root state steering hint injection |
-| `PI_FLOW_NO_STRATEGIC_HINT` | Set to `1` to suppress the strategic planning hints appended after tool calls |
-| `PI_FLOW_NO_DIRECTIVE` | Alias for `PI_FLOW_NO_STRATEGIC_HINT` |
 | `PI_FLOW_NO_ANIMATION` | Set to `1` to disable all flow animation (instant render) |
 | `PI_FLOW_NO_GLITCH` | Set to `1` to disable glitch/scramble effect |
 | `PI_FLOW_LOG_FILE` | TUI-safe log file path (default: `$TMPDIR/pi-agent-flow.log`; set to `/dev/null` to suppress) |
@@ -156,8 +154,7 @@ Set flow runtime defaults under `flowSettings`:
 |---------|-------|
 | `show` | `/flow:settings show` — Display current settings and their sources. |
 | `steering` | `/flow:settings steering on\|off` — Enable/disable root state steering hint injection. |
-| `strategic-hint` | `/flow:settings strategic-hint on\|off` — Enable/disable adaptive `[Directive: ...]` hints after tool results. |
-| `directive` | Alias for `strategic-hint` — controls the same setting. |
+
 | `animation` | `/flow:settings animation on\|off` — Enable/disable all flow animations. |
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
 | `tool-optimize` | `/flow:settings tool-optimize on\|off` — Enable/disable tool-call optimization. |
@@ -177,12 +174,6 @@ Set flow runtime defaults under `flowSettings`:
     "steering": {
       "enabled": true,
       "customPrompt": "Plan next step..."
-    },
-    "strategicHint": {
-      "enabled": true
-    },
-    "directive": {
-      "enabled": true
     },
     "animation": {
       "enabled": true,

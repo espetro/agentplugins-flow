@@ -15,7 +15,8 @@
 
 import * as fs from "node:fs";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
-import { appendDirectiveOnce, appendTextToToolResult } from "../steering/tool-utils.js";
+import { appendTextToToolResult } from "../steering/tool-utils.js";
+import { checkLoopGuard } from "./loop-guard.js";
 import { logWarn } from "../config/log.js";
 import { compressOutput } from "../batch/shell-compress.js";
 
@@ -220,6 +221,7 @@ export function createTimedBashToolDefinition(
 			const reminderPreamble = readAndClearReminderFile();
 
 			try {
+					const loopWarning = checkLoopGuard("bash", params);
 				const result = await original.execute(
 					toolCallId,
 					params,
@@ -251,8 +253,9 @@ export function createTimedBashToolDefinition(
 					const textItem = result?.content?.find?.((c: any) => c.type === "text");
 					const message = textItem?.text ?? "Deadline abort";
 					throw new Error(message);
-				} else {
-					appendDirectiveOnce(result);
+				}
+				if (loopWarning) {
+					appendTextToToolResult(result, loopWarning);
 				}
 				return result;
 			} catch (err: any) {

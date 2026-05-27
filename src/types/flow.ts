@@ -104,7 +104,6 @@ export interface PiAgentFlowAPI {
 		maxConcurrency: number;
 		steeringEnabled: boolean;
 		steeringCustomPrompt: string | undefined;
-		steeringStrategicHint: boolean;
 		animationEnabled: boolean;
 		animationGlitch: boolean;
 		bodyVerbosity: "lite" | "full";

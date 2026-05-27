@@ -7,7 +7,7 @@
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type TUnsafe } from "@sinclair/typebox";
-import { appendDirectiveOnce } from "../steering/tool-utils.js";
+
 import { setPendingDecision } from "../notify/notify-state.js";
 import { scrambleManager, runScrambleTimer } from "../tui/scramble/index.js";
 import { stripAnsi } from "../tui/render-utils.js";
@@ -768,12 +768,10 @@ export function createAskUserTool() {
 					};
 				}
 
-				const _result0 = {
+				return {
 					content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
 					details: { question, options, response, cancelled: false } as AskToolDetails,
 				};
-				appendDirectiveOnce(_result0);
-				return _result0;
 			}
 
 			onUpdate?.({

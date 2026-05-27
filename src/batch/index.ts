@@ -23,7 +23,7 @@ import {
 	normalizeBashOp,
 	executeBatchBash,
 } from "./batch-bash.js";
-import { appendDirectiveOnce } from "../steering/tool-utils.js";
+import { checkLoopGuard } from "../tools/loop-guard.js";
 import { logWarn } from "../config/log.js";
 import { runWebOps } from "../tools/web-ops.js";
 
@@ -407,11 +407,11 @@ export function createBatchReadTool() {
 				includeLimitWarnings: false,
 			}, onUpdate);
 
+			const loopWarning = checkLoopGuard("batch_read", input);
 			const readResult = {
-				content: [{ type: "text", text: contentText }],
+				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
 				details: { results },
 			};
-			appendDirectiveOnce(readResult);
 			return readResult;
 		},
 
@@ -591,11 +591,11 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 				});
 			}
 
+			const loopWarning = checkLoopGuard("batch", input);
 			const batchResult = {
-				content: [{ type: "text", text: contentText }],
+				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
 				details: { results: allResults },
 			};
-			appendDirectiveOnce(batchResult);
 			return batchResult;
 		},
 

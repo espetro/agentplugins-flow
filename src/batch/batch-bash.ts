@@ -1,4 +1,4 @@
-import { appendDirectiveOnce } from "../steering/tool-utils.js";
+
 import { logWarn } from "../config/log.js";
 import { compressOutput } from "./shell-compress.js";
 
@@ -522,12 +522,10 @@ export function createBatchBashPollTool(tracker: BashProcessTracker) {
 				lines.push("");
 			}
 
-			const pollResult = {
+			return {
 				content: [{ type: "text", text: lines.join("\n").trimEnd() }],
 				details: { results },
 			};
-			appendDirectiveOnce(pollResult);
-			return pollResult;
 		},
 	};
 }

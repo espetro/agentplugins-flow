@@ -54,8 +54,7 @@ export interface FlowSettings {
 		enabled?: boolean;
 		/** Replace built-in STEERING_HINT body. Default: undefined. */
 		customPrompt?: string;
-		/** Toggle [Hint: Plan next step...] after tool results. Default: true. */
-		strategicHint?: boolean;
+
 	};
 
 	animation?: {
@@ -288,9 +287,6 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 		}
 		if (typeof obj.steering.customPrompt === "string") {
 			steering.customPrompt = obj.steering.customPrompt;
-		}
-		if (typeof obj.steering.strategicHint === "boolean") {
-			steering.strategicHint = obj.steering.strategicHint;
 		}
 		result.steering = steering;
 	}

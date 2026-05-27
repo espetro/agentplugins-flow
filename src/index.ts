@@ -16,7 +16,7 @@ import { wrapFlowOnUpdate } from "./flow/flow-live.js";
 import { DEFAULT_FLOW_COLORS } from "./tui/flow-colors.js";
 import { terminateAllChildGroups } from "./flow/runner.js";
 import { executeFlows } from "./flow/executor.js";
-import { appendDirectiveOnce, resetDirectiveTracker, configureDirective, stripDirectivesFromMessages, type FlowHintContext } from "./steering/tool-utils.js";
+import { resetLoopGuard } from "./tools/loop-guard.js";
 import type {
 	SingleResult,
 	FlowDetails,
@@ -300,10 +300,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Path to file containing custom steering prompt.",
 		type: "string",
 	});
-	pi.registerFlag("no-strategic-hint", {
-		description: "Disable strategic [Hint: ...] after tool results.",
-		type: "boolean",
-	});
+
 	pi.registerFlag("no-animation", {
 		description: "Disable all flow animation (instant render).",
 		type: "boolean",
@@ -356,7 +353,6 @@ export default function (pi: ExtensionAPI) {
 
 		// Wire resolved settings to modules
 		configureSteering({ enabled: resolved.steeringEnabled, customPrompt: resolved.steeringCustomPrompt });
-		configureDirective(resolved.steeringStrategicHint);
 		scrambleManager.setAnimationConfig({ enabled: resolved.animationEnabled, glitch: resolved.animationGlitch });
 
 		// Only restrict tools for the main root state (depth 0).
@@ -408,7 +404,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("turn_start", () => {
 		if (currentDepth > 0 || !resolved) return;
 		pi.setActiveTools(computeActiveTools(resolved.toolOptimize, resolved.traceEnabled, resolved.batchReadEnabled));
-		resetDirectiveTracker();
+		resetLoopGuard();
 	});
 
 	// Inject available flows into the system prompt.
@@ -490,12 +486,10 @@ export default function (pi: ExtensionAPI) {
 
 		// Always strip old steering hint messages to prevent accumulation
 		const { messages: steeringStrippedMessages, changed: steeringChanged } = stripSteeringHintsFromMessages(normalizedMessages);
-		// Also strip directive hints (adaptive hints appended to tool results)
-		const { messages, changed: directiveChanged } = stripDirectivesFromMessages(steeringStrippedMessages);
-		const messagesChanged = normalizedChanged || steeringChanged || directiveChanged;
+		const messagesChanged = normalizedChanged || steeringChanged;
 
 		// Find latest user message
-		const userIndices = messages
+		const userIndices = steeringStrippedMessages
 			.map((m: any, i: number) => (m.role === "user" ? i : -1))
 			.filter((i: number) => i !== -1);
 
@@ -513,7 +507,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			const result: any = {};
-			if (messagesChanged) result.messages = messages;
+			if (messagesChanged) result.messages = steeringStrippedMessages;
 			if (systemPromptChanged) result.systemPrompt = systemPrompt;
 			return (messagesChanged || systemPromptChanged) ? result : undefined;
 		}
@@ -531,14 +525,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const lastUserIndex = userIndices[userIndices.length - 1];
-		const hintMessage = makeSteeringHintMessage(messages[lastUserIndex]);
+		const hintMessage = makeSteeringHintMessage(steeringStrippedMessages[lastUserIndex]);
 		const modified = hintMessage
 			? [
-					...messages.slice(0, lastUserIndex),
+					...steeringStrippedMessages.slice(0, lastUserIndex),
 					hintMessage,
-					...messages.slice(lastUserIndex),
+					...steeringStrippedMessages.slice(lastUserIndex),
 				]
-			: messages;
+			: steeringStrippedMessages;
 
 		const result: any = {};
 		if (hintMessage || messagesChanged) result.messages = modified;
@@ -708,26 +702,12 @@ export default function (pi: ExtensionAPI) {
 					throw new Error(text);
 				}
 
-				const flowToolResult = {
+				return {
 					content: result.content,
 					details: result.details,
 					failed: result.failed,
 					_toolCallId: toolCallId,
 				};
-				// Build adaptive directive context from flow results
-				const hintContext: FlowHintContext = { hasNotDone: false, statusVague: false };
-				if (result.details?.results && Array.isArray(result.details.results)) {
-					for (const r of result.details.results) {
-						if (r.structuredOutput?.notDone?.length) {
-							hintContext.hasNotDone = true;
-						}
-						if (!r.structuredOutput || !["complete", "partial", "blocked"].includes(r.structuredOutput.status)) {
-							hintContext.statusVague = true;
-						}
-					}
-				}
-				appendDirectiveOnce(flowToolResult, hintContext);
-				return flowToolResult;
 			},
 
 			renderCall: (args, theme) => renderFlowCall(args, theme, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: resolved?.bodyVerbosity }),
@@ -752,7 +732,6 @@ export default function (pi: ExtensionAPI) {
 					maxConcurrency: resolved.maxConcurrency,
 					steeringEnabled: resolved.steeringEnabled,
 					steeringCustomPrompt: resolved.steeringCustomPrompt,
-					steeringStrategicHint: resolved.steeringStrategicHint,
 					animationEnabled: resolved.animationEnabled,
 					animationGlitch: resolved.animationGlitch,
 					bodyVerbosity: resolved.bodyVerbosity,
@@ -766,7 +745,6 @@ export default function (pi: ExtensionAPI) {
 					maxConcurrency: 4,
 					steeringEnabled: true,
 					steeringCustomPrompt: undefined,
-					steeringStrategicHint: true,
 					animationEnabled: true,
 					animationGlitch: true,
 					bodyVerbosity: "lite",

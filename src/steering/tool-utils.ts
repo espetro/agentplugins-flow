@@ -1,8 +1,8 @@
 /**
  * Shared tool-result utilities.
  *
- * Provides helpers for appending text to tool results and injecting
- * adaptive directive hints after each tool call.
+ * Provides helpers for appending text to tool results and stripping
+ * directive hints from text and messages.
  */
 
 import { isJsonEqual } from "./sliding-prompt.js";
@@ -20,37 +20,8 @@ export function appendTextToToolResult(result: any, text: string): void {
 	}
 }
 
-let directiveEnabled = true;
-
-export function configureDirective(enabled: boolean): void {
-	directiveEnabled = enabled;
-}
-
-// Initialize from env vars (legacy + new) — overrides default true
-if (
-	typeof process !== "undefined" &&
-	typeof process.env !== "undefined" &&
-	(process.env.PI_FLOW_NO_STRATEGIC_HINT === "1" || process.env.PI_FLOW_NO_DIRECTIVE === "1")
-) {
-	directiveEnabled = false;
-}
-
-export const DEFAULT_DIRECTIVE =
-	"\n\n[Directive: Verify your work before advancing — dispatch a follow-up flow.]";
-
-export const NOTDONE_DIRECTIVE =
-	"\n\n[Directive: Unfinished items remain. Resolve them before starting new work.]";
-
-export const VAGUE_DIRECTIVE =
-	"\n\n[Directive: Status unclear — dispatch a verification flow to confirm completion.]";
-
 const DIRECTIVE_RE = /\n\n\[Directive: [^\n]*\]/g;
 const LEGACY_HINT_RE = /\n\n\[Hint: [\s\S]*?\]/g;
-
-export interface FlowHintContext {
-	hasNotDone: boolean;
-	statusVague: boolean;
-}
 
 /**
  * Strip directive hints from text (including legacy [Hint:] format).
@@ -91,45 +62,3 @@ export function stripDirectivesFromMessages(messages: any[]): { messages: any[];
 	});
 	return { messages: result, changed };
 }
-
-const directiveTracker = new WeakMap<object, boolean>();
-
-export function resetDirectiveTracker(): void {
-	// WeakMap entries are garbage-collected with their result objects;
-	// no manual sweep required for per-result tracking.
-}
-
-/**
- * Append an adaptive directive hint to the tool result.
- *
- * Skipped when PI_FLOW_NO_DIRECTIVE=1 (or legacy PI_FLOW_NO_STRATEGIC_HINT=1)
- * is set, when the result is an error, or when a directive was already
- * appended to this specific result.
- */
-export function appendDirectiveOnce(result: any, hintContext?: FlowHintContext): void {
-	if (!directiveEnabled) return;
-	if (result?.failed) return;
-	if (directiveTracker.has(result)) return;
-	directiveTracker.set(result, true);
-
-	let directive = DEFAULT_DIRECTIVE;
-	if (hintContext?.hasNotDone) {
-		directive = NOTDONE_DIRECTIVE;
-	} else if (hintContext?.statusVague) {
-		directive = VAGUE_DIRECTIVE;
-	}
-
-	appendTextToToolResult(result, directive);
-}
-
-// ---------------------------------------------------------------------------
-// Backward-compat deprecated aliases
-// ---------------------------------------------------------------------------
-
-export {
-	appendDirectiveOnce as appendStrategicHintOnce,
-	resetDirectiveTracker as resetStrategicHintTracker,
-	configureDirective as configureStrategicHint,
-	stripDirectives as stripStrategicHints,
-	stripDirectivesFromContent as stripStrategicHintsFromContent,
-};

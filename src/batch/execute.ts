@@ -714,7 +714,7 @@ function buildContextMapText(result: OpResult): string {
 	if (result.language) lines.push(`Language: ${result.language}`);
 	lines.push("");
 	lines.push(`Full-file content omitted because file exceeds SAFE_FULL_READ_LIMIT=${SAFE_FULL_READ_LIMIT} lines.`);
-	lines.push("Use targeted reads with s/l, for example:");
+	lines.push("Targeted reads with s/l available, for example:");
 	lines.push(`{ "o": "read", "p": "${result.path}", "s": <startLine>, "l": <lineCount> }`);
 
 	if (result.symbols && result.symbols.length > 0) {
@@ -724,7 +724,7 @@ function buildContextMapText(result: OpResult): string {
 			lines.push(`- ${entry.kind} ${entry.name} ${entry.startLine}-${entry.endLine}`);
 		}
 		if (result.symbolsTruncated) {
-			lines.push(`... [Context map truncated. Over ${100} entries detected. Use targeted reads to explore further.]`);
+			lines.push(`... [Context map truncated. Over ${100} entries detected. Targeted reads available for specific sections.]`);
 		}
 	} else if (result.language) {
 		lines.push("");

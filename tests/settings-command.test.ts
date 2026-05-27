@@ -292,17 +292,12 @@ describe("handleTextCommand", () => {
   it("unknown subcommand shows error", async () => {
     await handleTextCommand("unknown", ctx);
     expect(notifyCalls).toContainEqual({
-      msg: "Unknown subcommand. Usage: /flow:settings {steering|strategic-hint|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
+      msg: "Unknown subcommand. Usage: /flow:settings {steering|animation|glitch|tool-optimize|structured-output|body|complexity|max-concurrency|ask-user|debug|trace|batch-read|reset|show}",
       type: "error",
     });
   });
 
-  it("strategic-hint toggles", async () => {
-    await handleTextCommand("strategic-hint off", ctx);
-    expect(notifyCalls).toContainEqual({ msg: "steering.strategicHint = false", type: "info" });
-    const settings = loadFlowSettings(tmpDir);
-    expect(settings.steering?.strategicHint).toBe(false);
-  });
+
 });
 
 describe("getCategoryHandler", () => {

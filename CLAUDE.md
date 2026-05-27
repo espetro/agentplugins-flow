@@ -52,7 +52,7 @@ When the user asks to publish:
 |------|---------|---------|
 | `ci.yml` | PR / push to `main` | Runs `lint` + `test` |
 | `bump-version.yml` | `workflow_dispatch` (patch/minor/major/prerelease) | Bumps version → commits → tags → pushes → publishes |
-| `publish.yml` | `workflow_dispatch` or push `v*` tag | Standalone manual fallback; alpha versions use `--tag alpha` |
+| `publish.yml` | `workflow_dispatch` only | Standalone manual fallback; alpha versions use `--tag alpha` |
 
 ## Local Development
 
@@ -313,8 +313,6 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_TUI_MODE` | Set to `1` to route `logWarn`/`logError` to a log file instead of stderr, preventing on-screen text flash. Detected automatically when stdout is a TTY or `PI_FLOW_DEPTH > 0`. |
 | `PI_FLOW_LOG_FILE` | Override the default log file path (`$TMPDIR/pi-agent-flow.log`) for TUI-safe logging. Set to `/dev/null` to suppress entirely. |
 | `PI_FLOW_NO_STEERING` | Set to `1` to disable root state steering hint injection. |
-| `PI_FLOW_NO_DIRECTIVE` | Set to `1` to disable adaptive `[Directive: ...]` hints after tool results. |
-| `PI_FLOW_NO_STRATEGIC_HINT` | Legacy alias for `PI_FLOW_NO_DIRECTIVE` — still honored for backward compatibility. |
 | `PI_FLOW_NO_ANIMATION` | Set to `1` to disable all flow animation (instant render). |
 | `PI_FLOW_NO_GLITCH` | Set to `1` to disable glitch/scramble effect. |
 | `PI_FLOW_BODY_VERBOSITY` | Override collapsed body verbosity (`lite` or `full`). Default: `lite`. |
@@ -345,8 +343,7 @@ Control runtime behavior via slash commands, CLI flags, environment variables, o
 |---------|-------|
 | `show` | `/flow:settings show` — Display current settings and their sources. |
 | `steering` | `/flow:settings steering on\|off` — Enable/disable root state steering hint injection. |
-| `strategic-hint` | `/flow:settings strategic-hint on\|off` — Enable/disable adaptive `[Directive: ...]` hints after tool results. |
-| `directive` | Alias for `strategic-hint` — controls the same setting. |
+
 | `animation` | `/flow:settings animation on\|off` — Enable/disable all flow animations. |
 | `glitch` | `/flow:settings glitch on\|off` — Enable/disable glitch/scramble effect. |
 | `body` | `/flow:settings body <lite\|full>` — Collapsed body verbosity. `lite` (default) = aim + cmd only; `full` = aim + cmd + msg. |
@@ -367,7 +364,7 @@ Pass these when starting `pi`:
 |------|--------|
 | `--no-steering` | Disable root state steering hint injection. |
 | `--steering-prompt <text>` | Provide a custom steering prompt (implies `--no-steering` override). |
-| `--no-strategic-hint` | Disable adaptive `[Directive: ...]` hints after tool results. |
+
 | `--no-animation` | Disable all flow animation (instant render). |
 | `--no-glitch` | Disable glitch/scramble effect. |
 | `--tools-trace` | Enable the `trace` tool (default: `true`). |
@@ -387,12 +384,6 @@ When the same setting is defined in multiple places, the value is resolved as:
     "steering": {
       "enabled": true,
       "customPrompt": "Plan next step..."
-    },
-    "strategicHint": {
-      "enabled": true
-    },
-    "directive": {
-      "enabled": true
     },
     "animation": {
       "enabled": true,

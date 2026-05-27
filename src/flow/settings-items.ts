@@ -152,13 +152,6 @@ export function getSteeringItems(settings: FlowSettings): SettingItem[] {
 			values: ["on", "off"],
 		},
 		{
-			id: "steering.strategicHint",
-			label: "strategic-hint",
-			description: "Toggle [Hint: Plan next step...]",
-			currentValue: (steering.strategicHint ?? true) ? "on" : "off",
-			values: ["on", "off"],
-		},
-		{
 			id: "steering.customPrompt",
 			label: "custom-prompt",
 			description: "Enter custom steering prompt or type 'default' to reset",

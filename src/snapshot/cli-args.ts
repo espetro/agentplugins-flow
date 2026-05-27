@@ -311,7 +311,6 @@ export function parseFlowCliArgs(argv: string[]): ParsedFlowCliArgs {
 				"--tool-optimize",
 				"--no-steering",
 				"--steering-prompt",
-				"--no-strategic-hint",
 				"--no-animation",
 				"--no-glitch",
 			].includes(flagName)
