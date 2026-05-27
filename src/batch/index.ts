@@ -380,6 +380,7 @@ export function createBatchReadTool() {
 			onUpdate: BatchOnUpdate | undefined,
 			ctx: ExtensionContext,
 		) {
+			const loopWarning = checkLoopGuard("batch_read", input);
 			const prepared = prepareBatchReadArguments(input);
 
 			const ops = Array.isArray(prepared)
@@ -407,7 +408,6 @@ export function createBatchReadTool() {
 				includeLimitWarnings: false,
 			}, onUpdate);
 
-			const loopWarning = checkLoopGuard("batch_read", input);
 			const readResult = {
 				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
 				details: { results },
@@ -450,6 +450,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 			onUpdate: BatchOnUpdate | undefined,
 			ctx: ExtensionContext,
 		) {
+			const loopWarning = checkLoopGuard("batch", input);
 			const prepared = prepareArguments(input);
 			// prepareArguments always returns { o: [...] }, but handle
 			// legacy bare arrays for backward compatibility
@@ -591,7 +592,6 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 				});
 			}
 
-			const loopWarning = checkLoopGuard("batch", input);
 			const batchResult = {
 				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
 				details: { results: allResults },

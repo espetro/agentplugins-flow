@@ -88,7 +88,7 @@ export function getMainMenuItems(settings: FlowSettings, cwd: string): TooltipSe
 			value: "steering",
 			label: "Steering Settings",
 			description: steeringEnabled ? "enabled" : "disabled",
-			tooltip: "Configure root state steering and strategic hints",
+			tooltip: "Configure root state steering",
 		},
 		{
 			value: "animation",
