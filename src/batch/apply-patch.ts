@@ -39,7 +39,7 @@ export type Hunk =
 	| { type: "delete"; path: string }
 	| { type: "update"; path: string; movePath?: string; chunks: UpdateFileChunk[] };
 
-export interface ApplyPatchArgs {
+interface ApplyPatchArgs {
 	patch: string;
 	hunks: Hunk[];
 	environmentId?: string;

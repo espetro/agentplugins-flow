@@ -38,7 +38,7 @@ describe("truncateBashOutput", () => {
 		const text = "a".repeat(200 * 1024);
 		const result = truncateBashOutput(text, 100 * 1024, 10000);
 		const totalBytes = Buffer.byteLength(text, "utf-8");
-		expect(result).toContain("[... truncated at 100 KB, " + totalBytes + " total ...]");
+		expect(result).toContain(`[… ${totalBytes} bytes, truncated to 1024 …]`);
 		expect(Buffer.byteLength(result, "utf-8")).toBeLessThanOrEqual(110 * 1024);
 	});
 
@@ -48,6 +48,14 @@ describe("truncateBashOutput", () => {
 		const result = truncateBashOutput(text, 10 * 1024, 100);
 		expect(result).toContain("[... truncated at 100 lines, 5000 total ...]");
 		expect(Buffer.byteLength(result, "utf-8")).toBeLessThanOrEqual(12 * 1024);
+	});
+
+	it("truncates long single lines before line/byte caps", () => {
+		const longLine = "a".repeat(5000);
+		const text = `header\n${longLine}\nfooter`;
+		const result = truncateBashOutput(text, 100 * 1024, 100);
+		expect(result).toContain("[… 5000 bytes, truncated to");
+		expect(result).toContain("footer");
 	});
 
 	it("truncates multi-byte UTF-8 safely without mojibake", () => {
@@ -188,8 +196,8 @@ describe("BashProcessTracker", () => {
 
 		const result = tracker.popCompleted("t11")!;
 		expect(result.status).toBe("ok");
-		expect(result.stdout).toContain("[... truncated at");
-		expect(Buffer.byteLength(result.stdout, "utf-8")).toBeLessThanOrEqual(110 * 1024);
+		expect(result.stdout).toContain("[… 200000 bytes, truncated to 1024 …]");
+		expect(Buffer.byteLength(result.stdout, "utf-8")).toBeLessThanOrEqual(4 * 1024);
 	});
 
 	it("truncates oversized stderr", async () => {
@@ -198,8 +206,8 @@ describe("BashProcessTracker", () => {
 
 		const result = tracker.popCompleted("t12")!;
 		expect(result.status).toBe("error");
-		expect(result.stderr).toContain("[... truncated at");
-		expect(Buffer.byteLength(result.stderr, "utf-8")).toBeLessThanOrEqual(110 * 1024);
+		expect(result.stderr).toContain("[… 200000 bytes, truncated to 1024 …]");
+		expect(Buffer.byteLength(result.stderr, "utf-8")).toBeLessThanOrEqual(4 * 1024);
 	});
 });
 

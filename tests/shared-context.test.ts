@@ -43,6 +43,24 @@ describe("parseSharedContext", () => {
 		expect(result?.assistantMessageCount).toBe(0);
 	});
 
+	it("extracts preview from structured user content array block", () => {
+		const lines = [
+			JSON.stringify({
+				type: "message",
+				message: {
+					role: "user",
+					content: [
+						{ type: "image", image: "base64..." },
+						{ type: "text", text: "this is user text" }
+					]
+				}
+			}),
+		];
+		const result = parseSharedContext(lines.join("\n"));
+		expect(result?.preview).toBe("this is user text");
+		expect(result?.userMessageCount).toBe(1);
+	});
+
 	it("skips invalid JSONL lines gracefully", () => {
 		const lines = [
 			"not json",
@@ -138,5 +156,30 @@ describe("parseSharedContext", () => {
 		expect(result?.totalTokens).toBe(25);
 		expect(result?.userMessageCount).toBe(1);
 		expect(result?.assistantMessageCount).toBe(2);
+	});
+
+	it("captures the totalTokens from top-level entry.usage", () => {
+		const lines = [
+			JSON.stringify({ type: "message", message: { role: "user", content: "hello" } }),
+			JSON.stringify({ type: "message", message: { role: "assistant", content: "ok" }, usage: { totalTokens: 42000 } }),
+		];
+		const result = parseSharedContext(lines.join("\n"));
+		expect(result?.totalTokens).toBe(42000);
+	});
+
+	it("derives totalTokens from slim usage input+output when totalTokens is absent", () => {
+		const lines = [
+			JSON.stringify({ type: "message", message: { role: "user", content: "hello" } }),
+			JSON.stringify({
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "ok" }],
+					usage: { input: 18000, output: 2400, cacheRead: 500, cacheWrite: 0 },
+				},
+			}),
+		];
+		const result = parseSharedContext(lines.join("\n"));
+		expect(result?.totalTokens).toBe(20900);
 	});
 });

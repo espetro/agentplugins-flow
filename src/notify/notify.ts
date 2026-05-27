@@ -13,6 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { FLOW_DEPTH_ENV, parseNonNegativeInt } from "../flow/depth.js";
 import { getNotifyState, resetNotifyState } from "./notify-state.js";
 import { logError } from "../config/log.js";
+import { getAgentDir } from "../config/paths.js";
 
 type TerminalBackend = "auto" | "osc777" | "osc99" | "none";
 type DesktopBackend = "auto" | "macos" | "linux" | "windows-toast" | "none";
@@ -71,10 +72,6 @@ const DEFAULT_CONFIG: NotifyConfig = {
 		command: "",
 	},
 };
-
-function getAgentDir(): string {
-	return process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
-}
 
 function readConfigFile(filePath: string): Partial<NotifyConfig> {
 	if (!existsSync(filePath)) return {};

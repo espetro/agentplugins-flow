@@ -235,12 +235,8 @@ describe("dump mechanism — error handling", () => {
 
 		const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-		// Use a path whose parent directory does not exist — atomic write will fail.
-		const invalidDumpPath = path.join(
-			os.tmpdir(),
-			`nonexistent-dir-${Date.now()}`,
-			"dump.md",
-		);
+		// Use a path whose parent is not a directory — atomic write will fail.
+		const invalidDumpPath = "/dev/null/dump.md";
 		const prev = process.env.PI_FLOW_DUMP_SNAPSHOT;
 		process.env.PI_FLOW_DUMP_SNAPSHOT = invalidDumpPath;
 

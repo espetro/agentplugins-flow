@@ -1,4 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
+import { logWarn } from "../config/log.js";
 import type { TraceStructuredOutput } from "../types/output.js";
 
 /**
@@ -26,22 +27,26 @@ export function extractTraceStructuredOutput(text: string): TraceStructuredOutpu
 			if (typeof parsed.note === "string" && Array.isArray(parsed.tool_ids)) {
 				return {
 					note: parsed.note.trim(),
-					tool_ids: parsed.tool_ids.map((id: any) => String(id).trim()),
+					tool_ids: parsed.tool_ids.map((id: unknown) => String(id).trim()),
 				};
 			}
 		}
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to parse trace structured output: ${e}`);
 		return undefined;
 	}
 	return undefined;
 }
+
+// Fallback for external APIs that use snake_case
+const SNAKE_TOOL_CALL_ID = "tool_call_id";
 
 function findToolCall(messages: Message[], targetId: string) {
 	for (const msg of messages) {
 		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
 		for (const part of msg.content) {
 			if (part && part.type === "toolCall") {
-				const id = part.id || part.toolCallId || part.tool_call_id;
+				const id = part.id || part.toolCallId || ((part as unknown) as Record<string, unknown>)[SNAKE_TOOL_CALL_ID] as string | undefined;
 				if (id === targetId) {
 					return {
 						tool: part.name || part.toolName || "",
@@ -58,14 +63,14 @@ function findToolResult(messages: Message[], targetId: string): string | null {
 	const outputParts: string[] = [];
 	for (const msg of messages) {
 		if (msg.role !== "tool" && msg.role !== "toolResult") continue;
-		const id = (msg as any).toolCallId || (msg as any).tool_call_id || (msg as any).id;
+		const id = (msg as { toolCallId?: string }).toolCallId || ((msg as unknown) as Record<string, unknown>)[SNAKE_TOOL_CALL_ID] as string | undefined || (msg as { id?: string }).id;
 		if (id === targetId) {
 			if (typeof msg.content === "string") {
 				outputParts.push(msg.content);
 			} else if (Array.isArray(msg.content)) {
 				const text = msg.content
-					.filter((c: any) => c && c.type === "text" && typeof c.text === "string")
-					.map((c: any) => c.text)
+					.filter((c: unknown) => c && typeof c === "object" && (c as { type?: string; text?: unknown }).type === "text" && typeof (c as { text?: unknown }).text === "string")
+					.map((c: unknown) => (c as { text: string }).text)
 					.join("");
 				outputParts.push(text);
 			}
@@ -85,8 +90,8 @@ export function resolveToolEvidence(
 	const branchMessages: Message[] = [];
 	if (Array.isArray(parentBranch)) {
 		for (const entry of parentBranch) {
-			if (entry && typeof entry === "object" && (entry as any).type === "message" && (entry as any).message) {
-				branchMessages.push((entry as any).message);
+			if (entry && typeof entry === "object" && (entry as Record<string, unknown>).type === "message" && (entry as Record<string, unknown>).message) {
+				branchMessages.push((entry as Record<string, unknown>).message as Message);
 			}
 		}
 	}

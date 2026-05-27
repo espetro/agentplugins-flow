@@ -11,7 +11,7 @@ import { logWarn } from "../config/log.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type SearchResult = {
+type SearchResult = {
 	title: string;
 	url: string;
 	snippet: string;
@@ -30,12 +30,12 @@ export type WebOpsParams = {
 // Constants
 // ---------------------------------------------------------------------------
 
-export const MAX_SEARCH_RESULTS = 4;
-export const MAX_SEARCH_SNIPPET_CHARS = 160;
-export const MAX_MARKDOWN_CHARS = 200_000;
-export const MAX_FETCH_BYTES = 5_000_000;
-export const PREVIEW_CHARS = 500;
-export const ALLOWED_CONTENT_TYPES = [
+const MAX_SEARCH_RESULTS = 4;
+const MAX_SEARCH_SNIPPET_CHARS = 160;
+const MAX_MARKDOWN_CHARS = 200_000;
+const MAX_FETCH_BYTES = 5_000_000;
+const PREVIEW_CHARS = 500;
+const ALLOWED_CONTENT_TYPES = [
 	"text/html",
 	"application/xhtml+xml",
 	"text/plain",
@@ -100,7 +100,7 @@ export async function runWebOps(
 // Search
 // ---------------------------------------------------------------------------
 
-export async function runWebSearch(
+async function runWebSearch(
 	params: { query: string },
 	signal?: AbortSignal,
 ) {
@@ -132,7 +132,7 @@ export async function runWebSearch(
 	};
 }
 
-export async function searchKeyless(
+async function searchKeyless(
 	query: string,
 	signal?: AbortSignal,
 ): Promise<{ results: SearchResult[]; errors: string[] }> {
@@ -285,7 +285,7 @@ async function duckDuckGoHtmlSearch(query: string, signal?: AbortSignal): Promis
 // Fetch
 // ---------------------------------------------------------------------------
 
-export async function runWebFetch(
+async function runWebFetch(
 	params: { url: string; format?: string },
 	ctx: { sessionManager: { getSessionDir(): string } },
 	signal?: AbortSignal,

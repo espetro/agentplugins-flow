@@ -12,9 +12,11 @@ import { parseComplexity, type Complexity } from "../flow/complexity.js";
 import { type FlowTier } from "../flow/agents.js";
 import { logWarn } from "./log.js";
 import { resolveModelContextWindow as resolveModelContextWindowFromModels } from "./models.js";
+import { getAgentDir, hasAgentDirOverride } from "./paths.js";
+import { atomicWriteFileSync } from "../io/atomic-write.js";
 
 
-export interface FlowModelTierConfig {
+interface FlowModelTierConfig {
 	primary?: string;
 	failover?: string[];
 }
@@ -92,15 +94,16 @@ function readSettingsJson(filePath: string): Record<string, unknown> | null {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
 		return JSON.parse(content) as Record<string, unknown>;
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to read settings JSON from ${filePath}: ${e}`);
 		return null;
 	}
 }
 
 export function getGlobalSettingsPath(): string {
-	const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
+	const agentDir = getAgentDir();
 	const defaultPath = path.join(agentDir, "settings.json");
-	if (!process.env["PI_CODING_AGENT_DIR"] && !fs.existsSync(defaultPath)) {
+	if (!hasAgentDirOverride() && !fs.existsSync(defaultPath)) {
 		const rootPath = path.join(os.homedir(), ".pi", "settings.json");
 		if (fs.existsSync(rootPath)) return rootPath;
 	}
@@ -151,11 +154,7 @@ export function writeGlobalFlowMode(mode: string): { path: string; previous?: st
 	const previous = extractSelectedFlowModelConfigName(settings);
 	settings.flowModelConfig = normalized;
 
-	const dir = path.dirname(filePath);
-	fs.mkdirSync(dir, { recursive: true });
-	const tmpPath = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
-	fs.writeFileSync(tmpPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-	fs.renameSync(tmpPath, filePath);
+	atomicWriteFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
 
 	return {
 		path: filePath,
@@ -436,11 +435,7 @@ export function writeFlowSetting(cwd: string, keyPath: string, value: unknown): 
 		// Reset the entire flowSettings object when keyPath is empty
 		const previous = { ...flowSettings };
 		settings.flowSettings = value;
-		const dir = path.dirname(filePath);
-		fs.mkdirSync(dir, { recursive: true });
-		const tmpPath = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
-		fs.writeFileSync(tmpPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-		fs.renameSync(tmpPath, filePath);
+		atomicWriteFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
 		return { path: filePath, previous };
 	}
 
@@ -457,11 +452,7 @@ export function writeFlowSetting(cwd: string, keyPath: string, value: unknown): 
 	const previous = target[leafKey];
 	target[leafKey] = value;
 
-	const dir = path.dirname(filePath);
-	fs.mkdirSync(dir, { recursive: true });
-	const tmpPath = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
-	fs.writeFileSync(tmpPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
-	fs.renameSync(tmpPath, filePath);
+	atomicWriteFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
 
 	return { path: filePath, previous };
 }
@@ -658,11 +649,5 @@ export function writeFlowModelConfig(
 		delete configs[strategyName];
 	}
 
-	const dir = path.dirname(filePath);
-	fs.mkdirSync(dir, { recursive: true });
-	const tmpPath = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
-	fs.writeFileSync(tmpPath, `${JSON.stringify(settings, null, 2)}
-`, "utf-8");
-	fs.renameSync(tmpPath, filePath);
+	atomicWriteFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
 }
-

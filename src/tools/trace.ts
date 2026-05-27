@@ -11,8 +11,8 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
-import { runFlow } from "../flow/runner.js";
-import { discoverFlows, getFlowTier } from "../flow/agents.js";
+import { runFlowWithLiveSession } from "../flow/flow-live.js";
+import { discoverFlows, getFlowTier, type FlowConfig } from "../flow/agents.js";
 import { buildCore2Snapshot, parseSharedContext } from "../core2/snapshot.js";
 import {
 	resolveFlowModelCandidates,
@@ -22,8 +22,9 @@ import {
 	type FlowModelStrategy,
 } from "../config/config.js";
 import { renderFlowCall, renderFlowResult } from "../tui/render.js";
+import { getFlowLiveState } from "../tui/flow-live-state.js";
+import { emptyFlowUsage } from "../types/flow.js";
 import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
-import { setLiveText } from "../tui/scramble/index.js";
 import { getFlowOutput, type SingleResult, type FlowDetails } from "../types/flow.js";
 import { executeOperations } from "../batch/execute.js";
 import { runBashWithLimits } from "../batch/batch-bash.js";
@@ -74,7 +75,7 @@ const WebDispatchOp = Type.Object({
 	}), { description: "Web operations matching the web tool schema." }),
 });
 
-export const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
+const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
 	description: "Pre-dispatch tool call with discriminated tool type and typed ops array.",
 });
 
@@ -147,9 +148,9 @@ async function executeDispatchOps(
 						: group.tool === "bash"
 							? { ops: group.ops }
 							: { op: group.ops },
-				} as any
+				}
 			]
-		});
+		} as unknown as Message);
 		messages.push({
 			role: "tool",
 			toolCallId,
@@ -159,7 +160,7 @@ async function executeDispatchOps(
 					text: resultString,
 				}
 			]
-		} as any);
+		} as unknown as Message);
 	}
 
 	return {
@@ -204,6 +205,46 @@ export interface TraceToolOptions {
 	fallbackModel?: string;
 }
 
+function resolveTraceRuntime(
+	opts: TraceToolOptions,
+	traceFlow: FlowConfig,
+	ctx: ExtensionContext,
+	toolCallId: string,
+	intent: string,
+) {
+	const tier = (traceFlow.tier ?? "lite") as "lite" | "flash" | "full";
+	let selectedStrategy: FlowModelStrategy | undefined;
+	const loadedFlowModelConfigs = opts.getLoadedFlowModelConfigs?.();
+	if (loadedFlowModelConfigs) {
+		const selectedFlowModelConfig = selectFlowModelStrategy(
+			loadedFlowModelConfigs.configs,
+			loadedFlowModelConfigs.selectedName,
+		);
+		selectedStrategy = selectedFlowModelConfig.strategy;
+	}
+	const { candidates } = resolveFlowModelCandidates({
+		tier,
+		flowModel: traceFlow.model,
+		cliTierOverride: opts.tierOverrideResolver?.(tier),
+		strategy: selectedStrategy ?? {},
+		fallbackModel: opts.fallbackModel,
+	});
+	const resolvedModel = candidates[0];
+	const maxContextTokens = resolveModelContextWindow(resolvedModel);
+	const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
+		activeToolCallId: toolCallId,
+		tier: traceFlow.tier ?? getFlowTier("trace"),
+	});
+	const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
+	return {
+		resolvedModel,
+		maxContextTokens,
+		forkSessionSnapshotJsonl,
+		sharedContext,
+		intent,
+	};
+}
+
 export function createTraceTool(opts: TraceToolOptions = {}) {
 	let lastResolvedModel: string | undefined;
 	let lastResolvedMaxCtx: number | undefined;
@@ -211,13 +252,12 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 	return {
 		name: "trace",
 		label: "Trace",
-		promptSnippet: "Activate trace mode — read files verbatim, run checks, explore codebase. Optional dispatch for pre-flight reads. No boilerplate required.",
+		promptSnippet: "Quick verbatim reads, checks, and exploration. All fields optional.",
 		promptGuidelines: [
-			"Use `trace` for quick verbatim file reads, bash checks, and codebase exploration.",
-			"No `intent`, `aim`, or `complexity` required — the agent knows its mission.",
-			"Optional `dispatch` runs tools before the trace starts.",
+			"All fields optional — the trace agent infers its mission from context.",
+			"Optional `dispatch` runs pre-flight reads before the trace starts.",
 		],
-		description: "Activates trace mode to read files verbatim, run checks, and explore the codebase. Minimal schema — all fields optional.",
+		description: "Read files verbatim, run checks, explore the codebase. All fields optional.",
 		parameters: TraceParams,
 
 		async execute(
@@ -244,18 +284,15 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				throw new Error("Trace agent not found. Expected agents/trace.md to be present.");
 			}
 
-			const preDispatch = params.dispatch?.length
-				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
-				: undefined;
-			const preDispatchResults = preDispatch?.promptString;
-			const preDispatchMessages = preDispatch?.messages ?? [];
+			const intent = params.intent ?? traceFlow.description;
+			const runtime = resolveTraceRuntime(opts, traceFlow, ctx, toolCallId, intent);
+			const {
+				resolvedModel,
+				maxContextTokens,
+				forkSessionSnapshotJsonl,
+				sharedContext,
+			} = runtime;
 
-			const forkSessionSnapshotJsonl = buildCore2Snapshot(ctx.sessionManager, {
-				activeToolCallId: toolCallId,
-				tier: traceFlow.tier ?? getFlowTier("trace"),
-			});
-
-			const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
 			const makeDetails = (results: SingleResult[]): FlowDetails => ({
 				mode: "flow",
 				flowStyle: "fork",
@@ -264,62 +301,47 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				sharedContext,
 			});
 
-			// Resolve model and context window (mirrors executeSingleFlow in executor.ts)
-			const tier = traceFlow.tier ?? "lite";
-			let selectedStrategy: FlowModelStrategy | undefined;
-			const loadedFlowModelConfigs = opts.getLoadedFlowModelConfigs?.();
-			if (loadedFlowModelConfigs) {
-				const selectedFlowModelConfig = selectFlowModelStrategy(
-					loadedFlowModelConfigs.configs,
-					loadedFlowModelConfigs.selectedName,
-				);
-				selectedStrategy = selectedFlowModelConfig.strategy;
-			}
-			const { candidates } = resolveFlowModelCandidates({
-				tier,
-				flowModel: traceFlow.model,
-				cliTierOverride: opts.tierOverrideResolver?.(tier),
-				strategy: selectedStrategy ?? {},
-				fallbackModel: opts.fallbackModel,
-			});
-			const resolvedModel = candidates[0];
-			const maxContextTokens = resolveModelContextWindow(resolvedModel);
-
-			// Persist for renderResult ghost fallback
 			lastResolvedModel = resolvedModel;
 			lastResolvedMaxCtx = maxContextTokens;
 
-			const result = await runFlow({
-				cwd: ctx.cwd,
-				flows: discovery.flows,
-				flowName: "trace",
-				intent: params.intent ?? traceFlow.description,
-				aim: "",
-				taskCwd: params.cwd,
-				forkSessionSnapshotJsonl,
-				parentDepth,
-				parentFlowStack,
-				maxDepth,
-				preventCycles,
-				toolOptimize: opts.getSettings?.()?.toolOptimize,
-				structuredOutput: opts.getSettings?.()?.structuredOutput,
-				complexity: params.complexity ?? "simple",
-				model: resolvedModel,
-				maxContextTokens,
-				preDispatchResults,
-				makeDetails,
-				signal,
-				onUpdate: onUpdate
-					? (partial: any) => {
-						const text = partial?.content?.[0]?.text;
-						if (text !== undefined) {
-							setLiveText(toolCallId, text);
-							setLiveText("collapsed", text);
-						}
-						onUpdate({ ...partial, _toolCallId: toolCallId });
-					}
-					: undefined,
-			});
+			const preDispatch = params.dispatch?.length
+				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
+				: undefined;
+			const preDispatchResults = preDispatch?.promptString;
+			const preDispatchMessages = preDispatch?.messages ?? [];
+
+			const result = await runFlowWithLiveSession(
+				toolCallId,
+				{
+					sharedContext,
+					model: resolvedModel,
+					maxContextTokens,
+					intent,
+					flowType: "trace",
+				},
+				{
+					cwd: ctx.cwd,
+					flows: discovery.flows,
+					flowName: "trace",
+					intent,
+					aim: "",
+					taskCwd: params.cwd,
+					forkSessionSnapshotJsonl,
+					parentDepth,
+					parentFlowStack,
+					maxDepth,
+					preventCycles,
+					toolOptimize: opts.getSettings?.()?.toolOptimize,
+					structuredOutput: opts.getSettings?.()?.structuredOutput,
+					complexity: params.complexity ?? "simple",
+					model: resolvedModel,
+					maxContextTokens,
+					preDispatchResults,
+					makeDetails,
+					signal,
+					onUpdate,
+				},
+			);
 
 			const rawOutput = getFlowOutput(result.messages) || "Trace completed.";
 			const traceOutput = extractTraceStructuredOutput(rawOutput) ?? { note: rawOutput, tool_ids: [] };
@@ -334,7 +356,13 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				outputText += "\n\n" + evidence;
 			}
 
-			const success = result.exitCode === 0;
+			// Inject enriched evidence into messages so renderer shows it after completion.
+		result.messages.push({
+			role: "assistant",
+			content: [{ type: "text", text: outputText }],
+		});
+
+		const success = result.exitCode === 0;
 
 			return {
 				content: [{ type: "text" as const, text: outputText }],
@@ -348,20 +376,26 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			renderFlowCall(args, theme, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" }),
 
 		renderResult: (result: any, { expanded }: any, theme: any, args: any) => {
-			const enrichedArgs = args?.flow?.[0]
-				? args
-				: {
-						...(args || {}),
-						flow: [
-							{
-								type: "trace",
-								intent: args?.intent || "Trace mode",
-								aim: "",
-								model: lastResolvedModel,
-								maxContextTokens: lastResolvedMaxCtx,
-							},
-						],
-					};
+			const details = result?.details as FlowDetails | undefined;
+			const toolCallId = result?._toolCallId || args?.toolCallId || args?.id;
+			const live = getFlowLiveState(toolCallId);
+			const enrichedArgs = {
+				...(args?.flow?.[0]
+					? args
+					: {
+							...(args || {}),
+							flow: [
+								{
+									type: "trace",
+									intent: args?.intent || "Trace mode",
+									aim: "",
+									model: live?.model ?? lastResolvedModel,
+									maxContextTokens: live?.maxContextTokens ?? lastResolvedMaxCtx,
+								},
+							],
+						}),
+				sharedContext: details?.sharedContext ?? live?.sharedContext,
+			};
 			return renderFlowResult(result, expanded, theme, enrichedArgs, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" });
 		},
 	};

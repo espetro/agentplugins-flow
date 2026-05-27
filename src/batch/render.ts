@@ -19,6 +19,23 @@ export interface BatchRenderOptions {
 	isPartial?: boolean;
 }
 
+interface BatchRenderArgs {
+	state?: Record<string, unknown>;
+	invalidate?: () => void;
+	toolCallId?: string;
+	id?: string;
+}
+
+interface SearchResultItem {
+	title?: string;
+	url?: string;
+}
+
+interface FetchResult {
+	filePath?: string;
+	contentLength?: number;
+}
+
 /** Display-only status for ops not yet finished during partial updates. */
 type DisplayOp =
 	| OpResult
@@ -30,6 +47,10 @@ type DisplayOp =
 			q?: string;
 			query?: string;
 			url?: string;
+			u?: string;
+			results?: unknown[];
+			filePath?: string;
+			contentLength?: number;
 	  };
 
 function normalizeRenderOptions(options: BatchRenderOptions | boolean): BatchRenderOptions {
@@ -43,7 +64,7 @@ function reuseRootContainer(
 	args: Record<string, unknown> | undefined,
 	fresh: Text | Container | TruncatedText,
 ): Text | Container | TruncatedText {
-	const state = (args as any)?.state as Record<string, any> | undefined;
+	const state = (args as BatchRenderArgs)?.state;
 	if (!state) return fresh;
 
 	if (!state.__rootContainer) {
@@ -148,7 +169,7 @@ function formatOpTarget(op: DisplayOp): string {
 		case "search":
 			return `"${op.q ?? op.query ?? "?"}"`;
 		case "fetch":
-			return op.url ?? (op as any).u ?? "?";
+			return op.url ?? (op as { u?: string }).u ?? "?";
 		case "patch":
 			return shortenPath(op.path ?? "patch");
 		default:
@@ -189,7 +210,7 @@ function formatOpMeta(op: DisplayOp): string {
 			break;
 		}
 		case "search": {
-			const searchResults = (op as any).results?.length;
+			const searchResults = (op as { results?: unknown[] }).results?.length;
 			if (searchResults !== undefined && searchResults >= 0) {
 				parts.push(`${searchResults} result${searchResults !== 1 ? "s" : ""}`);
 			} else if (op.content) {
@@ -289,7 +310,7 @@ function buildOpContentPreview(op: DisplayOp, _childPrefix: string): string | nu
 			return preview || null;
 		}
 		case "search": {
-			const results = (op as any).results as Array<{ title?: string; url?: string }> | undefined;
+			const results = (op as { results?: SearchResultItem[] }).results;
 			if (results && results.length > 0) {
 				const preview = results
 					.slice(0, 3)
@@ -303,8 +324,8 @@ function buildOpContentPreview(op: DisplayOp, _childPrefix: string): string | nu
 			return preview || null;
 		}
 		case "fetch": {
-			const filePath = (op as any).filePath as string | undefined;
-			const contentLen = op.contentLength ?? (op as any).contentLength;
+			const filePath = (op as FetchResult).filePath;
+			const contentLen = op.contentLength ?? (op as FetchResult).contentLength;
 			if (filePath) {
 				return `saved: ${shortenPath(filePath)}${contentLen !== undefined ? ` (${contentLen} bytes)` : ""}`;
 			}
@@ -372,9 +393,9 @@ function renderTreeResult(
 	}
 
 	// Scramble animation support
-	const canAnimate = !!(args as any)?.invalidate && !!(args as any)?.state;
+	const canAnimate = !!(args as BatchRenderArgs)?.invalidate && !!(args as BatchRenderArgs)?.state;
 	if (canAnimate) {
-		const id = (args as any)?.toolCallId || (args as any)?.id || label;
+		const id = (args as BatchRenderArgs)?.toolCallId || (args as BatchRenderArgs)?.id || label;
 		const now = Date.now();
 		const fullText = extractContainerText(container);
 		const scrambled = scrambleManager.updateText(id, "result", stripAnsi(fullText), now, false).content;
@@ -383,7 +404,7 @@ function renderTreeResult(
 		for (const line of scrambled.split("\n")) {
 			scrambledContainer.addChild(new Text(line, 0, 0));
 		}
-		runScrambleTimer(args as Record<string, any> | undefined, id);
+		runScrambleTimer(args, id);
 		return reuseRootContainer(args, scrambledContainer);
 	}
 
@@ -400,7 +421,7 @@ function renderLegacyResult(
 	args?: Record<string, unknown>,
 ): any {
 	const fullText = result.content?.find((c) => c.type === "text")?.text ?? "";
-	const canAnimate = !!(args as any)?.invalidate && !!(args as any)?.state;
+	const canAnimate = !!(args as BatchRenderArgs)?.invalidate && !!(args as BatchRenderArgs)?.state;
 	if (!canAnimate) {
 		if (!expanded) {
 			const summary = fullText.split("\n")[0] ?? "";
@@ -411,16 +432,16 @@ function renderLegacyResult(
 		return reuseRootContainer(args, fresh);
 	}
 	const now = Date.now();
-	const id = (args as any)?.toolCallId || (args as any)?.id || "batch";
+	const id = (args as BatchRenderArgs)?.toolCallId || (args as BatchRenderArgs)?.id || "batch";
 	if (!expanded) {
 		const summary = fullText.split("\n")[0] ?? "";
 		const scrambled = scrambleManager.updateText(id, "result", stripAnsi(summary), now, false).content;
-		runScrambleTimer(args as Record<string, any> | undefined, id);
+		runScrambleTimer(args, id);
 		const fresh = new TruncatedText(scrambled, 0, 0);
 		return reuseRootContainer(args, fresh);
 	}
 	const scrambled = scrambleManager.updateText(id, "result", stripAnsi(fullText), now, false).content;
-	runScrambleTimer(args as Record<string, any> | undefined, id);
+	runScrambleTimer(args, id);
 	const fresh = new Text(scrambled, 0, 0);
 	return reuseRootContainer(args, fresh);
 }

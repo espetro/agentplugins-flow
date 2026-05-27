@@ -58,7 +58,7 @@ export const SHALLOW_GLITCH = '✕○☐+✕◇⠌⠡⠜';
 /** Classic scramble set for fallback — balanced braille + sparkle mix */
 export const SCRAMBLE_CHARS = '✕○☐+✕◇⠌⠡⠜⠣⠪⠹⠸⠷⠮';
 /** Sparkle and thin braille mix for afterglow "pop" */
-export const SPARK_CHARS = '△○☐⠂⠄⠈·⠠⡀∙⠃⠆⠉⠘⠰⡁⢂';
+const SPARK_CHARS = '△○☐⠂⠄⠈·⠠⡀∙⠃⠆⠉⠘⠰⡁⢂';
 /** Backward-compat alias */
 export const THIN_BRAILLE_SPARK = SPARK_CHARS;
 
@@ -82,7 +82,7 @@ export const GLITCH_OVERLAP_MAX_LENGTH = 10;
 export const GLITCH_FADE_OUT_FRAMES = 18;
 export const GLITCH_SHRINK_FADE_OUT_FRAMES = 8;
 export const GLITCH_COOLDOWN_MS = 2000;
-export const MSG_GLITCH_MIN_DURATION_MS = 1000;
+const MSG_GLITCH_MIN_DURATION_MS = 1000;
 export const MSG_GLITCH_MIN_FRAMES = Math.ceil(MSG_GLITCH_MIN_DURATION_MS / GLITCH_FRAME_MS);
 
 // TPS hysteresis
@@ -151,7 +151,7 @@ export const POOL_REFILL_THRESHOLD = 512; // refill when 25% remaining
 let randomPool: string[] = [];
 let randomPoolIndex = 0;
 
-export function fillRandomPool(rng?: FastRNG): void {
+function fillRandomPool(rng?: FastRNG): void {
 	randomPool = new Array(RANDOM_POOL_SIZE);
 	for (let i = 0; i < RANDOM_POOL_SIZE; i++) {
 		if (rng) {

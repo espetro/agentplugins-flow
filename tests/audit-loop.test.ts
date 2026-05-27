@@ -273,6 +273,47 @@ describe("audit loop metadata preservation", () => {
 		expect(fresh.auditLoopGroupId).toBe(42);
 		expect(fresh.pingPongMeta).toBeDefined();
 	});
+
+	it("stamps pingPongMeta on audit capstone after loop completes", () => {
+		// Simulates the final state after executeGroupedPingPong finishes:
+		// build results have pingPongMeta, and audit capstone must also have it.
+		const buildResult = {
+			type: "build",
+			intent: "test",
+			aim: "test",
+			exitCode: 0,
+			messages: [],
+			usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+			agentSource: "bundled" as const,
+			pingPongMeta: {
+				cycles: 2,
+				verdicts: [
+					{ cycle: 0, verdict: "rework", feedback: "Fix null check" },
+					{ cycle: 1, verdict: "pass" },
+				],
+				finalVerdict: "pass",
+			},
+		};
+		const auditResult = {
+			...buildResult,
+			type: "audit",
+			auditParentType: "build",
+			structuredOutput: { verdict: "pass" },
+		};
+		// After executeGroupedPingPong finalization, audit capstone should carry the same meta
+		auditResult.pingPongMeta = {
+			cycles: 2,
+			verdicts: [
+				{ cycle: 0, verdict: "rework", feedback: "Fix null check" },
+				{ cycle: 1, verdict: "pass" },
+			],
+			finalVerdict: "pass",
+		};
+		expect(auditResult.pingPongMeta).toBeDefined();
+		expect(auditResult.pingPongMeta.cycles).toBe(2);
+		expect(auditResult.pingPongMeta.finalVerdict).toBe("pass");
+		expect(auditResult.pingPongMeta.verdicts).toHaveLength(2);
+	});
 });
 
 describe("createGhostResult", () => {

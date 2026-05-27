@@ -7,6 +7,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { logWarn } from "../config/log.js";
 import { execFile } from "node:child_process";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import {
@@ -18,12 +19,15 @@ import {
 	type BatchOnUpdate,
 	MAX_LINES,
 	MAX_BYTES,
+	MAX_BYTES_PER_LINE,
 	SAFE_FULL_READ_LIMIT,
 	TARGETED_READ_LINE_LIMIT,
 	MAX_TOTAL_RESULT_LINES,
 	BATCH_READ_MAX_TOTAL_BYTES,
 	RG_SIGNATURES_MAX_FILES,
+	RG_DEFAULT_MAX_COUNT,
 } from "./constants.js";
+import { truncateLineBytes, truncateRgOutputText } from "./truncate-output.js";
 import {
 	normalizeToLF,
 	restoreLineEndings,
@@ -55,7 +59,7 @@ function buildBatchReadSafetyWarning(): string {
 	return `[batch_read safety] Raw content truncated at ${TARGETED_READ_LINE_LIMIT} lines to preserve context. Adjust your 's' and 'l' parameters to read further.`;
 }
 
-export function readWithOffsetLimit(
+function readWithOffsetLimit(
 	content: string,
 	offset?: number,
 	limit?: number,
@@ -86,6 +90,16 @@ export function readWithOffsetLimit(
 	let selectedLines = allLines.slice(startLine, endLine);
 	let truncated = false;
 	let nextOffset: number | undefined;
+	let longLinesTruncated = 0;
+
+	selectedLines = selectedLines.map((line) => {
+		const { line: trimmed, truncated: lineTruncated } = truncateLineBytes(line, MAX_BYTES_PER_LINE);
+		if (lineTruncated) {
+			longLinesTruncated++;
+			truncated = true;
+		}
+		return trimmed;
+	});
 
 	// Apply max-lines cap for regular batch reads. batch_read clamps oversized
 	// targeted reads before this helper and context-maps large full-file reads.
@@ -94,22 +108,11 @@ export function readWithOffsetLimit(
 		truncated = true;
 	}
 
-	// A single selected line that exceeds the byte cap is not safely splittable by
-	// line-oriented offsets, so keep the existing hard error in both modes.
-	for (let i = 0; i < selectedLines.length; i++) {
-		if (Buffer.byteLength(selectedLines[i], "utf-8") > MAX_BYTES) {
-			const lineDisplay = startLine + i + 1;
-			throw new Error(
-				`Line ${lineDisplay} exceeds limit. Try: ${toolName} with o:"read", s:${lineDisplay}, l:10, or use bash: head -c ... ${filePath ?? "<file>"}`,
-			);
-		}
-	}
-
 	// Join and check byte size
 	let result = selectedLines.join("\n");
 
 	// Truncate by total bytes for regular batch reads only. batch_read relies on
-	// its line-oriented safety guards and still rejects an individual huge line.
+	// its line-oriented safety guards plus per-line byte caps.
 	if (shouldTruncate && Buffer.byteLength(result, "utf-8") > MAX_BYTES) {
 		let byteAccum = 0;
 		let keepLines = 0;
@@ -134,6 +137,9 @@ export function readWithOffsetLimit(
 		const endDisplay = startLine + selectedLines.length;
 		const startDisplay = startLine + 1;
 		result += `\n\n[Showing lines ${startDisplay}-${endDisplay} of ${totalFileLines}. Use s=${nextOffset} to continue.]`;
+		if (longLinesTruncated > 0) {
+			result += `\n[${longLinesTruncated} line(s) exceeded ${MAX_BYTES_PER_LINE} bytes and were truncated.]`;
+		}
 	} else if (limit !== undefined && lastLineRead < totalFileLines) {
 		const remaining = totalFileLines - lastLineRead;
 		result += `\n\n[${remaining} more lines in file. Use s=${nextOffset} to continue.]`;
@@ -175,7 +181,8 @@ export async function suggestSimilarFiles(
 			.sort((a, b) => a.dist - b.dist)
 			.slice(0, 3)
 			.map((c) => path.join(path.relative(cwd, dir), c.name));
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] suggestSimilarFiles failed: ${e}`);
 		return [];
 	}
 }
@@ -183,13 +190,6 @@ export async function suggestSimilarFiles(
 // ---------------------------------------------------------------------------
 // Error hints
 // ---------------------------------------------------------------------------
-
-export interface BatchError {
-	error: string;
-	hint: string;
-	retryable: boolean;
-	suggestedFix?: string;
-}
 
 function getErrorHint(error: string): string {
 	if (error.includes("File not found") || error.includes("file not found"))
@@ -411,7 +411,7 @@ export async function executeOperations(
 					}
 					await withFileMutationQueue(resolvedPath, async () => {
 						let writeStat;
-						try { writeStat = await fs.lstat(resolvedPath); } catch { /* path does not exist yet — safe to write */ }
+						try { writeStat = await fs.lstat(resolvedPath); } catch (e) { logWarn(`[pi-agent-flow] lstat failed for ${resolvedPath}: ${e}`); }
 						if (writeStat?.isDirectory()) {
 							throw new Error(`Cannot write to directory: ${op.p}. Provide a file path instead.`);
 						}
@@ -490,9 +490,32 @@ export async function executeOperations(
 						throw new Error("q (search pattern) is required for rg operations.");
 					}
 					const searchPath = (rgOp.p.startsWith("~") || path.isAbsolute(rgOp.p)) ? resolvedPath : rgOp.p;
-					const args = buildRgArgs({ ...rgOp, p: searchPath });
+					const { args, defaultMaxCountApplied } = buildRgArgs({ ...rgOp, p: searchPath });
 					const matches = await execRg(args, cwd, signal);
-					const content = matches.join("\n");
+					const rawContent = matches.join("\n");
+					const rgTruncation = truncateRgOutputText(rawContent);
+					const content = rgTruncation.text;
+
+					const rgWarnings: string[] = [];
+					if (pathWarning) rgWarnings.push(pathWarning);
+					if (defaultMaxCountApplied) {
+						rgWarnings.push(
+							`Broad search on "${rgOp.p}" auto-limited to ${RG_DEFAULT_MAX_COUNT} matches per file. Pass n: to override.`,
+						);
+					}
+					if (rgTruncation.truncated) {
+						const parts: string[] = [];
+						if (rgTruncation.truncatedLines) {
+							parts.push(`output capped at line limit (${rgTruncation.totalLines} total matches)`);
+						}
+						if (rgTruncation.truncatedBytes) {
+							parts.push(`output capped at byte limit (${rgTruncation.totalBytes} bytes)`);
+						}
+						if (rgTruncation.longLinesTruncated > 0) {
+							parts.push(`${rgTruncation.longLinesTruncated} long line(s) truncated to ${MAX_BYTES_PER_LINE} bytes each`);
+						}
+						rgWarnings.push(`rg output truncated: ${parts.join("; ")}. Narrow the path, add n:, or use l:true for filenames only.`);
+					}
 
 					// Try to attach enclosing signatures (only when we have line numbers)
 					let enclosingSignatures: Record<string, string> | undefined;
@@ -507,8 +530,9 @@ export async function executeOperations(
 						status: "ok",
 						content,
 						totalLines: matches.length,
+						truncated: rgTruncation.truncated || undefined,
 						enclosingSignatures,
-						warning: pathWarning,
+						warning: rgWarnings.length > 0 ? rgWarnings.join("\n") : undefined,
 						q: rgOp.q,
 					});
 					counts.rg++;
@@ -727,12 +751,16 @@ function buildContentText(summary: string, results: OpResult[]): string {
 		} else if (r.op === "delete" && r.status === "ok") {
 			sections.push(`\n--- delete: ${r.path} ---`);
 		} else if (r.op === "rg" && r.status === "ok") {
+			let rgBody: string;
 			if (r.enclosingSignatures && Object.keys(r.enclosingSignatures).length > 0) {
-				const grouped = groupRgMatchesByFile(r.content ?? "", r.enclosingSignatures);
-				sections.push(`\n--- rg: ${r.path} ---\n${grouped}`);
+				rgBody = groupRgMatchesByFile(r.content ?? "", r.enclosingSignatures);
 			} else {
-				sections.push(`\n--- rg: ${r.path} ---\n${r.content}`);
+				rgBody = r.content ?? "";
 			}
+			if (r.warning) {
+				rgBody = `[warning] ${r.warning}\n\n${rgBody}`;
+			}
+			sections.push(`\n--- rg: ${r.path} ---\n${rgBody}`);
 		} else if (r.status === "error") {
 			sections.push(`\n--- ${r.op}: ${r.path} ---\nError: ${r.error}`);
 		} else if (r.op === "patch" && r.status === "ok") {
@@ -753,13 +781,26 @@ function buildContentText(summary: string, results: OpResult[]): string {
 // ripgrep helpers
 // ---------------------------------------------------------------------------
 
-function buildRgArgs(op: RgOpInput): string[] {
+function isBroadSearchPath(searchPath: string): boolean {
+	const normalized = searchPath.replace(/\\/g, "/").replace(/\/+$/, "") || ".";
+	return normalized === "." || normalized === "..";
+}
+
+function buildRgArgs(op: RgOpInput): { args: string[]; defaultMaxCountApplied: boolean } {
 	const args: string[] = [];
 	args.push("-n");
 	if (op.l === true) args.push("-l");
 	if (op.i === true) args.push("-i");
 	if (typeof op.t === "string" && op.t) args.push("-t", op.t);
-	if (typeof op.n === "number" && Number.isFinite(op.n) && op.n >= 1) args.push("--max-count", String(Math.floor(op.n)));
+
+	let defaultMaxCountApplied = false;
+	if (typeof op.n === "number" && Number.isFinite(op.n) && op.n >= 1) {
+		args.push("--max-count", String(Math.floor(op.n)));
+	} else if (isBroadSearchPath(op.p)) {
+		args.push("--max-count", String(RG_DEFAULT_MAX_COUNT));
+		defaultMaxCountApplied = true;
+	}
+
 	if (typeof op.u === "number" && op.u >= 0) {
 		const uCount = Math.min(op.u + 1, 3); // ripgrep caps at -uuu
 		args.push("-" + "u".repeat(uCount));
@@ -767,7 +808,7 @@ function buildRgArgs(op: RgOpInput): string[] {
 	args.push("--");
 	args.push(op.q);
 	args.push(op.p);
-	return args;
+	return { args, defaultMaxCountApplied };
 }
 
 function isFilesOnlyRg(matches: string[]): boolean {
@@ -827,8 +868,8 @@ async function buildEnclosingSignatures(
 					sigMap[match] = enclosing.signature;
 				}
 			}
-		} catch {
-			// File not readable, skip
+		} catch (e) {
+			logWarn(`[pi-agent-flow] File not readable for signature map: ${e}`);
 		}
 	}
 	return sigMap;
@@ -873,25 +914,34 @@ function groupRgMatchesByFile(content: string, sigMap: Record<string, string>): 
 	return out.join("\n");
 }
 
+function getErrCode(err: unknown): string | number | undefined {
+	if (err && typeof err === "object" && "code" in err) {
+		const code = (err as Record<string, unknown>).code;
+		if (typeof code === "string" || typeof code === "number") return code;
+	}
+	return undefined;
+}
+
 function execRg(args: string[], cwd: string, signal?: AbortSignal): Promise<string[]> {
 	return new Promise((resolve, reject) => {
 		const child = execFile("rg", args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
 			if (err) {
+				const code = getErrCode(err);
 				// ripgrep exits with code 1 when no matches are found
-				if ((err as any).code === 1) {
+				if (code === 1) {
 					resolve([]);
 					return;
 				}
-				if ((err as any).code === "ENOBUFS" || (err as any).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+				if (code === "ENOBUFS" || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
 					reject(new Error("ripgrep output exceeded 10MB buffer limit. Use a more specific pattern or add max-count."));
 					return;
 				}
-				if ((err as any).code === "ENOENT") {
+				if (code === "ENOENT") {
 					reject(new Error("ripgrep (rg) binary not found. Please install ripgrep."));
 					return;
 				}
 				const stderrMsg = stderr?.trim() ? ` — ${stderr.trim()}` : "";
-				const codeInfo = (err as any).code ? ` (code: ${(err as any).code})` : "";
+				const codeInfo = code ? ` (code: ${code})` : "";
 				const msgInfo = err.message ? `: ${err.message}` : "";
 				reject(new Error(`ripgrep failed${codeInfo}${msgInfo}${stderrMsg}`));
 				return;
@@ -901,7 +951,7 @@ function execRg(args: string[], cwd: string, signal?: AbortSignal): Promise<stri
 		});
 		if (signal) {
 			const onAbort = () => {
-				try { child.kill("SIGTERM"); } catch { /* already dead */ }
+				try { child.kill("SIGTERM"); } catch (e) { logWarn(`[pi-agent-flow] SIGTERM failed for child process: ${e}`); }
 				reject(new Error("Aborted"));
 			};
 			if (signal.aborted) {

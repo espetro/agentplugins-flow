@@ -148,10 +148,12 @@ export function setupContinuation(pi: ExtensionAPI): void {
     const messageText =
       typeof event.message.content === "string"
         ? event.message.content
-        : event.message.content
-            .filter((p): p is { type: "text"; text: string } => p.type === "text" && typeof p.text === "string")
-            .map((p) => p.text)
-            .join("");
+        : Array.isArray(event.message.content)
+          ? event.message.content
+              .filter((p): p is { type: "text"; text: string } => p.type === "text" && typeof p.text === "string")
+              .map((p) => p.text)
+              .join("")
+          : "";
     addTokens(cwd, Math.ceil(messageText.length / 4));
 
     // Budget guards — silent

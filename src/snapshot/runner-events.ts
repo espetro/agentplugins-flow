@@ -15,7 +15,9 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
+import { logWarn } from "../config/log.js";
 import { formatBatchOpsSummary } from "../batch/summary.js";
+import type { SingleResult } from "../types/flow.js";
 
 // WeakMap-based side tables to avoid polluting caller objects and survive frozen/sealed objects.
 const seenSignaturesMap = new WeakMap<object, Set<string>>();
@@ -83,7 +85,7 @@ const MAX_INSTANT_TPS = 300;
 const TPS_CALIBRATION = 1.0;
 /** EMA smoothing factor for tokens-per-second (higher = more responsive). */
 const EMA_ALPHA = 0.35;
-/** Emit streaming text as soon as any non-empty delta arrives. */
+/** Emit streaming text as soon as a non-empty delta arrives. */
 const STREAMING_EMIT_CHARS = 1;
 
 function getStreamingEstimate(result: object): { chars: number } {
@@ -237,7 +239,7 @@ export function drainSmoothedTps(result: object): number {
 	return tracker.smoothedTps;
 }
 
-interface CtxState {
+export interface CtxState {
 	baseline: number;
 	streamingChars: number;
 }
@@ -247,7 +249,7 @@ interface CtxState {
  * Returns an accessor object backed by a WeakMap so frozen/sealed
  * objects do not throw.
  */
-function getCtxState(result: object): CtxState {
+export function getCtxState(result: object): CtxState {
 	if (!ctxBaselineMap.has(result)) {
 		ctxBaselineMap.set(result, 0);
 		ctxStreamingCharsMap.set(result, 0);
@@ -363,6 +365,11 @@ interface AssistantMessage extends Record<string, unknown> {
 		cacheWrite?: number;
 		cost?: { total?: number };
 		totalTokens?: number;
+		prompt_tokens?: number;
+		completion_tokens?: number;
+		cache_read?: number;
+		cache_write?: number;
+		total_tokens?: number;
 	};
 }
 
@@ -394,21 +401,24 @@ const REASONING_FIELDS = [
 ];
 
 /** Strip thinking/reasoning content from an assistant message. */
-function stripReasoning(message: any): { message: any; changed: boolean } {
+function stripReasoning(message: AssistantMessage): { message: AssistantMessage; changed: boolean } {
 	let next = message;
 	let changed = false;
 
 	for (const field of REASONING_FIELDS) {
 		if (field in next) {
 			if (next === message) next = { ...message };
-			delete (next as any)[field];
+			delete (next as Record<string, unknown>)[field];
 			changed = true;
 		}
 	}
 
 	if (Array.isArray(message.content)) {
 		const filteredContent = message.content.filter(
-			(part: any) => !REASONING_PART_TYPES.has(part?.type),
+			(part: unknown) => {
+				const type = (part as { type?: string }).type;
+				return typeof type === "string" ? !REASONING_PART_TYPES.has(type) : true;
+			},
 		);
 		if (filteredContent.length !== message.content.length) {
 			if (next === message) next = { ...message };
@@ -466,23 +476,13 @@ function addFlowAssistantMessage(result: FlowResult, message: AssistantMessage):
 
 	result.usage!.turns++;
 	const usage = message.usage;
-	if (usage) {
-		result.usage!.input += usage.input || 0;
-		result.usage!.output += usage.output || 0;
-		result.usage!.cacheRead += usage.cacheRead || 0;
-		result.usage!.cacheWrite += usage.cacheWrite || 0;
-		result.usage!.cost += usage.cost?.total || 0;
-		result.usage!.contextTokens = usage.totalTokens ?? 0;
-
-		// Snapshot ctx baseline for smooth streaming estimation
-		const ctxState = getCtxState(result);
-		ctxState.baseline = usage.totalTokens ?? 0;
-		ctxState.streamingChars = 0;
-	}
+	const totalTokens = usage
+		? (usage.totalTokens ?? usage.total_tokens ?? ((usage.input || usage.prompt_tokens || 0) + (usage.output || usage.completion_tokens || 0) + (usage.cacheRead || usage.cache_read || 0) + (usage.cacheWrite || usage.cache_write || 0)))
+		: 0;
 
 	// Count tool call parts in the message content and estimate their tokens
+	let toolCallTokens = 0;
 	if (Array.isArray(message.content)) {
-		let toolCallTokens = 0;
 		for (const part of message.content as Array<{ type: string; name?: string; toolName?: string; arguments?: unknown; input?: unknown }>) {
 			if (part.type === "toolCall") {
 				result.usage!.toolCalls++;
@@ -497,18 +497,60 @@ function addFlowAssistantMessage(result: FlowResult, message: AssistantMessage):
 		}
 	}
 
+	if (totalTokens > 0) {
+		result.usage!.input += usage!.input || usage!.prompt_tokens || 0;
+		result.usage!.output += usage!.output || usage!.completion_tokens || 0;
+		result.usage!.cacheRead += usage!.cacheRead || usage!.cache_read || 0;
+		result.usage!.cacheWrite += usage!.cacheWrite || usage!.cache_write || 0;
+		result.usage!.cost += usage!.cost?.total || 0;
+		result.usage!.contextTokens = totalTokens;
+	} else {
+		// Provider omitted or sent empty usage metadata — estimate from message content
+		let textLen = 0;
+		if (typeof message.content === "string") {
+			textLen = message.content.length;
+		} else if (Array.isArray(message.content)) {
+			for (const part of message.content) {
+				if (part && part.type === "text" && typeof part.text === "string") {
+					textLen += part.text.length;
+				}
+			}
+		}
+		let estimatedOutputTokens = 0;
+		if (textLen > 0) {
+			estimatedOutputTokens = Math.floor(textLen / CHARS_PER_TOKEN);
+		}
+		const totalEstimatedOutput = estimatedOutputTokens + toolCallTokens;
+		if (totalEstimatedOutput > 0) {
+			result.usage!.output += totalEstimatedOutput;
+			result.usage!.contextTokens += totalEstimatedOutput;
+		}
+	}
+
+	// Always snapshot ctx baseline for smooth streaming estimation after message completed
+	const ctxState = getCtxState(result);
+	ctxState.baseline = result.usage!.contextTokens;
+	ctxState.streamingChars = 0;
+
 	return true;
 }
 
 interface ToolMessage {
 	role: string;
 	toolCallId?: string;
-	tool_call_id?: string;
 	content?: unknown;
 }
 
 function addFlowToolMessage(result: FlowResult, message: ToolMessage): boolean {
 	if (!message || (message.role !== "tool" && message.role !== "toolResult")) return false;
+
+	// Defensive: upstream host assumes content is always an array for tool/toolResult
+	// messages. Normalize string / null / undefined into a block array.
+	if (!Array.isArray(message.content)) {
+		const text = typeof message.content === "string" ? message.content : "";
+		const normalizedContent = text ? [{ type: "text", text }] : [];
+		message = { ...message, content: normalizedContent };
+	}
 
 	const signature = getMessageSignature(message);
 	const seen = getSeenFlowMessageSignatures(result);
@@ -523,7 +565,7 @@ function addFlowMessages(result: FlowResult, messages: unknown[]): boolean {
 	if (!Array.isArray(messages)) return false;
 	let changed = false;
 	for (const message of messages) {
-		if (message && (message as Record<string, unknown>).role === "tool" || (message as Record<string, unknown>).role === "toolResult") {
+		if (message && ((message as Record<string, unknown>).role === "tool" || (message as Record<string, unknown>).role === "toolResult")) {
 			if (addFlowToolMessage(result, message as ToolMessage)) changed = true;
 		} else if (message && (message as Record<string, unknown>).role === "assistant") {
 			if (addFlowAssistantMessage(result, message as AssistantMessage)) changed = true;
@@ -536,6 +578,10 @@ interface FlowEvent {
 	type: string;
 	message?: AssistantMessage | ToolMessage;
 	messages?: unknown[];
+	usage?: any;
+	model?: string;
+	stopReason?: string;
+	errorMessage?: string;
 	assistantMessageEvent?: {
 		type: string;
 		delta?: string;
@@ -546,11 +592,35 @@ function processFlowEvent(event: FlowEvent, result: FlowResult): boolean {
 	if (!event || typeof event !== "object") return false;
 
 	switch (event.type) {
-		case "message_end":
-			return addFlowMessages(result, [event.message]);
+		case "message_end": {
+			let msg = event.message;
+			if (msg && msg.role === "assistant") {
+				const amsg = msg as AssistantMessage;
+				msg = {
+					...amsg,
+					usage: amsg.usage || event.usage,
+					model: amsg.model || event.model,
+					stopReason: amsg.stopReason || event.stopReason,
+					errorMessage: amsg.errorMessage || event.errorMessage,
+				};
+			}
+			return addFlowMessages(result, [msg]);
+		}
 
-		case "turn_end":
-			return addFlowMessages(result, [event.message]);
+		case "turn_end": {
+			let msg = event.message;
+			if (msg && msg.role === "assistant") {
+				const amsg = msg as AssistantMessage;
+				msg = {
+					...amsg,
+					usage: amsg.usage || event.usage,
+					model: amsg.model || event.model,
+					stopReason: amsg.stopReason || event.stopReason,
+					errorMessage: amsg.errorMessage || event.errorMessage,
+				};
+			}
+			return addFlowMessages(result, [msg]);
+		}
 
 		case "agent_end":
 			result.sawAgentEnd = true;
@@ -570,6 +640,7 @@ function processFlowEvent(event: FlowEvent, result: FlowResult): boolean {
 				const thinkingDelta = evt.delta ?? "";
 				if (thinkingDelta) {
 					updateStreamingEstimate(result, thinkingDelta.length);
+					return true;
 				}
 				return false;
 			}
@@ -580,6 +651,7 @@ function processFlowEvent(event: FlowEvent, result: FlowResult): boolean {
 				const toolDelta = evt.delta ?? "";
 				if (toolDelta) {
 					updateStreamingEstimate(result, toolDelta.length);
+					return true;
 				}
 				return false;
 			}
@@ -597,7 +669,8 @@ export function processFlowJsonLine(line: string, result: FlowResult): boolean {
 	let event: FlowEvent;
 	try {
 		event = JSON.parse(line) as FlowEvent;
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to parse runner event JSON: ${e}`);
 		return false;
 	}
 
@@ -697,11 +770,14 @@ function matchToolCallsWithResults(messages: Message[], maxPairs: number): ToolP
 	if (!Array.isArray(messages)) return [];
 	const pairs: ToolPair[] = [];
 
+	// Fallback for external APIs that use snake_case
+	const SNAKE_TOOL_CALL_ID = "tool_call_id";
+
 	// Build a map of toolCallId -> tool result output
 	const resultMap = new Map<string, string>();
 	for (const msg of messages) {
 		if ((msg.role !== "tool" && msg.role !== "toolResult") || !Array.isArray(msg.content)) continue;
-		const id = (msg as unknown as { toolCallId?: string }).toolCallId || (msg as unknown as { tool_call_id?: string }).tool_call_id || "";
+		const id = (msg as unknown as { toolCallId?: string }).toolCallId || (msg as unknown as Record<string, unknown>)[SNAKE_TOOL_CALL_ID] as string | undefined || "";
 		if (!id) continue;
 		const text = msg.content
 			.filter((p: { type: string; text?: string }) => p.type === "text" && typeof p.text === "string")
@@ -715,7 +791,7 @@ function matchToolCallsWithResults(messages: Message[], maxPairs: number): ToolP
 		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
 		for (const part of msg.content) {
 			if (part.type !== "toolCall") continue;
-			const id = part.toolCallId || (part as unknown as { tool_call_id?: string }).tool_call_id || "";
+			const id = part.toolCallId || (part as unknown as Record<string, unknown>)[SNAKE_TOOL_CALL_ID] as string | undefined || "";
 			if (!id || !resultMap.has(id)) continue;
 			const name = part.name || (part as unknown as { toolName?: string }).toolName || "unknown";
 			const args = part.arguments || part.input || {};
@@ -771,10 +847,27 @@ export function getFlowSummaryText(result?: FlowResult | null): string {
 		: "";
 
 	// Append ping-pong cycle metadata if present
-	const pingPongMeta = (result as any)?.pingPongMeta;
-	const pingPongNote = pingPongMeta
-		? `\n\n[Audit Loop: ${pingPongMeta.cycles} cycle(s), final verdict: ${pingPongMeta.finalVerdict}]`
-		: "";
+	const singleResult = result as (FlowResult & Partial<SingleResult>) | null | undefined;
+	const pingPongMeta = singleResult?.pingPongMeta;
+	let pingPongNote = "";
+	if (pingPongMeta) {
+		const isAuditCapstone = singleResult?.type === "audit" && singleResult?.auditParentType;
+		const hasMultipleCycles = Array.isArray(pingPongMeta.verdicts) && pingPongMeta.verdicts.length > 1;
+
+		if (isAuditCapstone && hasMultipleCycles) {
+			// Audit capstone with multiple cycles: show full chronological verdict history
+			const verdictLines = pingPongMeta.verdicts.map(
+				(v: { cycle: number; verdict: string; feedback?: string }) => {
+					const fb = v.feedback ? ` — ${v.feedback.slice(0, 200)}` : "";
+					return `  Cycle ${v.cycle + 1}: ${v.verdict}${fb}`;
+				}
+			);
+			pingPongNote = `\n\n[Audit Loop: ${pingPongMeta.cycles} cycle(s), final verdict: ${pingPongMeta.finalVerdict}\n${verdictLines.join("\n")}]`;
+		} else {
+			// Build results or single-cycle: keep simple one-line note
+			pingPongNote = `\n\n[Audit Loop: ${pingPongMeta.cycles} cycle(s), final verdict: ${pingPongMeta.finalVerdict}]`;
+		}
+	}
 
 	// If there's final text, include it plus tool context
 	if (finalText) {
@@ -794,8 +887,9 @@ export function getFlowSummaryText(result?: FlowResult | null): string {
 
 	// Success but no final text — show tool results if any
 	if (toolContext) {
-		return toolContext.trim();
+		return toolContext.trim() + pingPongNote;
 	}
 
-	return "(no output)";
+	// Fallback: pingPongNote if present, otherwise (no output)
+	return pingPongNote.trim() || "(no output)";
 }

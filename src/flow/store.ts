@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logWarn } from "../config/log.js";
+import { atomicWriteJsonSync } from "../io/atomic-write.js";
 import type { GoalEntry, GoalState, GoalStatus } from "./types.js";
 
 function ensureDir(dir: string): void {
@@ -19,13 +20,6 @@ function getStorePath(cwd: string): string {
   return path.join(cwd, ".pi", "flow.json");
 }
 
-function atomicWriteJson(targetPath: string, data: unknown): void {
-  const dir = path.dirname(targetPath);
-  ensureDir(dir);
-  const tmpPath = path.join(dir, `.tmp-${path.basename(targetPath)}.${Date.now()}`);
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
-  fs.renameSync(tmpPath, targetPath);
-}
 
 export function readState(cwd: string): GoalState {
   const filePath = getStorePath(cwd);
@@ -58,7 +52,7 @@ function truncateIntent(intent: string): string {
 }
 
 export function writeState(cwd: string, state: GoalState): void {
-  atomicWriteJson(getStorePath(cwd), state);
+  atomicWriteJsonSync(getStorePath(cwd), state);
 }
 
 export function getGoal(cwd: string): GoalEntry | undefined {

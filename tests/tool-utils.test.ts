@@ -32,26 +32,26 @@ describe("appendDirectiveOnce", () => {
 	it("appends DEFAULT_DIRECTIVE when no hintContext provided", () => {
 		const result = makeResult("hello");
 		appendDirectiveOnce(result);
-		expect(result.content[0].text).toContain("[Directive: Close what you start");
+		expect(result.content[0].text).toContain("[Directive: Verify your work before advancing");
 	});
 
 	it("appends NOTDONE_DIRECTIVE when hasNotDone is true", () => {
 		const result = makeResult("hello");
 		appendDirectiveOnce(result, { hasNotDone: true, statusVague: false });
-		expect(result.content[0].text).toContain("[Directive: Unfinished work detected");
+		expect(result.content[0].text).toContain("[Directive: Unfinished items remain");
 	});
 
 	it("appends VAGUE_DIRECTIVE when statusVague is true", () => {
 		const result = makeResult("hello");
 		appendDirectiveOnce(result, { hasNotDone: false, statusVague: true });
-		expect(result.content[0].text).toContain("[Directive: Dispatch the same");
+		expect(result.content[0].text).toContain("[Directive: Status unclear");
 	});
 
 	it("prioritizes NOTDONE_DIRECTIVE over VAGUE_DIRECTIVE when both are true", () => {
 		const result = makeResult("hello");
 		appendDirectiveOnce(result, { hasNotDone: true, statusVague: true });
-		expect(result.content[0].text).toContain("[Directive: Unfinished work detected");
-		expect(result.content[0].text).not.toContain("Dispatch the same");
+		expect(result.content[0].text).toContain("[Directive: Unfinished items remain");
+		expect(result.content[0].text).not.toContain("Status unclear");
 	});
 
 	it("skips directive on error results", () => {

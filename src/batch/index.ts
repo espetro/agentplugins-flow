@@ -24,6 +24,7 @@ import {
 	executeBatchBash,
 } from "./batch-bash.js";
 import { appendDirectiveOnce } from "../steering/tool-utils.js";
+import { logWarn } from "../config/log.js";
 import { runWebOps } from "../tools/web-ops.js";
 
 // Re-export polling tool factory and tracker from batch-bash
@@ -118,7 +119,7 @@ const FileOp = Type.Object({
 	n: Type.Optional(
 		Type.Number({
 			minimum: 1,
-			description: "Max-count for o: 'rg'.",
+			description: "Max-count for o: 'rg' (matches per file). Broad searches on '.' auto-default to 50 when omitted.",
 		}),
 	),
 	u: Type.Optional(
@@ -201,7 +202,7 @@ const BatchReadOp = Type.Union([
 		n: Type.Optional(
 			Type.Number({
 				minimum: 1,
-				description: "Max-count for o: 'rg'.",
+				description: "Max-count for o: 'rg' (matches per file). Broad searches on '.' auto-default to 50 when omitted.",
 			}),
 		),
 		u: Type.Optional(
@@ -247,7 +248,7 @@ function normalizeOp(raw: Record<string, unknown>): Record<string, unknown> {
 	// Map edits
 	let editsRaw = raw.e ?? raw.edits;
 	if (typeof editsRaw === "string") {
-		try { editsRaw = JSON.parse(editsRaw); } catch { /* ignore */ }
+		try { editsRaw = JSON.parse(editsRaw); } catch (e) { logWarn(`[pi-agent-flow] Failed to parse batch edits JSON: ${e}`); }
 	}
 	if (Array.isArray(editsRaw)) {
 		op.e = editsRaw.map((e: unknown) => {
@@ -363,11 +364,11 @@ export function createBatchReadTool() {
 	return {
 		name: "batch_read",
 		label: "batch_read",
-		description: "Batch read-only file operations. Useful for reading multiple files or sections at once.",
-		promptSnippet: "Batch read-only file operations — run multiple read ops in one call",
+		description: "Read multiple files or file sections in one call.",
+		promptSnippet: "Read multiple files/sections in one call",
 		promptGuidelines: [
-			"Use `batch_read` to perform multiple reads in one call.",
-			"Large files return a context map; use targeted `s` (offset) and `l` (limit) to read specific parts.",
+			"Combine multiple read/rg ops into one call.",
+			"Use `s` (start line) and `l` (line count) to target specific sections of large files.",
 		],
 		parameters: BatchReadParams,
 		prepareArguments: prepareBatchReadArguments,
@@ -431,14 +432,13 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 	return {
 		name: "batch",
 		label: "batch",
-		description: "Unified tool for file ops (read/write/edit/delete/patch), shell commands, and web operations.",
-		promptSnippet: "Batch operations — run multiple file ops and bash commands in one call",
+		description: "File ops (read/write/edit/delete/patch), shell commands, and web search/fetch in one call.",
+		promptSnippet: "Batch: file ops + bash + web in one call",
 		promptGuidelines: [
-			"ALWAYS combine pending operations into a single `batch` call.",
-			"File ops run sequentially; bash ops run in parallel after file and web ops complete.",
-			"Use `o: 'write'` then `o: 'bash'` to run scripts.",
-			"Use `w: [...]` for web search/fetch.",
-			...(toolOptimize ? ["In this mode batch is your ONLY edit tool — there is no separate edit command."] : []),
+			"Combine all pending operations into a single `batch` call.",
+			"File ops execute first; bash runs after. Use write → bash to run scripts.",
+			"Web: `w: [{ o: 'search', q: '...' }]` or `w: [{ o: 'fetch', u: '...' }]`",
+			...(toolOptimize ? ["Batch is your ONLY edit tool — no separate edit command."] : []),
 		],
 		parameters: WeavePatchParams,
 		prepareArguments: prepareArguments,

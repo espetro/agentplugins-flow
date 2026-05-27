@@ -12,7 +12,7 @@ import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { type FlowConfig, getFlowTier } from "./agents.js";
 import { getInheritedCliArgs } from "../snapshot/cli-args.js";
-import { processFlowJsonLine, drainStreamingText, drainStreamingEstimate, drainToolCallEstimate, drainCtxEstimate, updateSmoothedTps, drainSmoothedTps } from "../snapshot/runner-events.js";
+import { processFlowJsonLine, drainStreamingText, drainStreamingEstimate, drainToolCallEstimate, drainCtxEstimate, updateSmoothedTps, drainSmoothedTps, getCtxState } from "../snapshot/runner-events.js";
 import {
 	type SingleResult,
 	type FlowDetails,
@@ -20,11 +20,37 @@ import {
 	getFlowOutput,
 	normalizeFlowResult,
 } from "../types/flow.js";
+import { parseSharedContext } from "../core2/snapshot.js";
 import { extractStructuredOutput, generateCommandsFromHistory } from "../snapshot/structured-output.js";
-import { setLiveText } from '../tui/scramble/index.js';
+import { computeInitialContextTokens, mergeStreamingContextTokens } from "../tui/context-display.js";
 import { logWarn, logError } from '../config/log.js';
+import { atomicWriteFileSync } from "../io/atomic-write.js";
 import { DEFAULT_COMPLEXITY, getComplexityTimeoutMs, type Complexity } from "./complexity.js";
 import type { GoalContext } from "./types.js";
+import {
+	makeUniqueDumpPath,
+	makeUniqueDumpTxtPath,
+	cleanupStaleDumps,
+	cleanupStaleDebugDumps,
+	writeReminderFile,
+	getDebugDir,
+	resolveDumpMaxAgeHours,
+	FLOW_DUMP_SNAPSHOT_ENV,
+} from "./dump-io.js";
+import {
+	registerChildGroup,
+	unregisterChildGroup,
+	terminateAllChildGroups,
+	terminateChildProcess,
+	SIGKILL_TIMEOUT_MS,
+	isWindows,
+} from "./process-lifecycle.js";
+import { buildFlowArgs, getOptimizedTools, inheritedCliArgs } from "./flow-args.js";
+import { resolveFlowSpawn, writeFlowSessionToTempFile, cleanupFlowTempDir } from "./spawn-utils.js";
+
+export { cleanupStaleDumps } from "./dump-io.js";
+export { terminateAllChildGroups } from "./process-lifecycle.js";
+export { buildFlowArgs, getOptimizedTools } from "./flow-args.js";
 
 function getEnvInt(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -33,15 +59,13 @@ function getEnvInt(name: string, fallback: number): number {
 	return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-const isWindows = process.platform === "win32";
-const SIGKILL_TIMEOUT_MS = getEnvInt("PI_FLOW_SIGKILL_TIMEOUT_MS", 5000);
-const FINISH_KILL_GRACE_MS = getEnvInt("PI_FLOW_FINISH_KILL_GRACE_MS", 5_000); // wait 5s after finish() before force-killing the child process
+const FINISH_KILL_GRACE_MS = getEnvInt("PI_FLOW_FINISH_KILL_GRACE_MS", 5_000);
 const AGENT_END_GRACE_MS = getEnvInt("PI_FLOW_AGENT_END_GRACE_MS", 2000);
-const FLOW_TIME_BUDGET_WARNING_MS = getEnvInt("PI_FLOW_TIME_BUDGET_WARNING_MS", 2 * 60 * 1000); // warn 2 min before kill
-const FLOW_FINAL_URGE_MS = getEnvInt("PI_FLOW_FINAL_URGE_MS", 135 * 1000); // final urge 135 s (2m15s) before kill (increased from 30s for wider summary window)
-const REPORTING_GRACE_MS = getEnvInt("PI_FLOW_REPORTING_GRACE_MS", 90_000); // grace period after timeout for agent to report findings (increased from 10s to 90s)
-const SNAP_THRESHOLD_MS = getEnvInt("PI_FLOW_SNAP_THRESHOLD_MS", 120_000); // threshold for proportional short-budget timer logic
-const FLOW_TOOL_SUMMARY_GRACE_MS = FLOW_FINAL_URGE_MS; // bash/tool abort lead time so the agent can summarize
+const FLOW_TIME_BUDGET_WARNING_MS = getEnvInt("PI_FLOW_TIME_BUDGET_WARNING_MS", 2 * 60 * 1000);
+const FLOW_FINAL_URGE_MS = getEnvInt("PI_FLOW_FINAL_URGE_MS", 135 * 1000);
+const REPORTING_GRACE_MS = getEnvInt("PI_FLOW_REPORTING_GRACE_MS", 90_000);
+const SNAP_THRESHOLD_MS = getEnvInt("PI_FLOW_SNAP_THRESHOLD_MS", 120_000);
+const FLOW_TOOL_SUMMARY_GRACE_MS = FLOW_FINAL_URGE_MS;
 import {
 	FLOW_DEPTH_ENV,
 	FLOW_MAX_DEPTH_ENV,
@@ -61,62 +85,14 @@ const FLOW_DEADLINE_ENV = "PI_FLOW_DEADLINE_MS";
 const FLOW_TOOL_SUMMARY_GRACE_ENV = "PI_FLOW_TOOL_SUMMARY_GRACE_MS";
 const PI_OFFLINE_ENV = "PI_OFFLINE";
 const FLOW_REMINDER_FILE_ENV = "PI_FLOW_REMINDER_FILE";
-const FLOW_DUMP_SNAPSHOT_ENV = "PI_FLOW_DUMP_SNAPSHOT";
 
 const packageJsonPath = path.join(path.dirname(new URL(import.meta.url).pathname), "../..", "package.json");
 let pipelineVersion = "0.0.0";
 try {
 	const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 	pipelineVersion = pkg.version ?? "0.0.0";
-} catch {
-	/* best-effort: fallback to 0.0.0 if package.json is missing or malformed */
-}
-
-// ---------------------------------------------------------------------------
-// Global child process group tracking for signal propagation
-// ---------------------------------------------------------------------------
-
-/** Track child process groups so we can kill them on parent exit / signal. */
-const runningChildGroups = new Map<number, { groupPid: number; name: string }>();
-
-/** Register a child process group for cleanup on shutdown. */
-export function registerChildGroup(pid: number, name: string): void {
-	if (pid > 0 && !isWindows) {
-		runningChildGroups.set(pid, { groupPid: pid, name });
-	}
-}
-
-/** Unregister a completed/stopped child process group. */
-export function unregisterChildGroup(pid: number): void {
-	runningChildGroups.delete(pid);
-}
-
-/**
- * Terminate all registered child process groups via SIGTERM (then SIGKILL after timeout).
- * Called on parent exit, SIGINT, SIGTERM, or pi-agent-flow:shutdown.
- */
-export function terminateAllChildGroups(): void {
-	if (runningChildGroups.size === 0) return;
-	const pids = Array.from(runningChildGroups.keys());
-	for (const pid of pids) {
-		try {
-			process.kill(-pid, "SIGTERM");
-		} catch {
-			try { process.kill(pid, "SIGTERM"); } catch { /* gone */ }
-		}
-	}
-	// Hard kill after timeout
-	const sigkillTimer = setTimeout(() => {
-		for (const pid of pids) {
-			try {
-				process.kill(-pid, "SIGKILL");
-			} catch {
-				try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
-			}
-		}
-		runningChildGroups.clear();
-	}, 5000);
-	sigkillTimer.unref();
+} catch (err) {
+	logWarn(`[pi-agent-flow] Failed to read package.json: ${err}`);
 }
 
 type FlowUpdateCallback = (partial: AgentToolResult<FlowDetails>) => void;
@@ -137,428 +113,11 @@ function mergeStreamingUsage(
 	return {
 		...actual,
 		...(estimatedOutputTokens > 0 ? { output: Math.max(actual.output, estimatedOutputTokens) } : {}),
-		...(ctxEstimate > 0 ? { contextTokens: Math.max(actual.contextTokens, ctxEstimate) } : {}),
-		// Show the live EMA value so the dashboard can rise and fall smoothly.
+		...(ctxEstimate > 0 || actual.contextTokens > 0
+			? { contextTokens: mergeStreamingContextTokens(actual, ctxEstimate) }
+			: {}),
 		...(smoothedTps > 0 ? { smoothedTps } : {}),
 	};
-}
-
-// ---------------------------------------------------------------------------
-// Process helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Derive the spawn command from the current process context so child invocations
- * work on Unix and Windows without going through a shell wrapper.
- */
-function resolveFlowSpawn(): { command: string; prefixArgs: string[] } {
-	// Support PI_FLOW_SPAWN_COMMAND env var override for exotic runtime
-	// environments (e.g. bundled with pkg/nexe where process.argv[1] is unreliable).
-	const envOverride = process.env["PI_FLOW_SPAWN_COMMAND"];
-	if (envOverride && envOverride.trim()) {
-		return { command: envOverride.trim(), prefixArgs: [] };
-	}
-	const isNode = /[\\/]node(?:\.exe)?$/i.test(process.execPath);
-	if (isNode && process.argv[1]) {
-		return { command: process.execPath, prefixArgs: [process.argv[1]] };
-	}
-	return { command: process.execPath, prefixArgs: [] };
-}
-
-// ---------------------------------------------------------------------------
-// Temp file helpers
-// ---------------------------------------------------------------------------
-
-function writeFlowSessionToTempFile(
-	flowName: string,
-	sessionJsonl: string,
-): { dir: string; filePath: string } {
-	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-"));
-	const safeName = flowName.replace(/[^\w.-]+/g, "_");
-	const filePath = path.join(tmpDir, `flow-${safeName}.jsonl`);
-	fs.writeFileSync(filePath, sessionJsonl, { encoding: "utf-8", mode: 0o600 });
-	return { dir: tmpDir, filePath };
-}
-
-function cleanupFlowTempDir(dir: string | null): void {
-	if (!dir) return;
-	try {
-		fs.rmSync(dir, { recursive: true, force: true });
-	} catch (err) {
-		logWarn(`[pi-agent-flow] cleanupFlowTempDir failed: ${err}`);
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Dump path helpers
-// ---------------------------------------------------------------------------
-
-function makeUniqueDumpPath(basePath: string, flowName: string): string {
-	const ext = path.extname(basePath);
-	const base = ext ? basePath.slice(0, -ext.length) : basePath;
-	const timestamp = Date.now();
-	const safeFlowName = flowName.replace(/[^\w.-]+/g, "_");
-	return `${base}.${safeFlowName}.${timestamp}.md`;
-}
-
-function makeUniqueDumpTxtPath(mdPath: string): string {
-	return mdPath.replace(/\.md$/, ".txt");
-}
-
-function atomicWriteFileSync(targetPath: string, data: string): void {
-	const dir = path.dirname(targetPath);
-	const tmpPath = path.join(dir, `.tmp-${path.basename(targetPath)}.${Date.now()}`);
-	fs.writeFileSync(tmpPath, data, { encoding: "utf-8", mode: 0o600 });
-	fs.renameSync(tmpPath, targetPath);
-}
-
-function parseSessionSnapshotInfo(jsonl: string | null): { sessionId?: string; firstUserText?: string } {
-	const result: { sessionId?: string; firstUserText?: string } = {};
-	if (!jsonl) return result;
-	for (const line of jsonl.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			const entry = JSON.parse(line) as Record<string, unknown>;
-			if (entry.type === "session" && entry.id && typeof entry.id === "string") {
-				result.sessionId = entry.id;
-			}
-			if (
-				entry.type === "message" &&
-				entry.message &&
-				typeof entry.message === "object" &&
-				!result.firstUserText
-			) {
-				const msg = entry.message as Record<string, unknown>;
-				if (msg.role === "user" && msg.content) {
-					let text = "";
-					if (typeof msg.content === "string") {
-						text = msg.content;
-					} else if (Array.isArray(msg.content)) {
-						const firstText = msg.content.find(
-							(c: unknown) =>
-								c && typeof c === "object" && (c as Record<string, unknown>).type === "text",
-						) as Record<string, unknown> | undefined;
-						text = typeof firstText?.text === "string" ? firstText.text : "";
-					}
-					if (text.trim()) {
-						result.firstUserText = text.trim();
-					}
-				}
-			}
-		} catch {
-			/* ignore non-JSON lines */
-		}
-	}
-	return result;
-}
-
-function sanitizeForFilesystem(text: string, maxLength: number): string {
-	const safe = text
-		.slice(0, maxLength)
-		.replace(/[^a-zA-Z0-9_-]/g, "_")
-		.replace(/^_+|_+$/g, "");
-	return safe || "unknown";
-}
-
-function getDebugDir(cwd: string, jsonl: string | null): string {
-	const { sessionId, firstUserText } = parseSessionSnapshotInfo(jsonl);
-	const safeText = sanitizeForFilesystem(firstUserText ?? "", 20);
-	const idShort = sanitizeForFilesystem((sessionId ?? "unknown").slice(0, 8), 8);
-	return path.join(cwd, "tmp", `session-${safeText}-${idShort}`);
-}
-
-// ---------------------------------------------------------------------------
-// Dump TTL cleanup
-// ---------------------------------------------------------------------------
-
-/**
- * Delete stale dump files from the dump directory.
- * Called once at the start of each dump block to prevent unbounded accumulation.
- * Silently skips on any error (defensive).
- */
-function cleanupStaleDumps(dumpPath: string, maxAgeHours = 168): void {
-	try {
-		const dir = path.dirname(dumpPath);
-		const baseName = path.basename(dumpPath);
-		const ext = path.extname(baseName);
-		const base = ext ? baseName.slice(0, -ext.length) : baseName;
-		const entries = fs.readdirSync(dir);
-		const nowMs = Date.now();
-		const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-		let deleted = 0;
-		for (const entry of entries) {
-			// Match both pi-dump.* and snapshot-dump.* families, plus .txt twins
-			const isLegacyDump = entry.startsWith("snapshot-dump");
-			if (!entry.startsWith(base) && !isLegacyDump) continue;
-			const entryPath = path.join(dir, entry);
-			try {
-				const stats = fs.statSync(entryPath);
-				if (nowMs - stats.mtimeMs > maxAgeMs) {
-					fs.unlinkSync(entryPath);
-					deleted++;
-				}
-			} catch { /* ignore per-entry errors */ }
-		}
-		if (deleted > 0) {
-			logError(`[pi-agent-flow] Cleaned ${deleted} stale dump file(s) from ${dir}`);
-		}
-	} catch (err) {
-		logWarn(`[pi-agent-flow] cleanupStaleDumps failed: ${err}`);
-	}
-}
-
-/**
- * Delete stale debug dump files from session directories under the repo tmp/ path.
- * Called once at the start of each debug block to prevent unbounded accumulation.
- * Silently skips on any error (defensive).
- */
-function cleanupStaleDebugDumps(cwd: string, maxAgeHours = 168): void {
-	try {
-		const baseDir = path.join(cwd, "tmp");
-		if (!fs.existsSync(baseDir)) return;
-		const entries = fs.readdirSync(baseDir);
-		const nowMs = Date.now();
-		const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-		let deleted = 0;
-		for (const entry of entries) {
-			if (!entry.startsWith("session-")) continue;
-			const sessionDir = path.join(baseDir, entry);
-			try {
-				const stat = fs.statSync(sessionDir);
-				if (!stat.isDirectory()) continue;
-				const files = fs.readdirSync(sessionDir);
-				for (const file of files) {
-					const filePath = path.join(sessionDir, file);
-					try {
-						const stats = fs.statSync(filePath);
-						if (nowMs - stats.mtimeMs > maxAgeMs) {
-							fs.unlinkSync(filePath);
-							deleted++;
-						}
-					} catch { /* ignore per-file errors */ }
-				}
-				// Remove empty session directories
-				if (fs.readdirSync(sessionDir).length === 0) {
-					fs.rmdirSync(sessionDir);
-				}
-			} catch { /* ignore per-directory errors */ }
-		}
-		if (deleted > 0) {
-			logWarn(`[pi-agent-flow] Cleaned ${deleted} stale debug file(s) from ${baseDir}`);
-		}
-	} catch (err) {
-		logWarn(`[pi-agent-flow] cleanupStaleDebugDumps failed: ${err}`);
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Reminder file helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Write a reminder message to the reminder file so the flow state can see it
- * via the timed-bash wrapper before its next tool call.
- * Creates the file if it doesn't exist; appends the message.
- */
-function writeReminderFile(reminderFilePath: string | null, message: string): void {
-	if (!reminderFilePath) return;
-	try {
-		fs.writeFileSync(reminderFilePath, message + "\n", { encoding: "utf-8", flag: "a" });
-	} catch {
-		/* best-effort */
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Build pi CLI arguments (fork-only)
-// ---------------------------------------------------------------------------
-
-const inheritedCliArgs = getInheritedCliArgs();
-
-/**
- * Transform a flow's tool list when toolOptimize is enabled.
- * Replaces separate read/write/edit tools with the unified batch tool.
- */
-export function getOptimizedTools(
-	flowTools: string[] | undefined,
-	toolOptimize: boolean,
-): string[] | undefined {
-	if (!toolOptimize || !flowTools) return flowTools;
-	const hasLegacyTools = flowTools.some(
-		(t) => t === "read" || t === "write" || t === "edit",
-	);
-	if (!hasLegacyTools) return flowTools;
-	const filtered = flowTools.filter(
-		(t) => t !== "read" && t !== "write" && t !== "edit" && t !== "batch" && t !== "batch_read",
-	);
-	return filtered.includes("batch")
-		? filtered
-		: [...filtered, "batch"];
-}
-
-function buildFlowArgs(
-	flow: FlowConfig,
-	intent: string,
-	forkSessionPath: string | null,
-	model?: string,
-	parentDepth: number = 0,
-	maxDepth: number = 0,
-	toolOptimize: boolean = false,
-	structuredOutput: boolean = true,
-	complexity: Complexity = DEFAULT_COMPLEXITY,
-	sessionTimeoutMs: number = getComplexityTimeoutMs(complexity),
-	acceptance?: string,
-	discoveredFlows: FlowConfig[] = [],
-	parentFlowStack: string[] = [],
-	preventCycles: boolean = true,
-	goalContext?: GoalContext,
-	cwd?: string,
-	tools?: string[],
-	preDispatchResults?: string,
-): string[] {
-	const args: string[] = [
-		"--mode",
-		"json",
-		...inheritedCliArgs.extensionArgs,
-		...inheritedCliArgs.alwaysProxy,
-	];
-
-	// Fork mode: always use --session
-	if (forkSessionPath) {
-		args.push("--session", forkSessionPath);
-	}
-
-	if (inheritedCliArgs.flowModelConfig) {
-		args.push("--flow-model-config", inheritedCliArgs.flowModelConfig);
-	}
-	if (inheritedCliArgs.flowComplexity) {
-		args.push("--flow-complexity", inheritedCliArgs.flowComplexity);
-	}
-	if (inheritedCliArgs.tieredModels?.lite) {
-		args.push("--flow-lite-model", inheritedCliArgs.tieredModels.lite);
-	}
-	if (inheritedCliArgs.tieredModels?.flash) {
-		args.push("--flow-flash-model", inheritedCliArgs.tieredModels.flash);
-	}
-	if (inheritedCliArgs.tieredModels?.full) {
-		args.push("--flow-full-model", inheritedCliArgs.tieredModels.full);
-	}
-
-	const resolvedModel = model ?? flow.model ?? inheritedCliArgs.fallbackModel;
-	if (resolvedModel) args.push("--model", resolvedModel);
-
-	// Opt out of appending the structured JSON appendix to the child `-p` mission.
-	// Set `PI_FLOW_SKIP_STRUCTURED_DIRECTIVE=1` if a provider rejects that prompt shape.
-	const rawSkipSo = process.env["PI_FLOW_SKIP_STRUCTURED_DIRECTIVE"];
-	const skipStructuredDirective =
-		rawSkipSo !== undefined && ["1", "true", "yes"].includes(rawSkipSo.trim().toLowerCase());
-
-	// Do not inherit the parent CLI `--thinking` level. Child flows often use a
-	// different tier/model than the root state; inheriting `--thinking high` can
-	// be incompatible with the child model.
-	const thinking = flow.thinking;
-	if (thinking) args.push("--thinking", thinking);
-
-	// Compute transition depth before building tool list — children that can
-	// transition need the "flow" tool in their available set.
-	const { currentDepth, effectiveMaxDepth, canTransition } = computeTransitionState(parentDepth, maxDepth);
-
-	// Default tools for child flows. Legacy read/write/edit are NOT registered
-	// for children — only batch (which includes read/write ops) is available.
-	// The flow's frontmatter `tools` field overrides this default when set.
-	const defaultTools = toolOptimize
-		? canTransition
-			? ["batch", "bash", "flow"]
-			: ["batch", "bash"]
-		: canTransition
-			? ["batch", "bash", "flow"]
-			: ["batch", "bash"];
-	// getOptimizedTools replaces legacy read/write/edit with batch when
-	// toolOptimize is on. If the flow's frontmatter explicitly lists "flow",
-	// it passes through; otherwise the defaultTools above handle it.
-	const sourceTools = tools ?? flow.tools;
-	const optimizedTools = getOptimizedTools(sourceTools, toolOptimize) ?? defaultTools;
-	let harnessTools = optimizedTools;
-	// If the flow explicitly listed only tools that got filtered (e.g. just
-	// "web"), or the remaining tools lack essentials (batch/bash), fall back
-	// to defaultTools so the child isn't orphaned.
-	const hasEssentials = harnessTools.some(
-		(t) => t === "batch" || t === "bash" || t === "batch_read",
-	);
-	if (harnessTools.length === 0 || !hasEssentials) {
-		harnessTools = [...new Set([...defaultTools, ...harnessTools])];
-	}
-	args.push("--tools", harnessTools.join(","));
-
-	// No --append-system-prompt: child inherits parent's system prompt for cache hits.
-	// Flow instructions go in the intent message instead.
-
-	const availableTools = harnessTools.join(", ");
-
-	// Phase 1: Context seal — sharp boundary declaring history sealed
-	const contextSeal =
-		`<context-seal>\n` +
-		`The conversation above is sealed — it is your session history for situational awareness only.\n` +
-		`Your task begins NOW. Do not respond to or continue anything from the history.\n` +
-		`</context-seal>`;
-
-	// Phase 2: Activation — role, tools, depth, transition rules (dynamically generated)
-	const guardLine = buildGuardLine(currentDepth, effectiveMaxDepth, preventCycles, parentFlowStack);
-	const flowListSection = buildFlowListSection(canTransition, discoveredFlows);
-
-	const effectiveTier = flow.tier ?? getFlowTier(flow.name);
-	const lineage = buildLineage(flow.name, parentFlowStack);
-	const activation =
-		`\n\n<activation flow="${flow.name}" depth="${currentDepth}" tools="${availableTools}" tier="${effectiveTier}" lineage="${lineage}">\n` +
-		`You are a [${flow.name}] agent operating at depth ${currentDepth}.\n` +
-		`${flowListSection}` +
-		`Do not attempt to use any tool outside the available set — it will fail.\n` +
-		`</activation>`;
-
-	// Phase 3: Directive — the flow's system prompt (renamed from <system-directive>)
-	let directiveBody = flow.systemPrompt.trim();
-
-	// Append structured output instructions when enabled (unless opted out via env).
-	const isTrace = flow.name.toLowerCase() === "trace";
-	if (structuredOutput && directiveBody && !skipStructuredDirective && !isTrace) {
-		const isAudit = flow.name.toLowerCase() === "audit";
-		const auditFields = isAudit
-			? " Also include `verdict: 'pass' | 'rework'` and `feedback: string` (required when verdict is 'rework', optional when 'pass'). When auditing multiple builds, also include `builds: { index: number, verdict: 'pass' | 'rework', feedback?: string }[]` with per-build verdicts."
-			: "";
-		directiveBody +=
-			`\n\n## Structured Output\n` +
-			`End with a \`\`\`json block: { version, status, summary, files[], actions[], notDone[], nextSteps[], reasoning[], notes[]${isAudit ? ", verdict, feedback, builds" : ""} }. Commands auto-extracted; omit empty arrays. Keep snippets under 300 chars. List at most 10 items per array.${auditFields}`;
-	}
-
-	const directive = directiveBody
-		? `\n\n<directive>\n${directiveBody}\n</directive>`
-		: "";
-
-	// Phase 4: Mission — the intent (and optional acceptance criteria)
-	const acceptanceLine = acceptance ? `\nAcceptance: ${acceptance}` : "";
-	const mission =
-		`\n\n<mission>\n${intent}${acceptanceLine}\n` +
-		`\nExecute this mission. Use only your available tools. If blocked, report why — do not guess.\n` +
-		`Follow the output format specified in your directive.\n` +
-		`</mission>`;
-
-	// Phase 4.5: Flow goal context (optional)
-	let goalSection = "";
-	if (goalContext?.objective) {
-		const completedSummary = goalContext.completedFlows?.length
-			? `\nCompleted steps:\n${goalContext.completedFlows.map(f => `- [${f.type}] ${f.aim}`).join("\n")}`
-			: "";
-		goalSection = `\n\n<flow>\nObjective: ${goalContext.objective}\n${goalContext.acceptance ? `Acceptance: ${goalContext.acceptance}\n` : ""}${goalContext.maxFlows !== undefined ? `Progress: ${goalContext.flowCount ?? 0}/${goalContext.maxFlows} flows used.\n` : ""}${completedSummary}\n</flow>`;
-	}
-
-	// Phase 4.6: Pre-dispatch results (optional)
-	const preDispatchSection = preDispatchResults
-		? `\n\n<pre-dispatch>\nThe following tool calls were already executed on your behalf. Continue your exploration from there, or synthesize the outputs, pick up necessary tool id to keep.\n\n${preDispatchResults}\n</pre-dispatch>`
-		: "";
-
-	// -p must immediately precede the prompt so the CLI parser binds it correctly
-	args.push("-p", `${contextSeal}${activation}${directive}${mission}${goalSection}${preDispatchSection}`);
-	return args;
 }
 
 // ---------------------------------------------------------------------------
@@ -566,68 +125,33 @@ function buildFlowArgs(
 // ---------------------------------------------------------------------------
 
 export interface RunFlowOptions {
-	/** Fallback working directory when the intent doesn't specify one. */
 	cwd: string;
-	/** All available flow configs. */
 	flows: FlowConfig[];
-	/** Name of the flow to run. */
 	flowName: string;
-	/** Intent description. */
 	intent: string;
-	/** Short headline for display. */
 	aim: string;
-	/** Short success criteria — what done looks like. */
 	acceptance?: string;
-	/** Optional override working directory. */
 	taskCwd?: string;
-	/** Serialized parent session snapshot for fork mode. Null when the flow starts with a clean slate. */
 	forkSessionSnapshotJsonl: string | null;
-	/** Current transition depth of the caller process. */
 	parentDepth: number;
-	/** Transition stack from the caller process (ancestor flow names). */
 	parentFlowStack: string[];
-	/** Maximum allowed transition depth to propagate to child processes. */
 	maxDepth: number;
-	/** Whether cycle prevention should be enforced in child processes. */
 	preventCycles: boolean;
-	/** Whether to transform tool lists to use batch. */
 	toolOptimize?: boolean;
-	/** Whether to inject structured JSON output instructions. Default: true. */
 	structuredOutput?: boolean;
-	/** Explicit model to use for this flow execution. */
 	model?: string;
-	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
-	/** Streaming update callback. */
+	toolCallId?: string;
 	onUpdate?: FlowUpdateCallback;
-	/** Factory to wrap results into FlowDetails. */
 	makeDetails: (results: SingleResult[]) => FlowDetails;
-	/** Complexity sets budget + review. Default: moderate. */
 	complexity?: Complexity;
-	/** Optional flow goal context to inject into the child prompt. */
 	goalContext?: GoalContext;
-	/** Optional max context token budget to record in the result. */
 	maxContextTokens?: number;
-	/** Optional explicit tool list. Overrides the flow's frontmatter `tools`. */
 	tools?: string[];
-	/** Pre-dispatch results — injected into the child's activation prompt. */
 	preDispatchResults?: string;
-	/** Whether to write the full child flow activation prompt to a temp file on every spawn. */
 	debugMode?: boolean;
 }
 
-/**
- * Spawn a single flow process with forked session context.
- *
- * Returns a SingleResult even on failure (exitCode > 0, stderr populated).
- *
- * Why `spawn` instead of `pi.exec()`:
- * - `pi.exec()` is designed for simple command execution (one-shot, wait for exit).
- * - Flows need process-group isolation (detached mode on Unix), signal propagation,
- *   soft-timeout with background continuation, streaming stdout parsing, and
- *   mid-flight kill semantics. `spawn` gives full control over stdio, process
- *   groups, and lifecycle that `pi.exec()` does not expose.
- */
 export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 	const {
 		cwd,
@@ -647,6 +171,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		signal,
 		onUpdate,
 		makeDetails,
+		toolCallId,
 	} = opts;
 
 	const normalizedFlowName = flowName.toLowerCase();
@@ -673,6 +198,9 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 	const deadlineAtMs = effectiveTimeout > 0 ? startedAtMs + effectiveTimeout : undefined;
 	const resolvedModel = model ?? flow.model ?? inheritedCliArgs.fallbackModel;
 	const resolvedMaxContextTokens = opts.maxContextTokens ?? inheritedCliArgs.maxContextTokens;
+	const sharedContext = forkSessionSnapshotJsonl ? parseSharedContext(forkSessionSnapshotJsonl) : undefined;
+	const initialContextTokens = computeInitialContextTokens(sharedContext, intent);
+
 	const result: SingleResult = {
 		type: normalizedFlowName,
 		agentSource: flow.source,
@@ -682,12 +210,20 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		exitCode: -1,
 		messages: [],
 		stderr: "",
-		usage: emptyFlowUsage(),
+		usage: {
+			...emptyFlowUsage(),
+			contextTokens: initialContextTokens,
+		},
 		model: resolvedModel,
 		startedAtMs,
 		...(deadlineAtMs !== undefined ? { deadlineAtMs } : {}),
 		...(resolvedMaxContextTokens !== undefined ? { maxContextTokens: resolvedMaxContextTokens } : {}),
 	};
+
+	if (initialContextTokens > 0) {
+		const ctxState = getCtxState(result);
+		ctxState.baseline = initialContextTokens;
+	}
 
 	let liveStreamingText = "";
 	let liveEstimatedOutputTokens = 0;
@@ -695,7 +231,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 	const emitUpdate = () => {
 		const streamingDelta = drainStreamingText(result);
 		if (streamingDelta) liveStreamingText += streamingDelta;
-		// Live text is stored per-toolCallId by the executor's emitProgress, not here.
 		const estimatedTokens = drainStreamingEstimate(result);
 		const toolCallTokens = drainToolCallEstimate(result);
 		if (result.usage.output !== lastActualOutputTokens) {
@@ -706,7 +241,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		const ctxEst = drainCtxEstimate(result);
 		updateSmoothedTps(result, estimatedTokens);
 		const smoothedTps = drainSmoothedTps(result);
-		// Fallback TPS for providers that don't emit streaming deltas (e.g., Fireworks k2p6).
 		const elapsedSec = (Date.now() - startedAtMs) / 1000;
 		const fallbackTps = elapsedSec > 0.5 && smoothedTps <= 0 ? result.usage.output / elapsedSec : 0;
 		const displayTps = smoothedTps > 0 ? smoothedTps : fallbackTps;
@@ -719,10 +253,10 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				},
 			],
 			details: makeDetails([{ ...result, usage: mergedUsage, streamingText: liveStreamingText || undefined }]),
+			...(toolCallId ? { _toolCallId: toolCallId } : {}),
 		});
 	};
 
-	// Write forked session snapshot to temp file only when provided
 	let forkSessionTmpDir: string | null = null;
 	let forkSessionTmpPath: string | null = null;
 	if (forkSessionSnapshotJsonl) {
@@ -731,8 +265,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		forkSessionTmpPath = forkTmp.filePath;
 	}
 
-	// Create a temp dir for the reminder file so the flow state can read timeout warnings
-	// via the timed-bash wrapper before its next tool call.
 	let reminderTmpDir: string | null = null;
 	let reminderFilePath: string | null = null;
 	if (effectiveTimeout > 0) {
@@ -770,15 +302,20 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			opts.preDispatchResults,
 		);
 
-		// Extract the activation prompt once for reuse by both dump and debug blocks.
 		const promptIndex = piArgs.indexOf("-p");
 		const prompt = promptIndex >= 0 ? piArgs[promptIndex + 1] : "";
 
-		// Dump verbatim child payload to disk for debugging when requested.
+		result.usage.contextTokens = computeInitialContextTokens(sharedContext, intent, prompt);
+		const ctxState = getCtxState(result);
+		ctxState.baseline = result.usage.contextTokens;
+
+		if (onUpdate) {
+			emitUpdate();
+		}
+
 		const dumpPath = process.env[FLOW_DUMP_SNAPSHOT_ENV] || inheritedCliArgs.dumpPath;
 		if (dumpPath) {
-			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
-			cleanupStaleDumps(dumpPath, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
+			cleanupStaleDumps(dumpPath, resolveDumpMaxAgeHours());
 
 			const effectiveTier = flow.tier ?? getFlowTier(flow.name);
 			const sanitizationHeader = `<!-- pi-agent-flow dump | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
@@ -800,7 +337,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				``,
 				prompt,
 			);
-			// Compression Stats section removed — zeroed values provide no signal
 			const markdown = markdownParts.join("\n");
 			const uniqueDumpPath = makeUniqueDumpPath(dumpPath, flow.name);
 			const uniqueTxtPath = makeUniqueDumpTxtPath(uniqueDumpPath);
@@ -813,10 +349,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			}
 		}
 
-		// Debug mode: write the activation prompt and shared session snapshot to a dedicated temp file.
 		if (opts.debugMode) {
-			const maxAgeHours = Number(process.env.PI_FLOW_DUMP_MAX_AGE_HOURS);
-			cleanupStaleDebugDumps(cwd, Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 168);
+			cleanupStaleDebugDumps(cwd, resolveDumpMaxAgeHours());
 
 			const safeFlowName = flow.name.replace(/[^\w.-]+/g, "_");
 			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
@@ -868,7 +402,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 						const srcMtime = fs.statSync(path.join(srcDir, srcFile)).mtimeMs;
 						const distMtime = fs.statSync(path.join(distDir, distFile)).mtimeMs;
 						return srcMtime > distMtime;
-					} catch { return false; }
+					} catch (e) { logWarn(`[pi-agent-flow] checkStale failed for ${srcFile}: ${e}`); return false; }
 				};
 				if (checkStale("core2/snapshot.ts", "../core2/snapshot.js") || checkStale("flow/runner.ts", "runner.js")) {
 					logWarn("⚠️ Source newer than dist — run npm run build for accurate dumps");
@@ -878,7 +412,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				cwd: taskCwd ?? cwd,
 				shell: false,
 				stdio: ["pipe", "pipe", "pipe"],
-				// Process group on Unix so we can kill all descendants on timeout/abort.
 				detached: !isWindows,
 				...(signal ? { signal } : {}),
 				env: {
@@ -901,7 +434,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				},
 			});
 
-			// Register the child process group for global cleanup on signal/exit
 			if (proc.pid !== undefined && !isWindows) {
 				registerChildGroup(proc.pid, normalizedFlowName);
 			}
@@ -910,10 +442,10 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			const endStdin = () => {
 				if (stdinEnded) return;
 				stdinEnded = true;
-				try { proc.stdin.end(); } catch { /* ignore */ }
+				try { proc.stdin.end(); } catch (e) { logWarn(`[pi-agent-flow] Failed to end child stdin: ${e}`); }
 			};
-			proc.stdin.on("error", () => {
-				/* ignore broken pipe on fast exits */
+			proc.stdin.on("error", (err) => {
+				logWarn(`[pi-agent-flow] Child stdin error: ${err}`);
 			});
 			proc.stdin.end();
 
@@ -949,25 +481,11 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			};
 
 			const terminateChild = () => {
-				endStdin();
-				if (isWindows) {
-					if (proc.pid !== undefined) {
-						const killer = spawn("taskkill", ["/T", "/F", "/PID", String(proc.pid)], {
-							stdio: "ignore",
-						});
-						killer.unref();
-					}
-					return;
-				}
-
-				// Kill the entire process group (negative PID).
-				if (proc.pid === undefined) { proc.kill("SIGTERM"); } else { try { process.kill(-proc.pid, "SIGTERM"); } catch { proc.kill("SIGTERM"); } }
-				const sigkillTimer = setTimeout(() => {
-					if (!didClose) {
-						if (proc.pid === undefined) { proc.kill("SIGKILL"); } else { try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill("SIGKILL"); } }
-					}
-				}, SIGKILL_TIMEOUT_MS);
-				sigkillTimer.unref();
+				terminateChildProcess(proc, {
+					endStdin,
+					timeoutMs: SIGKILL_TIMEOUT_MS,
+					skipIfClosed: () => didClose,
+				});
 			};
 
 			const clearFinishKillTimer = () => {
@@ -987,8 +505,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				if (signal && abortHandler) {
 					signal.removeEventListener("abort", abortHandler);
 				}
-				// Soft-kill: give the child a short grace to exit naturally after stdin close.
-				// If it hasn't closed by then, force-kill to prevent orphaned processes.
 				clearFinishKillTimer();
 				finishKillTimer = setTimeout(() => {
 					if (!didClose) {
@@ -1070,7 +586,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				finish(1);
 			});
 
-			// Abort handling
 			if (signal) {
 				abortHandler = () => {
 					if (didClose || settled) return;
@@ -1082,12 +597,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				else signal.addEventListener("abort", abortHandler, { once: true });
 			}
 
-			// Execution timeout — two-stage: parent-side warnings, tool-level deadline abort, then grace, then hard kill
 			if (effectiveTimeout > 0) {
-				// Warning timer: notify the parent UI that the child is about to be killed.
-				// NOTE: True mid-flight injection into the child's context requires pi-core
-				// support for out-of-band messages. Until then, the agent only knows its
-				// budget from the initial prompt; this warning is parent-side only.
 				const warningMs = effectiveTimeout - FLOW_TIME_BUDGET_WARNING_MS;
 				if (warningMs > 0) {
 					const warnTimer = setTimeout(() => {
@@ -1095,15 +605,12 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 						const remainingSec = Math.round(FLOW_TIME_BUDGET_WARNING_MS / 1000);
 						const warnMsg = `\n[Flow warning] ${remainingSec}s remaining before hard timeout. The agent should wrap up now.`;
 						result.stderr += warnMsg;
-						// Write to reminder file so the flow state sees it on its next bash call.
 						writeReminderFile(reminderFilePath, `[Flow warning] ${remainingSec}s remaining before hard timeout. Wrap up your work and output structured findings.`);
-						// Force an update so the parent UI shows the warning immediately.
 						emitUpdate();
 					}, warningMs);
 					warnTimer.unref();
 				}
 
-				// Final urge timer: stronger warning 45 s before hard timeout
 				const urgeMs = effectiveTimeout - FLOW_FINAL_URGE_MS;
 				if (urgeMs > 0) {
 					const urgeTimer = setTimeout(() => {
@@ -1111,7 +618,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 						const remainingSec = Math.round(FLOW_FINAL_URGE_MS / 1000);
 						const urgeMsg = `\n[Flow warning] ${remainingSec}s remaining before hard timeout. Stop all work and output your structured findings.`;
 						result.stderr += urgeMsg;
-						// Write to reminder file so the flow state sees it on its next bash call.
 						writeReminderFile(reminderFilePath, `[Flow urge] ${remainingSec}s remaining before hard timeout. STOP all tool use and output your structured findings NOW.`);
 						emitUpdate();
 					}, urgeMs);
@@ -1124,7 +630,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 					result.stderr += `\nFlow timed out after ${Math.round(effectiveTimeout / 1000)}s.`;
 					emitUpdate();
 
-					// Grace period before hard kill
 					const graceTimer = setTimeout(() => {
 						if (didClose || settled) return;
 						result.stopReason = "timeout";
@@ -1139,9 +644,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 
 		result.exitCode = exitCode;
 
-		// Persist final smoothed TPS into the result's usage so it survives after streaming ends.
-		// During streaming, emitUpdate() only merges smoothedTps into a temporary display object;
-		// without this, result.usage.smoothedTps stays at 0 and the UI shows a dash.
 		const finalSmoothedTps = drainSmoothedTps(result);
 		const finalElapsedSec = (Date.now() - startedAtMs) / 1000;
 		const finalTps = finalSmoothedTps > 0 ? finalSmoothedTps
@@ -1152,7 +654,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 
 		const normalized = normalizeFlowResult(result, wasAborted);
 
-		// Extract structured JSON output from the final assistant text
 		if (structuredOutput) {
 			const flowText = getFlowOutput(normalized.messages);
 			const extracted = extractStructuredOutput(flowText);
@@ -1173,9 +674,6 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 // Concurrency helper
 // ---------------------------------------------------------------------------
 
-/**
- * Map over items with a bounded number of concurrent workers.
- */
 export async function mapFlowConcurrent<TIn, TOut>(
 	items: TIn[],
 	concurrency: number,

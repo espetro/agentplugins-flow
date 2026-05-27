@@ -1,4 +1,5 @@
 import { appendDirectiveOnce } from "../steering/tool-utils.js";
+import { logWarn } from "../config/log.js";
 import { compressOutput } from "./shell-compress.js";
 
 /**
@@ -32,6 +33,7 @@ import {
 	MAX_BASH_OUTPUT_LINES,
 } from "./constants.js";
 import { classifyDuration } from "../tools/timed-bash.js";
+import { truncateBashOutputText } from "./truncate-output.js";
 
 // ---------------------------------------------------------------------------
 // Process tracker -- shared between batch and batch_bash_poll tools
@@ -124,7 +126,8 @@ export class BashProcessTracker {
 				const { stdout: compressedStdout, stderr: compressedStderr } = compressOutput(rp.command, rawStdout, rawStderr);
 				stdout = truncateBashOutput(compressedStdout);
 				stderr = truncateBashOutput(compressedStderr);
-			} catch {
+			} catch (e) {
+				logWarn(`[pi-agent-flow] compressOutput failed, using raw output: ${e}`);
 				stdout = truncateBashOutput(rp.stdoutChunks.join(""));
 				stderr = truncateBashOutput(rp.stderrChunks.join(""));
 			}
@@ -156,7 +159,8 @@ export class BashProcessTracker {
 				const { stdout: compressedStdout, stderr: compressedStderr } = compressOutput(rp.command, rawStdout, rawStderr);
 				stdout = truncateBashOutput(compressedStdout);
 				stderr = truncateBashOutput(compressedStderr) || err.message;
-			} catch {
+			} catch (e) {
+				logWarn(`[pi-agent-flow] compressOutput failed, using raw output: ${e}`);
 				stdout = truncateBashOutput(rp.stdoutChunks.join(""));
 				stderr = truncateBashOutput(rp.stderrChunks.join("")) || err.message;
 			}
@@ -223,8 +227,8 @@ export class BashProcessTracker {
 		try {
 			rp.abortController.abort();
 			rp.proc.kill("SIGTERM");
-		} catch {
-			/* already dead */
+		} catch (e) {
+			logWarn(`[pi-agent-flow] Failed to kill bash process: ${e}`);
 		}
 	}
 
@@ -296,47 +300,7 @@ export function truncateBashOutput(
 	maxBytes: number = MAX_BASH_OUTPUT_BYTES,
 	maxLines: number = MAX_BASH_OUTPUT_LINES,
 ): string {
-	if (!text) return text;
-
-	const totalBytes = Buffer.byteLength(text, "utf-8");
-	const lines = text.split("\n");
-	const totalLines = lines.length;
-
-	let result = text;
-
-	// Apply line limit first
-	if (totalLines > maxLines) {
-		const kept = lines.slice(0, maxLines).join("\n");
-		result = `${kept}\n[... truncated at ${maxLines} lines, ${totalLines} total ...]`;
-	}
-
-	// Apply byte limit on the (possibly line-truncated) result
-	const resultBytes = Buffer.byteLength(result, "utf-8");
-	if (resultBytes > maxBytes) {
-		const buf = Buffer.from(result, "utf-8");
-		// Find last newline before maxBytes, never cutting inside a multi-byte UTF-8 character
-		let cutAt = maxBytes;
-		while (cutAt > 0) {
-			// Skip UTF-8 continuation bytes so we land on a character boundary
-			while (cutAt > 0 && (buf[cutAt] & 0xc0) === 0x80) {
-				cutAt--;
-			}
-			if (cutAt <= 0) break;
-			if (buf[cutAt] === 0x0a) break;
-			cutAt--;
-		}
-		if (cutAt <= 0) {
-			// No newline found within safe range; force cut at maxBytes aligned to char boundary
-			cutAt = maxBytes;
-			while (cutAt > 0 && (buf[cutAt] & 0xc0) === 0x80) {
-				cutAt--;
-			}
-		}
-		result = buf.slice(0, cutAt).toString("utf-8");
-		result += `\n[... truncated at ${(maxBytes / 1024).toFixed(0)} KB, ${totalBytes} total ...]`;
-	}
-
-	return result;
+	return truncateBashOutputText(text, maxBytes, maxLines);
 }
 
 /** Normalize a bash op from prepareArguments into a canonical form. */

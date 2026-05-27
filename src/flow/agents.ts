@@ -6,7 +6,7 @@
  *
  * Lookup locations:
  *   - User flows:    ~/.pi/agent/agents/*.md by default, or
- *                    $PI_CODING_AGENT_DIR/agents/*.md when the env var is set
+ *                    $AGENT_DIR/agents/*.md when the env var is set
  *   - Project flows: .pi/agents/*.md  (walks up from cwd)
  */
 
@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { logWarn } from "../config/log.js";
+import { getAgentDir } from "../config/paths.js";
 
 export type FlowScope = "user" | "project" | "both" | "bundled" | "all";
 
@@ -63,12 +64,11 @@ export function getFlowTier(flowName: string): FlowTier {
 // ---------------------------------------------------------------------------
 
 function isDirectory(p: string): boolean {
-	try { return fs.statSync(p).isDirectory(); } catch { return false; }
+	try { return fs.statSync(p).isDirectory(); } catch (e) { logWarn(`[pi-agent-flow] isDirectory check failed for ${p}: ${e}`); return false; }
 }
 
 function getUserFlowsDir(): string {
-	const configDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
-	return path.join(configDir, "agents");
+	return path.join(getAgentDir(), "agents");
 }
 
 /** Get the bundled flows directory from the plugin's location. */
@@ -84,7 +84,7 @@ function getBundledFlowsDir(): string {
 				if (fs.existsSync(dir)) return dir;
 			}
 		}
-	} catch {}
+	} catch (e) { logWarn(`[pi-agent-flow] Flow discovery via import.meta.url failed: ${e}`); }
 
 	// Method 2: __dirname (CommonJS / jiti)
 	try {
@@ -94,14 +94,14 @@ function getBundledFlowsDir(): string {
 				if (fs.existsSync(dir)) return dir;
 			}
 		}
-	} catch {}
+	} catch (e) { logWarn(`[pi-agent-flow] Flow discovery via __dirname failed: ${e}`); }
 
 	// Method 3: Find from require.resolve
 	try {
 		const resolved = require.resolve("pi-agent-flow/package.json");
 		const dir = path.join(path.dirname(resolved), "agents");
 		if (fs.existsSync(dir)) return dir;
-	} catch {}
+	} catch (e) { logWarn(`[pi-agent-flow] Flow discovery via require.resolve failed: ${e}`); }
 
 	// Fallback: cwd
 	return path.join(process.cwd(), "agents");
@@ -122,7 +122,7 @@ function findNearestProjectFlowsDir(cwd: string): string | null {
 /** Parse a single flow markdown file into a FlowConfig. Returns null on skip. */
 function parseFlowFile(filePath: string, source: "user" | "project" | "bundled"): FlowConfig | null {
 	let content: string;
-	try { content = fs.readFileSync(filePath, "utf-8"); } catch { return null; }
+	try { content = fs.readFileSync(filePath, "utf-8"); } catch (e) { logWarn(`[pi-agent-flow] Failed to read flow file ${filePath}: ${e}`); return null; }
 
 	let parsed: { frontmatter: Record<string, unknown>; body: string };
 	try {
@@ -233,7 +233,7 @@ function loadFlowsFromDir(dir: string, source: "user" | "project" | "bundled"): 
 	if (!fs.existsSync(dir)) return [];
 
 	let entries: fs.Dirent[];
-	try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+	try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { logWarn(`[pi-agent-flow] Failed to read flows directory ${dir}: ${e}`); return []; }
 	entries.sort((a, b) => a.name.localeCompare(b.name));
 
 	const flows: FlowConfig[] = [];

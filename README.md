@@ -47,6 +47,18 @@ pi
 
 > **Pro tip:** You can also add `{ "packages": ["npm:pi-agent-flow"] }` to your `~/.pi/agent/settings.json` file.
 
+## Developing this extension locally
+
+If `pi` loads `npm:pi-agent-flow` from `~/.pi/agent/npm`, rebuilds do not apply until you sync:
+
+```bash
+git clone https://github.com/tuanhung303/pi-agent-flow.git
+cd pi-agent-flow
+npm run verify:pi
+```
+
+`verify:pi` runs trace/flow UI regression tests and copies `dist/` + `agents/` into the pi npm install. Use `npm run check:dist` in CI or before PRs to block legacy `-----/max` context placeholders in `dist/`.
+
 ## Deep Dive
 
 Want to learn more? Check out our docs:

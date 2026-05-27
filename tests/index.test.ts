@@ -237,7 +237,7 @@ describe("flow tool execute", () => {
 		const unchangedTool = { type: "message", message: { role: "toolResult", toolCallId: "tool-1", content: [{ type: "text", text: "Unchanged tool result" }], timestamp: 5 } };
 		const unchangedUserExpected = { type: "message", message: { role: "user", content: "Unchanged requirement specified in /src/config.ts for the project" } };
 		const unchangedAssistantExpected = { type: "message", message: { role: "assistant", content: [{ type: "text", text: "Unchanged answer — see [build] output for full details." }] } };
-		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: "[toolResult result omitted]" } });
+		const unchangedToolExpected = JSON.stringify({ type: "message", message: { role: "toolResult", content: [{ type: "text", text: "[toolResult result omitted]" }] } });
 		const sessionBranch = [unchangedUser, unchangedAssistant, changedAssistant, droppedSystem, unchangedTool];
 
 		const tool = pi.getTool("flow");
@@ -648,7 +648,7 @@ describe("flow tool execute", () => {
 			expect((modified[1] as any).content[0].text).toBe("ok");
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("primary_flow:");
+			expect((modified[2] as any).content).toContain("Available tools:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
@@ -668,7 +668,7 @@ describe("flow tool execute", () => {
 
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("primary_flow:");
+			expect((modified[2] as any).content).toContain("Available tools:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
@@ -738,6 +738,54 @@ describe("flow tool execute", () => {
 			expect((modified[1] as any).role).toBe("system");
 			expect((modified[1] as any).content).toMatch(/<pi-flow-steering-hint\b/);
 			expect((modified[2] as any).content).toBe("second prompt");
+		});
+
+		it("normalizes toolResult and tool messages with string content in parent flow", async () => {
+			const pi = createMockPi();
+			registerExtension(pi as any);
+
+			const messages = [
+				{ role: "user" as const, content: "first prompt", timestamp: 1 },
+				{ role: "toolResult" as const, toolCallId: "tool-1", content: "verbatim output text", timestamp: 2 },
+				{ role: "tool" as const, toolCallId: "tool-2", content: "some other string content", timestamp: 3 },
+				{ role: "user" as const, content: "second prompt", timestamp: 4 },
+			];
+
+			const results = await pi.trigger("context", { messages });
+			const modified = results[0]?.messages ?? messages;
+
+			// Should have steering hint inserted before second user message, making length 5
+			expect(modified).toHaveLength(5);
+			// Check first toolResult is normalized to block array
+			expect((modified[1] as any).role).toBe("toolResult");
+			expect(Array.isArray((modified[1] as any).content)).toBe(true);
+			expect((modified[1] as any).content[0]).toEqual({ type: "text", text: "verbatim output text" });
+			// Check second tool is normalized to block array
+			expect((modified[2] as any).role).toBe("tool");
+			expect(Array.isArray((modified[2] as any).content)).toBe(true);
+			expect((modified[2] as any).content[0]).toEqual({ type: "text", text: "some other string content" });
+		});
+
+		it("normalizes toolResult messages in child flows", async () => {
+			process.env.PI_FLOW_DEPTH = "1";
+			const pi = createMockPi();
+			registerExtension(pi as any);
+
+			const messages = [
+				{ role: "user" as const, content: "first prompt", timestamp: 1 },
+				{ role: "toolResult" as const, toolCallId: "tool-1", content: "verbatim output text", timestamp: 2 },
+			];
+
+			const results = await pi.trigger("context", { messages });
+			const modified = results[0]?.messages ?? messages;
+
+			// Because currentDepth > 0, steering hint is not inserted, but normalization should happen
+			expect(modified).toHaveLength(2);
+			expect((modified[1] as any).role).toBe("toolResult");
+			expect(Array.isArray((modified[1] as any).content)).toBe(true);
+			expect((modified[1] as any).content[0]).toEqual({ type: "text", text: "verbatim output text" });
+
+			delete process.env.PI_FLOW_DEPTH;
 		});
 	});
 

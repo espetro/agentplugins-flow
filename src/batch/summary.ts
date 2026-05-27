@@ -21,7 +21,7 @@ export interface PlannedOp {
 	u?: string;
 }
 
-export function extractBatchOps(args: Record<string, unknown>): PlannedOp[] {
+function extractBatchOps(args: Record<string, unknown>): PlannedOp[] {
 	let rawOps: unknown[];
 	if (Array.isArray(args.o)) rawOps = args.o;
 	else if (Array.isArray(args.op)) rawOps = args.op;
@@ -44,8 +44,8 @@ export function extractBatchOps(args: Record<string, unknown>): PlannedOp[] {
 		});
 }
 
-export function extractWebOps(args: Record<string, unknown>): Array<{ o: string; q?: string; u?: string }> {
-	const rawOps = (args as any)?.w;
+function extractWebOps(args: Record<string, unknown>): Array<{ o: string; q?: string; u?: string }> {
+	const rawOps = (args as { w?: unknown[] }).w;
 	if (!Array.isArray(rawOps)) return [];
 	return rawOps
 		.filter((op: unknown): op is Record<string, unknown> => !!op && typeof op === "object")

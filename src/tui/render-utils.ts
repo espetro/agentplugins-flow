@@ -114,14 +114,18 @@ export function formatCountdownRemaining(deadlineAtMs?: number): string | undefi
 	return formatCountdown(remaining);
 }
 
+export {
+	computeInitialContextTokens,
+	resolveDisplayContextTokens,
+	mergeStreamingContextTokens,
+} from "./context-display.js";
+
 export function formatContextLabel(ctxTokens: number, maxCtxTokens?: number): string {
+	const current = formatFixedTokens(Math.max(0, ctxTokens)).trim();
 	if (maxCtxTokens === undefined) {
-		return formatFixedTokens(ctxTokens).trim();
+		return current;
 	}
-	if (ctxTokens === 0) {
-		return `-----/${formatFixedTokens(maxCtxTokens).trim()}`;
-	}
-	return `${formatFixedTokens(ctxTokens).trim()}/${formatFixedTokens(maxCtxTokens).trim()}`;
+	return `${current}/${formatFixedTokens(maxCtxTokens).trim()}`;
 }
 
 /** Regex matching ANSI escape sequences. */

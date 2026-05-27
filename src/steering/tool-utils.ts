@@ -36,13 +36,13 @@ if (
 }
 
 export const DEFAULT_DIRECTIVE =
-	"\n\n[Directive: Close what you start. Dispatch a [build] or [scout] flow to verify before advancing.]";
+	"\n\n[Directive: Verify your work before advancing — dispatch a follow-up flow.]";
 
 export const NOTDONE_DIRECTIVE =
-	"\n\n[Directive: Unfinished work detected. Dispatch a [build] or [debug] flow to close the notDone items. Do not start new work until these are resolved.]";
+	"\n\n[Directive: Unfinished items remain. Resolve them before starting new work.]";
 
 export const VAGUE_DIRECTIVE =
-	"\n\n[Directive: Dispatch the same [build] or [scout] flow to verify uncertainty.]";
+	"\n\n[Directive: Status unclear — dispatch a verification flow to confirm completion.]";
 
 const DIRECTIVE_RE = /\n\n\[Directive: [^\n]*\]/g;
 const LEGACY_HINT_RE = /\n\n\[Hint: [\s\S]*?\]/g;

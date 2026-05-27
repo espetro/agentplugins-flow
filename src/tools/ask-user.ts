@@ -879,15 +879,15 @@ export function createAskUserTool() {
 
 		renderResult(result: any, options: any, theme: any, args?: Record<string, unknown>) {
 			const details = result.details as (AskToolDetails & { error?: string }) | undefined;
-			const canAnimate = !!(args as any)?.invalidate && !!(args as any)?.state;
+			const canAnimate = !!(args?.invalidate as boolean | undefined) && !!(args?.state as boolean | undefined);
 			const now = Date.now();
-			const id = (args as any)?.toolCallId || (args as any)?.id || "ask_user";
+			const id = (args?.toolCallId as string | undefined) || (args?.id as string | undefined) || "ask_user";
 
 			if (details?.error) {
 				const line = theme.fg("error", `✖ ${details.error}`);
 				if (!canAnimate) return new Text(scrambleManager.renderStatic(line), 0, 0);
 				const scrambled = scrambleManager.updateText(id, "result", stripAnsi(line), now, false).content;
-				runScrambleTimer(args as Record<string, any> | undefined, id);
+				runScrambleTimer(args, id);
 				return new Text(scrambled, 0, 0);
 			}
 
@@ -895,7 +895,7 @@ export function createAskUserTool() {
 				const line = theme.fg("warning", "Cancelled");
 				if (!canAnimate) return new Text(scrambleManager.renderStatic(line), 0, 0);
 				const scrambled = scrambleManager.updateText(id, "result", stripAnsi(line), now, false).content;
-				runScrambleTimer(args as Record<string, any> | undefined, id);
+				runScrambleTimer(args, id);
 				return new Text(scrambled, 0, 0);
 			}
 
@@ -921,7 +921,7 @@ export function createAskUserTool() {
 
 			if (!canAnimate) return new Text(scrambleManager.renderStatic(text), 0, 0);
 			const scrambled = scrambleManager.updateText(id, "result", stripAnsi(text), now, false).content;
-			runScrambleTimer(args as Record<string, any> | undefined, id);
+			runScrambleTimer(args, id);
 			return new Text(scrambled, 0, 0);
 		},
 	};

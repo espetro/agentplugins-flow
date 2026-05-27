@@ -110,3 +110,7 @@ export function truncateToWidth(text: string, _width: number, _ellipsis?: string
 export function wrapTextWithAnsi(text: string, _width: number): string[] {
 	return text.split("\n");
 }
+
+export function visibleWidth(text: string): number {
+	return text.length;
+}

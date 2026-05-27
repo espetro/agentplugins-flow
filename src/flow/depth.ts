@@ -12,7 +12,7 @@ import { logWarn } from "../config/log.js";
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_MAX_TRANSITION_DEPTH = 3;
-export const DEFAULT_PREVENT_CYCLE_TRANSITION = true;
+const DEFAULT_PREVENT_CYCLE_TRANSITION = true;
 export const FLOW_DEPTH_ENV = "PI_FLOW_DEPTH";
 export const FLOW_MAX_DEPTH_ENV = "PI_FLOW_MAX_DEPTH";
 export const FLOW_STACK_ENV = "PI_FLOW_STACK";
@@ -60,7 +60,8 @@ export function parseFlowStack(raw: unknown): string[] | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(raw);
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to parse depth JSON: ${e}`);
 		return null;
 	}
 

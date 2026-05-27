@@ -30,3 +30,4 @@ tui_scenarios.md
 
 # Dead artifact directory (no source files)
 demo-api/
+coverage/

@@ -11,6 +11,8 @@ import { setupNotify } from "./notify/notify.js";
 import { discoverFlows, getFlowTier, type FlowConfig, type FlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
+import { beginFlowLiveSession, endFlowLiveSession } from "./tui/flow-live-state.js";
+import { wrapFlowOnUpdate } from "./flow/flow-live.js";
 import { DEFAULT_FLOW_COLORS } from "./tui/flow-colors.js";
 import { terminateAllChildGroups } from "./flow/runner.js";
 import { executeFlows } from "./flow/executor.js";
@@ -59,7 +61,9 @@ import { scrambleManager, setAnimationConfig } from "./tui/scramble/index.js";
 import { logWarn, logError } from "./config/log.js";
 export { logWarn, logError };
 
-
+declare global {
+	var __pi_agent_flow_shutdown_registered: boolean | undefined;
+}
 
 import {
 	computeActiveTools,
@@ -110,7 +114,7 @@ const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatc
 
 const FlowItem = Type.Object({
 	type: Type.String({
-		description: "Flow type (scout, debug, build, craft, audit, ideas). Use the separate `trace` tool for quick verbatim reads.",
+		description: "Flow type: scout, debug, build, craft, audit, or ideas.",
 	}),
 	intent: Type.String({
 		description: "Detailed mission for this flow.",
@@ -394,7 +398,7 @@ export default function (pi: ExtensionAPI) {
 		// bashTracker and its pending OS processes are discarded on restart.
 		// This is expected — child process state is not serializable.
 		if (bashTracker) {
-			try { bashTracker.abortAll(); } catch { /* best-effort */ }
+			try { bashTracker.abortAll(); } catch (e) { logWarn(`[pi-agent-flow] bashTracker.abortAll() failed on shutdown: ${e}`); }
 			bashTracker = undefined;
 		}
 	});
@@ -459,13 +463,36 @@ export default function (pi: ExtensionAPI) {
 	// net, then insert the fresh hint as a separate message.
 	// Skipped for child flows (depth > 0) — they have explicit <mission> directives.
 	pi.on("context", async (event) => {
-		if (currentDepth > 0) return undefined;
+		// Defensive normalization: ensure toolResult content is always a block array
+		// so that downstream providers (e.g. OpenAI / Anthropic adapters) don't explode
+		// on .filter() calls if a tool returned a raw string.
+		const normalizeToolMessages = (msgs: any[]): { messages: any[]; changed: boolean } => {
+			let changed = false;
+			const normalized = msgs.map((msg) => {
+				if (msg && (msg.role === "toolResult" || msg.role === "tool") && !Array.isArray(msg.content)) {
+					const text = typeof msg.content === "string" ? msg.content : "";
+					changed = true;
+					return {
+						...msg,
+						content: text ? [{ type: "text", text }] : [],
+					};
+				}
+				return msg;
+			});
+			return { messages: normalized, changed };
+		};
+
+		const { messages: normalizedMessages, changed: normalizedChanged } = normalizeToolMessages(event.messages);
+
+		if (currentDepth > 0) {
+			return normalizedChanged ? { messages: normalizedMessages } : undefined;
+		}
 
 		// Always strip old steering hint messages to prevent accumulation
-		const { messages: steeringStrippedMessages, changed: steeringChanged } = stripSteeringHintsFromMessages(event.messages);
+		const { messages: steeringStrippedMessages, changed: steeringChanged } = stripSteeringHintsFromMessages(normalizedMessages);
 		// Also strip directive hints (adaptive hints appended to tool results)
 		const { messages, changed: directiveChanged } = stripDirectivesFromMessages(steeringStrippedMessages);
-		const messagesChanged = steeringChanged || directiveChanged;
+		const messagesChanged = normalizedChanged || steeringChanged || directiveChanged;
 
 		// Find latest user message
 		const userIndices = messages
@@ -553,10 +580,8 @@ export default function (pi: ExtensionAPI) {
 			label: "Flow",
 			promptSnippet: "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.",
 			promptGuidelines: [
-				"Combine multiple tasks into a single `flow` array call.",
-				"Each task requires `type`, `intent`, `aim`, and `complexity`.",
-				"All tasks MUST be nested inside the `flow` array.",
-				"Use the separate `trace` tool (not `flow`) for quick verbatim reads and checks.",
+				"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
+				"For quick file reads/checks, use `trace` instead.",
 			],
 			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",
 			parameters: FlowParams,
@@ -592,7 +617,13 @@ export default function (pi: ExtensionAPI) {
 				const sharedContext = parseSharedContext(forkSessionSnapshotJsonl);
 				const makeDetails = makeFlowDetailsFactory(discovery.projectFlowsDir, sharedContext);
 
-
+				const firstFlow = params.flow[0];
+				beginFlowLiveSession(toolCallId, {
+					sharedContext,
+					intent: firstFlow?.intent ?? "",
+					aim: firstFlow?.aim,
+					flowType: firstFlow?.type,
+				});
 
 				let activeGoal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
 				if (!activeGoal) {
@@ -617,55 +648,60 @@ export default function (pi: ExtensionAPI) {
 					})
 				);
 
-				const result = await executeFlows(
-					{
-						flows,
-						currentDepth,
-						maxDepth,
-						ancestorFlowStack,
-						preventCycles,
-						toolOptimize: resolved.toolOptimize,
-						structuredOutput: resolved.structuredOutput,
-						cwd: ctx.cwd,
-						loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
-						maxConcurrency: resolved.maxConcurrency,
-						debugMode: resolved.debugMode,
-						defaultComplexity: resolved.defaultComplexity,
-						signal,
-						onUpdate,
-						makeDetails,
-						getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
-						tierOverrideResolver: getTierOverride,
-						fallbackModel: inheritedCliArgs.fallbackModel,
-						forkSessionSnapshotJsonl,
-						projectFlowsDir: discovery.projectFlowsDir,
-						sessionManager: ctx.sessionManager,
-						hasUI: ctx.hasUI,
-						uiConfirm: (title, body) => ctx.ui.confirm(title, body),
-						onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
-						confirmProjectFlows: params.confirmProjectFlows,
-						goalContext,
-						goalContinuationCallback: async (results) => {
-							const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
-							if (!goal) return;
-							for (const r of results) {
-								recordFlowCompletion(ctx.cwd, { type: r.type, intent: r.intent, aim: r.aim });
-								addTokens(ctx.cwd, r.usage.input + r.usage.output);
-							}
+				let result: Awaited<ReturnType<typeof executeFlows>>;
+				try {
+					result = await executeFlows(
+						{
+							flows,
+							currentDepth,
+							maxDepth,
+							ancestorFlowStack,
+							preventCycles,
+							toolOptimize: resolved.toolOptimize,
+							structuredOutput: resolved.structuredOutput,
+							cwd: ctx.cwd,
+							loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
+							maxConcurrency: resolved.maxConcurrency,
+							debugMode: resolved.debugMode,
+							defaultComplexity: resolved.defaultComplexity,
+							signal,
+							onUpdate: wrapFlowOnUpdate(toolCallId, onUpdate),
+							makeDetails,
+							getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
+							tierOverrideResolver: getTierOverride,
+							fallbackModel: inheritedCliArgs.fallbackModel,
+							forkSessionSnapshotJsonl,
+							projectFlowsDir: discovery.projectFlowsDir,
+							sessionManager: ctx.sessionManager,
+							hasUI: ctx.hasUI,
+							uiConfirm: (title, body) => ctx.ui.confirm(title, body),
+							onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
+							confirmProjectFlows: params.confirmProjectFlows,
+							goalContext,
+							goalContinuationCallback: async (results) => {
+								const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
+								if (!goal) return;
+								for (const r of results) {
+									recordFlowCompletion(ctx.cwd, { type: r.type, intent: r.intent, aim: r.aim });
+									addTokens(ctx.cwd, r.usage.input + r.usage.output);
+								}
+							},
 						},
-					},
-					params.flow.map((f: Static<typeof FlowItem>, i: number) => ({
-						type: f.type,
-						intent: f.intent,
-						aim: f.aim,
-						acceptance: f.acceptance,
-						cwd: f.cwd,
-						complexity: f.complexity,
-						preDispatchResults: preDispatchResults[i],
-					})),
-					toolCallId,
-					params.auditLoop ?? 0,
-				);
+						params.flow.map((f: Static<typeof FlowItem>, i: number) => ({
+							type: f.type,
+							intent: f.intent,
+							aim: f.aim,
+							acceptance: f.acceptance,
+							cwd: f.cwd,
+							complexity: f.complexity,
+							preDispatchResults: preDispatchResults[i],
+						})),
+						toolCallId,
+						params.auditLoop ?? 0,
+					);
+				} finally {
+					endFlowLiveSession(toolCallId);
+				}
 
 				if (result.failed) {
 					const text = result.content?.[0]?.text ?? "Flow execution failed";
@@ -748,15 +784,15 @@ export default function (pi: ExtensionAPI) {
 	// We use prependListener on SIGINT/SIGTERM to propagate to child processes
 	// before the host's own signal handler runs. This avoids orphaned flow states.
 	// The host handler still runs afterward and handles terminal cleanup.
-	if (!(globalThis as any).__pi_agent_flow_shutdown_registered) {
-		(globalThis as any).__pi_agent_flow_shutdown_registered = true;
+	if (!globalThis.__pi_agent_flow_shutdown_registered) {
+		globalThis.__pi_agent_flow_shutdown_registered = true;
 
 		// Propagate signals to child process groups so flow states don't become orphans.
 		// We use prependListener so our handler runs first, before the host's cleanup.
 		const shutdown = () => {
 			// First, abort any pending bash operations tracked by the batch tool.
 			if (bashTracker) {
-				try { bashTracker.abortAll(); } catch { /* best-effort */ }
+				try { bashTracker.abortAll(); } catch (e) { logWarn(`[pi-agent-flow] bashTracker.abortAll() failed on signal: ${e}`); }
 			}
 			terminateAllChildGroups();
 			shutdownWakeup();

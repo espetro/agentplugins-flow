@@ -10,7 +10,8 @@ export type FlowColorRole =
   | "actContent"
   | "msgContent"
   | "msgError"
-  | "placeholder";
+  | "placeholder"
+  | "groupHeader";
 
 export interface FlowColorConfig {
   bodyVerbosity?: "lite" | "full";
@@ -18,6 +19,7 @@ export interface FlowColorConfig {
   modelName: { color: string; bold?: boolean; italic?: boolean };
   stats: { color: string; bold?: boolean; italic?: boolean };
   treeChars: { color: string; bold?: boolean; italic?: boolean };
+  groupHeader: { color: string; bold?: boolean; italic?: boolean };
   prefixLabel: { color: string; bold?: boolean; italic?: boolean };
   aimContent: { color: string; bold?: boolean; italic?: boolean };
   actContent: { color: string; bold?: boolean; italic?: boolean };
@@ -33,6 +35,7 @@ export const DEFAULT_FLOW_COLORS: FlowColorConfig = {
   modelName: { color: "muted", italic: true },
   stats: { color: "muted", italic: true },
   treeChars: { color: "dim" },
+  groupHeader: { color: "warning" },
   prefixLabel: { color: "muted" },
   aimContent: { color: "dim", italic: true },
   actContent: { color: "dim", italic: true },

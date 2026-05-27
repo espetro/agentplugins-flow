@@ -62,9 +62,6 @@ export function buildLineage(flowName: string, parentFlowStack: string[]): strin
 	return ["root state", ...parentFlowStack, flowName].join(" → ");
 }
 
-export function buildParentLineageHint(_parentFlowStack: string[]): string {
-	return "";
-}
 
 // ---------------------------------------------------------------------------
 // Child env propagation

@@ -1,12 +1,13 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { logWarn } from "./log.js";
+import { getAgentDir, hasAgentDirOverride } from "./paths.js";
 
 function getModelsJsonPath(): string {
-	const agentDir = process.env["PI_CODING_AGENT_DIR"]?.trim() || path.join(os.homedir(), ".pi", "agent");
+	const agentDir = getAgentDir();
 	const defaultPath = path.join(agentDir, "models.json");
-	if (!process.env["PI_CODING_AGENT_DIR"] && !fs.existsSync(defaultPath)) {
-		const rootPath = path.join(os.homedir(), ".pi", "models.json");
+	if (!hasAgentDirOverride() && !fs.existsSync(defaultPath)) {
+		const rootPath = path.join(path.dirname(agentDir), "models.json");
 		if (fs.existsSync(rootPath)) return rootPath;
 	}
 	return defaultPath;
@@ -16,7 +17,8 @@ function readSettingsJson(filePath: string): Record<string, unknown> | null {
 	try {
 		const content = fs.readFileSync(filePath, "utf-8");
 		return JSON.parse(content) as Record<string, unknown>;
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to read settings JSON from ${filePath}: ${e}`);
 		return null;
 	}
 }

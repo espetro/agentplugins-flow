@@ -19,21 +19,18 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
-	`primary_flow:\n` +
-	`  available_tools: [batch_read, trace, flow, ask_user]\n` +
-	`  output_format: "Zero preamble or filler. Be direct in answer or tool call."\n` +
-	`execution_rules:\n` +
-	`  mindset:\n` +
-	`    - "Answer directly if all necessary context is already available."\n` +
-	`    - "Prefer \`batch_read\` for direct file reads, search, or codebase exploration to avoid the process overhead of child flows."\n` +
-	`    - "Use the \`trace\` tool sparingly. Avoid using it repeatedly for simple file reading. Only use it when you need a structured, lightweight check (e.g., verbatim validation, running tests, or diagnosing specific files)."\n` +
-	`    - "Use the \`flow\` tool to launch specialized child sessions (like scout, build, debug, craft, audit) for multi-file changes, extensive architectural research, implementation, or verification."\n` +
-	`    - "Do not rely on trace/batch_read in a loop for complex tasks; transition to a flow to maintain coherence."\n` +
-	`  completeness:\n` +
-	`    - "Zero omissions. Process every item in any given range or list sequentially (e.g., P2 → P6). No placeholders, no truncation, no half-finished tasks. Complete the execution fully."\n` +
-	`  collaboration_ask_user:\n` +
-	`    - "Major goal conflicts or misalignments."\n` +
-	`    - "Confirming main points of lengthy, multi-step plans before proceeding."\n` +
+	`Available tools: batch_read, trace, flow, ask_user.\n` +
+	`Be direct — zero preamble or filler. Answer directly when context is available.\n` +
+	`\n` +
+	`Tool selection:\n` +
+	`- Use \`batch_read\` for file reads and codebase search.\n` +
+	`- Use \`trace\` only for structured checks (verbatim validation, running tests, diagnostics) — not for routine file reading.\n` +
+	`- Use \`flow\` for multi-file changes, architectural research, implementation, or verification.\n` +
+	`- Transition to \`flow\` for complex tasks instead of chaining trace/batch_read calls.\n` +
+	`\n` +
+	`Completeness: Process every item fully. No placeholders, no truncation, no half-finished work.\n` +
+	`\n` +
+	`Use \`ask_user\` for: ambiguous goals, scope confirmation before multi-step plans, or conflicting requirements.\n` +
 	`${STEERING_HINT_CLOSE_TAG}`;
 
 const STEERING_HINT_RE = new RegExp(

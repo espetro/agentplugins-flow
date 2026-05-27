@@ -133,7 +133,7 @@ describe("processFlowJsonLine", () => {
       assistantMessageEvent: { type: "thinking_delta", delta: "thinking..." },
     };
     const result = processFlowJsonLine(JSON.stringify(event), r);
-    expect(result).toBe(false);
+    expect(result).toBe(true);
     // Thinking is stripped, so streaming buffer should be empty
     expect(drainStreamingText(r)).toBe("");
   });
@@ -172,6 +172,39 @@ describe("processFlowJsonLine", () => {
     expect(r.usage.turns).toBe(1);
   });
 
+  it("accumulates usage from messages with snake_case keys", () => {
+    const r = makeResult();
+    const msg = makeAssistantMessage("usage snake test", {
+      usage: { prompt_tokens: 100, completion_tokens: 50, cache_read: 200, cache_write: 10, cost: { total: 0.05 }, total_tokens: 500 },
+    });
+    processFlowJsonLine(JSON.stringify({ type: "message_end", message: msg }), r);
+    expect(r.usage.input).toBe(100);
+    expect(r.usage.output).toBe(50);
+    expect(r.usage.cacheRead).toBe(200);
+    expect(r.usage.cacheWrite).toBe(10);
+    expect(r.usage.cost).toBeCloseTo(0.05);
+    expect(r.usage.contextTokens).toBe(500);
+    expect(r.usage.turns).toBe(1);
+  });
+
+  it("accumulates usage and metadata from top-level event fields", () => {
+    const r = makeResult();
+    const msg = {
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+    };
+    processFlowJsonLine(JSON.stringify({
+      type: "message_end",
+      message: msg,
+      usage: { prompt_tokens: 120, completion_tokens: 60, total_tokens: 180 },
+      stopReason: "tool_use",
+    }), r);
+    expect(r.usage.input).toBe(120);
+    expect(r.usage.output).toBe(60);
+    expect(r.usage.contextTokens).toBe(180);
+    expect(r.stopReason).toBe("tool_use");
+  });
+
   it("counts toolCall parts", () => {
     const r = makeResult();
     const msg = {
@@ -198,6 +231,33 @@ describe("processFlowJsonLine", () => {
     expect(r.usage.toolCalls).toBe(1);
     // Tool call JSON should be estimated and available for draining
     expect(drainToolCallEstimate(r)).toBeGreaterThan(0);
+  });
+
+  it("estimates toolCall tokens and updates contextTokens/baseline when totalTokens is 0", () => {
+    const r = makeResult();
+    const msg = {
+      role: "assistant",
+      content: [
+        { type: "toolCall", toolCallId: "1", toolName: "bash", input: { command: "ls" } },
+      ],
+    };
+    processFlowJsonLine(JSON.stringify({ type: "message_end", message: msg }), r);
+    expect(r.usage.contextTokens).toBeGreaterThan(0);
+    expect(drainCtxEstimate(r)).toBe(r.usage.contextTokens);
+  });
+
+  it("estimates text and toolCall tokens and updates contextTokens/baseline when totalTokens is 0", () => {
+    const r = makeResult();
+    const msg = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "estimating output tokens" },
+        { type: "toolCall", toolCallId: "1", toolName: "bash", input: { command: "ls" } },
+      ],
+    };
+    processFlowJsonLine(JSON.stringify({ type: "message_end", message: msg }), r);
+    expect(r.usage.contextTokens).toBeGreaterThan(5); // text estimation + tool calls
+    expect(drainCtxEstimate(r)).toBe(r.usage.contextTokens);
   });
 
   it("returns false for unknown event types", () => {
@@ -426,6 +486,91 @@ describe("getFlowSummaryText", () => {
       exitCode: 0,
     };
     expect(getFlowSummaryText(result)).toBe("All changes applied successfully.");
+  });
+
+  it("appends simple Audit Loop note for build results", () => {
+    const result = {
+      type: "build",
+      intent: "test",
+      aim: "test",
+      exitCode: 0,
+      messages: [],
+      stderr: "",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0, toolCalls: 0 },
+      pingPongMeta: {
+        cycles: 2,
+        verdicts: [
+          { cycle: 0, verdict: "rework", feedback: "Fix null check" },
+          { cycle: 1, verdict: "pass" },
+        ],
+        finalVerdict: "pass",
+      },
+    };
+    const text = getFlowSummaryText(result);
+    expect(text).toContain("[Audit Loop: 2 cycle(s), final verdict: pass]");
+    expect(text).not.toContain("Cycle 1: rework");
+  });
+
+  it("includes chronological verdict history on audit capstone with multiple cycles", () => {
+    const result = {
+      type: "audit",
+      intent: "test",
+      aim: "test",
+      exitCode: 0,
+      messages: [],
+      stderr: "",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0, toolCalls: 0 },
+      auditParentType: "build",
+      pingPongMeta: {
+        cycles: 3,
+        verdicts: [
+          { cycle: 0, verdict: "rework", feedback: "Missing error handling" },
+          { cycle: 1, verdict: "rework", feedback: "Add input validation" },
+          { cycle: 2, verdict: "pass" },
+        ],
+        finalVerdict: "pass",
+      },
+    };
+    const text = getFlowSummaryText(result);
+    expect(text).toContain("Audit Loop: 3 cycle(s), final verdict: pass");
+    expect(text).toContain("Cycle 1: rework — Missing error handling");
+    expect(text).toContain("Cycle 2: rework — Add input validation");
+    expect(text).toContain("Cycle 3: pass");
+  });
+
+  it("keeps simple note for audit capstone with single cycle", () => {
+    const result = {
+      type: "audit",
+      intent: "test",
+      aim: "test",
+      exitCode: 0,
+      messages: [],
+      stderr: "",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0, toolCalls: 0 },
+      auditParentType: "build",
+      pingPongMeta: {
+        cycles: 1,
+        verdicts: [{ cycle: 0, verdict: "pass" }],
+        finalVerdict: "pass",
+      },
+    };
+    const text = getFlowSummaryText(result);
+    expect(text).toContain("[Audit Loop: 1 cycle(s), final verdict: pass]");
+    expect(text).not.toContain("Cycle 1:");
+  });
+
+  it("omits pingPongNote when no pingPongMeta present", () => {
+    const result = {
+      type: "scout",
+      intent: "test",
+      aim: "test",
+      exitCode: 0,
+      messages: [],
+      stderr: "",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0, toolCalls: 0 },
+    };
+    const text = getFlowSummaryText(result);
+    expect(text).not.toContain("Audit Loop");
   });
 });
 

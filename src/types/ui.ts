@@ -47,7 +47,7 @@ export function getLastToolCall(messages: Message[]): { type: "toolCall"; name: 
 }
 
 /** Count tool calls in the most recent assistant message (pending batch). */
-export function countPendingToolCalls(messages: Message[]): number {
+function countPendingToolCalls(messages: Message[]): number {
 	const lastMsg = messages[messages.length - 1];
 	if (!lastMsg || lastMsg.role !== "assistant") return 0;
 	let count = 0;
@@ -55,32 +55,6 @@ export function countPendingToolCalls(messages: Message[]): number {
 		if (part.type === "toolCall") count++;
 	}
 	return count;
-}
-
-/** Count pending operations, expanding batch tool calls into individual ops. */
-export function countPendingOps(messages: Message[]): number {
-	const pendingCount = countPendingToolCalls(messages);
-	if (pendingCount <= 0) return 0;
-	const lastMsg = messages[messages.length - 1];
-	if (!lastMsg || lastMsg.role !== "assistant") return 0;
-	let ops = 0;
-	for (const part of lastMsg.content) {
-		if (part.type === "toolCall") {
-			const name = part.name ?? part.toolName ?? "unknown";
-			const args = (part.arguments ?? part.input ?? {}) as Record<string, unknown>;
-			if (name === "batch") {
-				const rawOps = (args.o ?? args.op ?? args.operations ?? args) as unknown[];
-				if (Array.isArray(rawOps)) {
-					ops += rawOps.length;
-				} else {
-					ops++;
-				}
-			} else {
-				ops++;
-			}
-		}
-	}
-	return ops;
 }
 
 /** Extract the last assistant text from message history. */

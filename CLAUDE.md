@@ -319,10 +319,14 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_FLOW_NO_GLITCH` | Set to `1` to disable glitch/scramble effect. |
 | `PI_FLOW_BODY_VERBOSITY` | Override collapsed body verbosity (`lite` or `full`). Default: `lite`. |
 | `PI_ASK_USER_TIMEOUT` | Override the ask_user default timeout in seconds (e.g., `60` for 1 minute). |
-| `PI_BATCH_MAX_LINES` | Override the default batch max lines limit (default 3000, Pi spec: 2000). |
-| `PI_BATCH_MAX_BYTES` | Override the default batch max bytes limit (default 102400, Pi spec: 51200). |
-| `PI_BASH_MAX_LINES` | Override the default bash max output lines limit (default 4000, Pi spec: 2000). |
-| `PI_BASH_MAX_BYTES` | Override the default bash max output bytes limit (default 102400, Pi spec: 51200). |
+| `PI_BATCH_MAX_LINES` | Override the default batch max lines limit (default 2000, Pi spec: 2000). |
+| `PI_BATCH_MAX_BYTES` | Override the default batch max bytes limit (default 51200, Pi spec: 51200). |
+| `PI_BATCH_MAX_BYTES_PER_LINE` | Per-line byte cap for read/rg/bash output (default 1024). |
+| `PI_RG_MAX_LINES` | Max rg match lines returned per op (default 500). |
+| `PI_RG_MAX_BYTES` | Max rg match bytes returned per op (default 51200). |
+| `PI_RG_DEFAULT_MAX_COUNT` | Auto `--max-count` per file for broad `.` searches when `n` omitted (default 50). |
+| `PI_BASH_MAX_LINES` | Override the default bash max output lines limit (default 2000, Pi spec: 2000). |
+| `PI_BASH_MAX_BYTES` | Override the default bash max output bytes limit (default 51200, Pi spec: 51200). |
 | `PI_FLOW_SIGKILL_TIMEOUT_MS` | Override the default SIGKILL timeout in milliseconds (default 5000). |
 | `PI_FLOW_FINISH_KILL_GRACE_MS` | Override the default finish kill grace period in milliseconds (default 5000). |
 | `PI_FLOW_AGENT_END_GRACE_MS` | Override the default agent end grace period in milliseconds (default 2000). |

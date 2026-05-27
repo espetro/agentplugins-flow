@@ -550,7 +550,7 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 			type: "message",
 			message: {
 				role: "system",
-				content: "[Context Compacted] Everything so far. (1000 tokens summarized)",
+				content: [{ type: "text", text: "[Context Compacted] Everything so far. (1000 tokens summarized)" }],
 			},
 		});
 		expect(snapshot).not.toContain("HUGE_ENCRYPTED_BLOB");
@@ -569,7 +569,7 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(parsed[2]).toMatchObject({
 			type: "message",
 			message: {
-				content: "[Context Compacted] Parent context was compacted. (500 tokens summarized)",
+				content: [{ type: "text", text: "[Context Compacted] Parent context was compacted. (500 tokens summarized)" }],
 			},
 		});
 	});
@@ -645,6 +645,33 @@ describe("buildCore2Snapshot — compaction filtering", () => {
 		expect(msg2.message).not.toHaveProperty("isError");
 		expect(msg2.message).not.toHaveProperty("timestamp");
 		expect(msg2.message.content[0].text).toBe("exit 0");
+	});
+
+	it("strips API metadata and slims usage with snake_case fields", () => {
+		const entries = [
+			{
+				type: "message",
+				id: "msg-1",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Hello" }],
+					api: "openai-completions",
+					provider: "fireworks.ai",
+					model: "kimi-k2p6-turbo",
+					usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+				},
+			},
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		const msg1 = parsed[2] as any;
+		expect(msg1.message.usage).toEqual({
+			input: 100,
+			output: 200,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 300,
+		});
 	});
 });
 

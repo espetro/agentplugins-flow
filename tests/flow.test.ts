@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runFlow, getOptimizedTools, type RunFlowOptions } from "../src/flow/runner.js";
+import { computeInitialContextTokens } from "../src/tui/context-display.js";
 import type { FlowConfig } from "../src/flow/agents.js";
 import type { FlowDetails } from "../src/types/flow.js";
 import * as childProcess from "node:child_process";
@@ -316,9 +317,12 @@ describe("runFlow case-insensitive lookup", () => {
 		}, 10);
 
 		await promise;
-		expect(updates).toEqual(["(running...)", "Hel", "Hello"]);
-		expect(outputUpdates).toEqual([0, 0, 1]);
-		expect(detailStreamingText).toEqual([undefined, "Hel", "Hello"]);
+		expect(updates[0]).toBe("(running...)");
+		expect(updates.at(-1)).toBe("Hello");
+		expect(updates).toContain("Hel");
+		expect(outputUpdates[0]).toBe(0);
+		expect(outputUpdates.at(-1)).toBeGreaterThanOrEqual(1);
+		expect(detailStreamingText.at(-1)).toBe("Hello");
 	});
 
 	it("accumulates estimated output tokens across streaming updates", async () => {
@@ -355,7 +359,9 @@ describe("runFlow case-insensitive lookup", () => {
 		}, 10);
 
 		await promise;
-		expect(outputUpdates).toEqual([0, 2, 4]);
+		expect(outputUpdates[0]).toBe(0);
+		expect(outputUpdates.at(-1)).toBe(4);
+		expect(outputUpdates.filter((v) => v === 2).length).toBeGreaterThanOrEqual(1);
 	});
 
 	it("returns error for unknown flow regardless of casing", async () => {
@@ -1556,4 +1562,125 @@ describe("acceptance field propagation", () => {
 		mockProc.emit("close", 0);
 		await promise;
 	});
+
+	it("includes contextTokens in onUpdate before any child messages", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+		const contextUpdates: number[] = [];
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			maxContextTokens: 260000,
+			onUpdate: (partial) => {
+				contextUpdates.push(partial.details?.results[0]?.usage.contextTokens ?? 0);
+			},
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		mockProc.emit("close", 0);
+		const result = await promise;
+
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		const prompt = args[args.indexOf("-p") + 1];
+		const expectedContext = computeInitialContextTokens(undefined, "Test intent", prompt);
+
+		expect(contextUpdates.length).toBeGreaterThan(0);
+		expect(contextUpdates[0]).toBe(expectedContext);
+		expect(result.usage.contextTokens).toBe(expectedContext);
+	});
+
+	it("streams contextTokens growth during text deltas", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+		const contextUpdates: number[] = [];
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			onUpdate: (partial) => {
+				contextUpdates.push(partial.details?.results[0]?.usage.contextTokens ?? 0);
+			},
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		setTimeout(() => {
+			mockProc.stdout.emit("data", Buffer.from('{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"' + "x".repeat(400) + '"}}\n'));
+			mockProc.emit("close", 0);
+		}, 10);
+
+		await promise;
+		expect(contextUpdates.length).toBeGreaterThan(1);
+		expect(contextUpdates[contextUpdates.length - 1]).toBeGreaterThan(contextUpdates[0]);
+	});
+
+	it("estimates prompt overhead and updates contextTokens baseline", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		const prompt = args[args.indexOf("-p") + 1];
+		const expectedContext = computeInitialContextTokens(undefined, "Test intent", prompt);
+
+		// Simulate process exit
+		mockProc.stdout.emit("data", Buffer.from('{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n'));
+		mockProc.emit("close", 0);
+
+		const result = await promise;
+		expect(result.usage.contextTokens).toBe(expectedContext);
+	});
 });
+

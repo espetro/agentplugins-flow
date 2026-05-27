@@ -9,6 +9,7 @@ import {
   formatModelLabel,
   formatCountdownRemaining,
   formatContextLabel,
+  resolveDisplayContextTokens,
   formatTps,
 } from '../src/tui/render-utils.js';
 
@@ -212,7 +213,30 @@ describe('formatContextLabel', () => {
     expect(formatContextLabel(950500, 1000000)).toBe('0.95M/1.00M');
   });
 
-  it('returns placeholder when ctxTokens is 0 and max is known', () => {
-    expect(formatContextLabel(0, 200000)).toBe('-----/0.20M');
+  it('shows zero current tokens when max is known', () => {
+    expect(formatContextLabel(0, 200000)).toBe('0/0.20M');
+  });
+});
+
+describe('resolveDisplayContextTokens', () => {
+  it('prefers usage.contextTokens over sharedContext', () => {
+    expect(resolveDisplayContextTokens(
+      { contextTokens: 30000, input: 1000, output: 200 },
+      { totalTokens: 25000 },
+    )).toBe(30000);
+  });
+
+  it('uses sharedContext when usage context is zero', () => {
+    expect(resolveDisplayContextTokens(
+      { contextTokens: 0, input: 0, output: 0 },
+      { totalTokens: 25000 },
+    )).toBe(25000);
+  });
+
+  it('falls back to input+output when totals are missing', () => {
+    expect(resolveDisplayContextTokens(
+      { contextTokens: 0, input: 1200, output: 300 },
+      undefined,
+    )).toBe(1500);
   });
 });

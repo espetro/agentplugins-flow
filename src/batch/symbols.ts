@@ -6,6 +6,7 @@
  */
 
 import * as path from "node:path";
+import { logWarn } from "../config/log.js";
 import {
 	type ContextLanguage,
 	type ContextMapEntry,
@@ -331,7 +332,8 @@ export function buildFileContextMap(filePath: string, lines: string[]): FileCont
 			default:
 				symbols = [];
 		}
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Symbol extraction failed: ${e}`);
 		symbols = [];
 	}
 

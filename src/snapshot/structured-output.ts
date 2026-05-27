@@ -6,6 +6,7 @@
  */
 
 import type { Message } from "@earendil-works/pi-ai";
+import { logWarn } from "../config/log.js";
 import type { Action, CommandEntry, FileEntry, FlowStructuredOutput, NotDoneItem } from "../types/output.js";
 
 type FlowStatus = FlowStructuredOutput["status"];
@@ -98,7 +99,8 @@ export function extractStructuredOutput(text: string): FlowStructuredOutput | un
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(jsonStr);
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to parse structured output JSON: ${e}`);
 		return undefined;
 	}
 

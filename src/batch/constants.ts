@@ -20,6 +20,8 @@ function getEnvInt(name: string, fallback: number): number {
 // PI_BASH_MAX_LINES=4000, PI_BASH_MAX_BYTES=102400.
 export const MAX_LINES = getEnvInt("PI_BATCH_MAX_LINES", 2000);
 export const MAX_BYTES = getEnvInt("PI_BATCH_MAX_BYTES", 50 * 1024); // 50KB (Pi spec)
+/** Per-line byte cap applied to read, rg, and bash output before aggregate limits. */
+export const MAX_BYTES_PER_LINE = getEnvInt("PI_BATCH_MAX_BYTES_PER_LINE", 1024);
 export const SAFE_FULL_READ_LIMIT = 400;
 export const TARGETED_READ_LINE_LIMIT = 500;
 export const MAX_CONTEXT_MAP_ENTRIES = 100;
@@ -29,6 +31,11 @@ export const BASH_SOFT_TIMEOUT_MS = 20_000;
 export const BASH_POLL_TAIL_LINES = 50;
 export const MAX_BASH_OUTPUT_BYTES = getEnvInt("PI_BASH_MAX_BYTES", 50 * 1024); // 50KB (Pi spec)
 export const MAX_BASH_OUTPUT_LINES = getEnvInt("PI_BASH_MAX_LINES", 2000);
+/** Post-process caps for rg match output (per batch rg op). */
+export const RG_MAX_OUTPUT_LINES = getEnvInt("PI_RG_MAX_LINES", 500);
+export const RG_MAX_OUTPUT_BYTES = getEnvInt("PI_RG_MAX_BYTES", 50 * 1024);
+/** Default --max-count per file when searching broad paths (`.` / `..`) without `n`. */
+export const RG_DEFAULT_MAX_COUNT = getEnvInt("PI_RG_DEFAULT_MAX_COUNT", 50);
 
 // Pi spec limits for warnings
 const PI_SPEC_MAX_LINES = 2000;
@@ -217,7 +224,7 @@ export type BatchTheme = {
 	bold: (s: string) => string;
 };
 
-export type BatchToolResult = {
+type BatchToolResult = {
 	content: Array<{ type: "text"; text: string }>;
 	details?: { results: OpResult[] };
 	_toolCallId?: string;

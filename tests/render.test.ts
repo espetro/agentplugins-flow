@@ -15,6 +15,7 @@ import {
 import { renderFlowCall, renderFlowResult, renderSingleFlowResult, resetAnonymousFlowIdCounter, reconstructHeader } from "../src/tui/render.js";
 import { DEFAULT_FLOW_COLORS } from "../src/tui/flow-colors.js";
 import { scrambleManager, DynamicScrambleText } from "../src/tui/scramble/index.js";
+import { beginFlowLiveSession, endFlowLiveSession } from "../src/tui/flow-live-state.js";
 import { emptyFlowUsage, type SingleResult, type FlowDetails } from "../src/types/flow.js";
 import type { Text, TruncatedText } from "@earendil-works/pi-tui";
 import { Container } from "@earendil-works/pi-tui";
@@ -587,6 +588,70 @@ describe("activity panel rendering", () => {
 		expect(headerLine).not.toContain(" 5.0k");
 	});
 
+	it("collapsed view shows 0/M ratio instead of dash placeholder when context is unknown", () => {
+		const result = makeResult({
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1, toolCalls: 0, smoothedTps: 2.6 },
+			maxContextTokens: 260000,
+			model: "fireworks/kimi-k2p6-turbo",
+		});
+		const details: FlowDetails = {
+			mode: "flow",
+			flowStyle: "fork",
+			projectAgentsDir: null,
+			results: [result],
+		};
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toContain("0/0.26M");
+		expect(headerLine).not.toContain("-----/0.26M");
+		expect(headerLine).toContain("2.6 t/s");
+	});
+
+	it("collapsed view falls back to input+output when contextTokens and sharedContext are zero", () => {
+		const result = makeResult({
+			usage: { input: 1200, output: 400, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1, toolCalls: 0 },
+			maxContextTokens: 260000,
+		});
+		const details: FlowDetails = {
+			mode: "flow",
+			flowStyle: "fork",
+			projectAgentsDir: null,
+			results: [result],
+		};
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const headerLine = extractText(rendered).split("\n")[0];
+		expect(headerLine).toContain("1.6k/0.26M");
+	});
+
+	it("collapsed view shows own contextTokens if it is larger than sharedContext.totalTokens", () => {
+		const result = makeResult({
+			usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 30000, turns: 1, toolCalls: 0 },
+		});
+		const details: FlowDetails = {
+			mode: "flow",
+			flowStyle: "fork",
+			projectAgentsDir: null,
+			results: [result],
+			sharedContext: {
+				messageCount: 10,
+				userMessageCount: 3,
+				assistantMessageCount: 7,
+				toolCalls: { bash: 2 },
+				totalTokens: 25000,
+				preview: "preview text",
+			},
+		};
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const headerLine = text.split("\n")[0];
+		expect(headerLine).toContain("30.0k");
+		expect(headerLine).not.toContain("25.0k");
+	});
+
 	it("renders single flow with DIR, EXE, LOG lines", () => {
 		const result = makeResult({
 			type: "debug",
@@ -692,13 +757,19 @@ describe("activity panel rendering", () => {
 		expect(text).not.toContain("(3)");
 	});
 
-	it("renders ghost dashboard during zero state", () => {
+	it("renders boot-phase dashboard during zero state", () => {
+		beginFlowLiveSession("ghost-boot-1", {
+			intent: "Refactor the auth module",
+			aim: "Refactor auth module",
+			flowType: "code",
+		});
 		const rendered = renderFlowResult(
-			{ content: [{ type: "text", text: "Starting..." }], details: undefined },
+			{ content: [{ type: "text", text: "Starting..." }], details: undefined, _toolCallId: "ghost-boot-1" },
 			false,
 			makeTheme(),
-			{ flow: [{ type: "code", intent: "Refactor the auth module", aim: "Refactor auth module" }] },
+			{ toolCallId: "ghost-boot-1", flow: [{ type: "code", intent: "Refactor the auth module", aim: "Refactor auth module" }] },
 		);
+		endFlowLiveSession("ghost-boot-1");
 		const text = extractText(rendered);
 		const headerLine = text.split("\n")[0];
 		// Header is scrambled on first render for in-progress flows
@@ -709,13 +780,19 @@ describe("activity panel rendering", () => {
 		expect(text).toContain("└─ cmd ▸");
 	});
 
-	it("suppresses aim line in ghost when aim is empty string", () => {
+	it("suppresses aim line in boot phase when aim is empty string", () => {
+		beginFlowLiveSession("ghost-boot-2", {
+			intent: "Read file",
+			aim: "",
+			flowType: "trace",
+		});
 		const rendered = renderFlowResult(
-			{ content: [{ type: "text", text: "Starting..." }], details: undefined },
+			{ content: [{ type: "text", text: "Starting..." }], details: undefined, _toolCallId: "ghost-boot-2" },
 			false,
 			makeTheme(),
-			{ flow: [{ type: "trace", intent: "Read file", aim: "" }] },
+			{ toolCallId: "ghost-boot-2", flow: [{ type: "trace", intent: "Read file", aim: "" }] },
 		);
+		endFlowLiveSession("ghost-boot-2");
 		const text = extractText(rendered);
 		expect(text).not.toContain("aim ▸");
 		expect(text).toContain("└─ cmd ▸");
@@ -1557,7 +1634,7 @@ describe("header ANSI style preservation during animation", () => {
 			expect(headerLine).toContain("\x1b[dimm├─ \x1b[39m");
 			expect(headerLine).toContain("\x1b[accentmdebug\x1b[39m");
 			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o\x1b[39m");
-			expect(headerLine).toContain("\x1b[mutedm · 5.0k\x1b[39m");
+			expect(headerLine).toMatch(/5\.0/);
 			expect(headerLine).not.toContain("----- t/s");
 		} finally {
 			spy.mockRestore();
@@ -1772,7 +1849,7 @@ describe("in-place mutation pattern", () => {
 // Flow status dot rendering
 // ---------------------------------------------------------------------------
 describe("flow status dot rendering", () => {
-	it("group header has no trailing status dots", () => {
+	it("group header shows aggregate status icon", () => {
 		const buildResult = makeResult({
 			type: "build",
 			exitCode: -1,
@@ -1791,8 +1868,8 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).not.toContain("●");
-		expect(groupHeader).not.toContain("○");
+		expect(groupHeader).toContain("↻");
+		expect(groupHeader).toContain("audit-loop");
 	});
 
 	it("collapsed flow header has inline status dot before name", () => {
@@ -2040,7 +2117,8 @@ describe("flow status dot rendering", () => {
 
 		const groupHeader = lines.find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("├─ audit-loop");
+		expect(groupHeader).toContain("├─");
+		expect(groupHeader).toContain("audit-loop");
 		expect(groupHeader).not.toContain("│");
 
 		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
@@ -2129,6 +2207,54 @@ describe("flow status dot rendering", () => {
 		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		expect(text).toContain("[approved]");
+	});
+
+	it("group header shows cycle badge and pass verdict when audit-loop is complete", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: 0,
+			status: "done",
+			pingPongMeta: { cycles: 2, verdicts: [{ cycle: 1, verdict: "rework" }, { cycle: 2, verdict: "pass" }], finalVerdict: "pass" },
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: 0,
+			status: "done",
+			auditParentType: "build",
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
+		expect(groupHeader).toBeDefined();
+		expect(groupHeader).toContain("✓");
+		expect(groupHeader).toContain("2 cycles · pass");
+		expect(groupHeader).toContain("audit-loop");
+	});
+
+	it("group header shows awaiting icon and cycle badge for incomplete loop", () => {
+		const buildResult = makeResult({
+			type: "build",
+			exitCode: 0,
+			status: "done",
+			pingPongMeta: { cycles: 1, verdicts: [{ cycle: 1, verdict: "rework" }], finalVerdict: "rework" },
+		});
+		const auditResult = makeResult({
+			type: "audit",
+			exitCode: -1,
+			status: "awaiting",
+			auditParentType: "build",
+		});
+		const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [buildResult, auditResult] };
+		scrambleManager.setAnimationConfig({ enabled: false, glitch: false });
+		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
+		const text = extractText(rendered);
+		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
+		expect(groupHeader).toBeDefined();
+		expect(groupHeader).toContain("○");
+		expect(groupHeader).toContain("cycle 1");
+		expect(groupHeader).toContain("audit-loop");
 	});
 });
 

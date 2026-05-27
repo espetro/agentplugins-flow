@@ -8,6 +8,7 @@
 
 import { stripDirectives } from "../steering/tool-utils.js";
 import type { FlowTier } from "../flow/agents.js";
+import { logWarn } from "../config/log.js";
 
 export interface SessionSnapshotSource {
 	getHeader: () => unknown;
@@ -21,6 +22,25 @@ export interface BuildCore2SnapshotOptions {
 	depth?: number;
 	activeToolCallId?: string;
 	tier?: FlowTier;
+}
+
+/** Normalize toolCalls field from various input shapes. */
+function normalizeToolCalls(msg: unknown): unknown[] {
+	if (!msg || typeof msg !== "object") return [];
+	const m = msg as Record<string, unknown>;
+	const tcs = m.toolCalls ?? m.tool_calls;
+	if (Array.isArray(tcs)) return tcs;
+	return [];
+}
+
+// Fallback for external APIs that use snake_case
+const SNAKE_TOOL_CALL_ID = "tool_call_id";
+
+/** Normalize tool call id from various input shapes. */
+function normalizeToolCallId(tc: unknown): string | undefined {
+	if (!tc || typeof tc !== "object") return undefined;
+	const t = tc as Record<string, unknown>;
+	return (t.id as string | undefined) || (t.toolCallId as string | undefined) || (t[SNAKE_TOOL_CALL_ID] as string | undefined);
 }
 
 /** Synthetic system message providing the context architecture map. */
@@ -140,14 +160,14 @@ export function buildCore2Snapshot(
 function slimAssistantUsage(usage: unknown): Record<string, number> | undefined {
 	if (!usage || typeof usage !== "object") return undefined;
 	const u = usage as Record<string, unknown>;
-	const input = typeof u.input === "number" ? u.input : 0;
-	const output = typeof u.output === "number" ? u.output : 0;
-	const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : 0;
-	const cacheWrite = typeof u.cacheWrite === "number" ? u.cacheWrite : 0;
+	const input = typeof u.input === "number" ? u.input : (typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0);
+	const output = typeof u.output === "number" ? u.output : (typeof u.completion_tokens === "number" ? u.completion_tokens : 0);
+	const cacheRead = typeof u.cacheRead === "number" ? u.cacheRead : (typeof u.cache_read === "number" ? u.cache_read : 0);
+	const cacheWrite = typeof u.cacheWrite === "number" ? u.cacheWrite : (typeof u.cache_write === "number" ? u.cache_write : 0);
 	const totalTokens =
 		typeof u.totalTokens === "number"
 			? u.totalTokens
-			: input + output + cacheRead + cacheWrite;
+			: (typeof u.total_tokens === "number" ? u.total_tokens : input + output + cacheRead + cacheWrite);
 	if (totalTokens <= 0 && input <= 0 && output <= 0) return undefined;
 	return { input, output, cacheRead, cacheWrite, totalTokens };
 }
@@ -236,7 +256,7 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 				return true;
 			});
 
-			const hasToolCalls = msg.toolCalls || msg.tool_calls || filteredContent.some(b => b && b.type === "toolCall");
+			const hasToolCalls = normalizeToolCalls(msg).length > 0 || filteredContent.some(b => b && b.type === "toolCall");
 
 			if (filteredContent.length === 0 || !hasSubstance) {
 				// If assistant message has no substance and no tool calls, drop it
@@ -246,7 +266,7 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 			}
 			msg.content = filteredContent;
 		} else if (typeof msg.content === "string" && msg.content.trim() === "") {
-			const hasToolCalls = msg.toolCalls || msg.tool_calls;
+			const hasToolCalls = normalizeToolCalls(msg).length > 0;
 			if (msg.role === "assistant" && !hasToolCalls) {
 				return null;
 			}
@@ -281,7 +301,7 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 			type: "message",
 			message: {
 				role: "system",
-				content: `[Context Compacted] ${summary}${tokensSaved ? ` (${tokensSaved} tokens summarized)` : ""}`,
+				content: [{ type: "text", text: `[Context Compacted] ${summary}${tokensSaved ? ` (${tokensSaved} tokens summarized)` : ""}` }],
 			},
 		};
 	}
@@ -305,13 +325,13 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 			const msg = e.message as Record<string, unknown>;
 			
 			// Gather tool calls from content array and toolCalls/tool_calls field
-			const tcs = (msg.toolCalls || msg.tool_calls || []) as any[];
+			const tcs = normalizeToolCalls(msg);
 			const contentBlocks = Array.isArray(msg.content) ? msg.content : [];
 			const allCalls = [...tcs, ...contentBlocks.filter((b) => b && b.type === "toolCall")];
 
 			for (const tc of allCalls) {
-				const id = tc.id || tc.toolCallId || tc.tool_call_id;
-				const name = tc.name || tc.toolCall?.name;
+				const id = normalizeToolCallId(tc);
+				const name = (tc as Record<string, unknown>).name || ((tc as Record<string, unknown>).toolCall as Record<string, unknown> | undefined)?.name;
 				if (!id || !name) continue;
 
 				if (name === "bash" && tc.arguments) {
@@ -352,7 +372,7 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 		const msg = { ...(e.message as Record<string, unknown>) };
 
 		if (msg.role !== "tool" && msg.role !== "toolResult") return entry;
-		const toolCallId = msg.toolCallId || msg.tool_call_id;
+		const toolCallId = normalizeToolCallId(msg);
 		if (typeof toolCallId !== "string") return entry;
 
 		const info = toolCallMap.get(toolCallId);
@@ -489,7 +509,7 @@ function compressSnapshotEntry(entry: unknown, tier: FlowTier | undefined): unkn
 
 	const toolName = typeof msg.toolName === "string" ? msg.toolName : typeof msg.name === "string" ? msg.name : undefined;
 	const placeholder = toolName ? `[${role}: ${toolName}]` : `[${role} result omitted]`;
-	msg.content = placeholder;
+	msg.content = [{ type: "text", text: placeholder }];
 	return { ...e, message: msg };
 }
 
@@ -586,7 +606,7 @@ function isBatchSectionHeader(line: string): boolean {
 }
 
 /** Replace batch section bodies with first 3 + last 3 lines as orientation. */
-export function stripBatchBodies(text: string): string {
+function stripBatchBodies(text: string): string {
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
 	const out: string[] = [];
 	let i = 0;
@@ -640,7 +660,8 @@ function maybeStripBatchBodies(line: string): string {
 	let entry: Record<string, unknown>;
 	try {
 		entry = JSON.parse(line) as Record<string, unknown>;
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to parse JSONL line in snapshot: ${e}`);
 		return line;
 	}
 
@@ -722,7 +743,7 @@ function stripActiveToolCall(entry: unknown, activeToolCallId: string | undefine
 
 	const newContent = message.content.filter((block: any) => {
 		if (block && block.type === "toolCall") {
-			const id = block.id || block.toolCallId || block.tool_call_id;
+			const id = normalizeToolCallId(block);
 			if (id === activeToolCallId) {
 				return false;
 			}
@@ -784,20 +805,69 @@ export function parseSharedContext(snapshotJsonl: string | null): SharedContext 
 				messageCount++;
 				if (msg.role === "user") {
 					userMessageCount++;
-					if (!preview && typeof msg.content === "string") {
-						preview = msg.content;
+					if (!preview) {
+						if (typeof msg.content === "string") {
+							preview = msg.content;
+						} else if (Array.isArray(msg.content)) {
+							for (const part of msg.content) {
+								if (part && part.type === "text" && typeof part.text === "string") {
+									preview = part.text;
+									break;
+								}
+							}
+						}
 					}
 				} else if (msg.role === "assistant") {
 					assistantMessageCount++;
-					if (msg.usage && typeof msg.usage.totalTokens === "number") {
-						totalTokens = msg.usage.totalTokens;
+					const usage = entry.usage || msg.usage;
+					if (usage && typeof usage === "object") {
+						const u = usage as Record<string, unknown>;
+						const explicit =
+							typeof u.totalTokens === "number"
+								? u.totalTokens
+								: typeof u.total_tokens === "number"
+									? u.total_tokens
+									: undefined;
+						if (typeof explicit === "number" && explicit > 0) {
+							totalTokens = explicit;
+						} else {
+							const input =
+								typeof u.input === "number"
+									? u.input
+									: typeof u.prompt_tokens === "number"
+										? u.prompt_tokens
+										: 0;
+							const output =
+								typeof u.output === "number"
+									? u.output
+									: typeof u.completion_tokens === "number"
+										? u.completion_tokens
+										: 0;
+							const cacheRead =
+								typeof u.cacheRead === "number"
+									? u.cacheRead
+									: typeof u.cache_read === "number"
+										? u.cache_read
+										: 0;
+							const cacheWrite =
+								typeof u.cacheWrite === "number"
+									? u.cacheWrite
+									: typeof u.cache_write === "number"
+										? u.cache_write
+										: 0;
+							const computed = input + output + cacheRead + cacheWrite;
+							if (computed > 0) {
+								totalTokens = computed;
+							}
+						}
 					}
 				}
 				// Aggregate tool calls from any message
-				const tcs = msg.toolCalls || msg.tool_calls;
-				if (Array.isArray(tcs)) {
+				const tcs = normalizeToolCalls(msg);
+				if (tcs.length > 0) {
 					for (const tc of tcs) {
-						const name = tc?.name || tc?.function?.name;
+						const t = tc as Record<string, unknown>;
+						const name = t.name || (t.function as Record<string, unknown> | undefined)?.name;
 						if (typeof name === "string") {
 							toolCalls[name] = (toolCalls[name] || 0) + 1;
 						}
@@ -814,8 +884,8 @@ export function parseSharedContext(snapshotJsonl: string | null): SharedContext 
 					}
 				}
 			}
-		} catch {
-			// skip invalid lines
+		} catch (e) {
+			logWarn(`[pi-agent-flow] Skipping invalid JSONL line in snapshot: ${e}`);
 		}
 	}
 	if (messageCount === 0) return undefined;

@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
 import { appendDirectiveOnce, appendTextToToolResult } from "../steering/tool-utils.js";
+import { logWarn } from "../config/log.js";
 import { compressOutput } from "../batch/shell-compress.js";
 
 type TimingTier =
@@ -108,9 +109,10 @@ function readAndClearReminderFile(): string | null {
 		if (!fs.existsSync(filePath)) return null;
 		const content = fs.readFileSync(filePath, { encoding: "utf-8" }).trim();
 		// Clear the file after reading so each reminder is only injected once.
-		try { fs.writeFileSync(filePath, "", { encoding: "utf-8" }); } catch { /* best-effort */ }
+		try { fs.writeFileSync(filePath, "", { encoding: "utf-8" }); } catch (e) { logWarn(`[pi-agent-flow] Failed to clear bash reminder file ${filePath}: ${e}`); }
 		return content || null;
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to read bash reminder file ${filePath}: ${e}`);
 		return null;
 	}
 }
@@ -192,7 +194,8 @@ export function createTimedBashToolDefinition(
 	let original: any;
 	try {
 		original = createBashToolDefinition(cwd, options);
-	} catch {
+	} catch (e) {
+		logWarn(`[pi-agent-flow] Failed to create timed bash tool: ${e}`);
 		return null;
 	}
 	if (!original || typeof original.execute !== "function") {

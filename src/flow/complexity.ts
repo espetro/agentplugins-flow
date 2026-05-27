@@ -6,13 +6,13 @@
  *   - implied auditLoop (auto-review cycles for build flows)
  */
 
-export const COMPLEXITY_VALUES = ["snap", "simple", "moderate", "complex", "intricate"] as const;
+const COMPLEXITY_VALUES = ["snap", "simple", "moderate", "complex", "intricate"] as const;
 
 export type Complexity = typeof COMPLEXITY_VALUES[number];
 
 export const DEFAULT_COMPLEXITY: Complexity = "moderate";
 
-export interface ComplexityConfig {
+interface ComplexityConfig {
 	timeoutMs: number;
 	impliedAuditLoop: number;
 }

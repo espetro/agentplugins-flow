@@ -16,96 +16,66 @@ import { isFlowSuccess, isFlowError, isFlowComplete, getFlowOutput, emptyFlowUsa
 
 import { extractStructuredOutput } from "../snapshot/structured-output.js";
 
-// ~6 KB limit to keep grouped audit intent under typical prompt budget while preserving enough context for meaningful audit
-const MAX_AUDIT_OUTPUT_SLICE = 6000;
-
-import { mapFlowConcurrent, runFlow } from "./runner.js";
+import { mapFlowConcurrent } from "./runner.js";
 import { getFlowSummaryText } from "../snapshot/runner-events.js";
 import { normalizeFlowModeName, resolveFlowModelCandidates, resolveModelContextWindow, selectFlowModelStrategy, type LoadedFlowModelConfigs, type FlowModelStrategy } from "../config/config.js";
 import { getComplexityTimeoutMs, resolveComplexity, getImpliedAuditLoop, type Complexity } from "./complexity.js";
 import { setFlowComplete } from "../notify/notify-state.js";
 import { setLiveText, clearLiveText } from '../tui/scramble/index.js';
+import { publishFlowLiveText, publishFlowLiveTextAtIndex } from './flow-live.js';
 import { logWarn } from '../config/log.js';
 import { markFlowCompleted } from '../flow/index.js';
 import type { GoalContext } from '../flow/types.js';
+import {
+	preserveMetadata,
+	getFlowCycleViolations,
+	createGhostResult,
+	shouldFailover,
+	type CycleHistoryEntry,
+} from "./cycle-guard.js";
+import {
+	resolveAuditModel,
+	buildReworkIntent,
+	buildGroupAuditIntent,
+	formatPriorAuditHistory,
+	formatPriorBuildOutputs,
+} from "./audit-formatters.js";
+import { executeSingleFlow } from "./execute-single.js";
 
-/**
- * Shallow-merge helper: copies audit-loop metadata fields from `source`
- * onto `target` without mutating the target's identity reference.
- * Used whenever a fresh SingleResult overwrites a slot that may already
- * carry ping-pong or parent-type metadata.
- */
-export function preserveMetadata(target: SingleResult, source?: SingleResult): void {
-	if (source?.pingPongMeta) {
-		target.pingPongMeta = source.pingPongMeta;
-	}
-	if (source?.auditParentType) {
-		target.auditParentType = source.auditParentType;
-	}
-	if (source?.auditLoopGroupId !== undefined) {
-		target.auditLoopGroupId = source.auditLoopGroupId;
-	}
-}
+export { preserveMetadata, createGhostResult, shouldFailover, type CycleHistoryEntry } from "./cycle-guard.js";
+export { buildReworkIntent, buildGroupAuditIntent, formatPriorAuditHistory, formatPriorBuildOutputs } from "./audit-formatters.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface FlowExecutorDeps {
-	/** All discovered flow configs. */
 	flows: FlowConfig[];
-	/** Current transition depth. */
 	currentDepth: number;
-	/** Maximum transition depth. */
 	maxDepth: number;
-	/** Ancestor flow stack (names). */
 	ancestorFlowStack: string[];
-	/** Whether cycle prevention is enabled. */
 	preventCycles: boolean;
-	/** Whether to use optimized tool list. */
 	toolOptimize: boolean;
-	/** Whether to inject structured output instructions. */
 	structuredOutput: boolean;
-	/** Working directory. */
 	cwd: string;
-	/** Loaded flow model configs. */
 	loadedFlowModelConfigs: LoadedFlowModelConfigs;
-	/** Max concurrency for parallel flow execution. */
 	maxConcurrency: number;
-
-	/** Default child-flow complexity. */
 	defaultComplexity: Complexity;
-	/** Abort signal. */
 	signal?: AbortSignal;
-	/** Streaming update callback. */
 	onUpdate?: (result: import("@earendil-works/pi-agent-core").AgentToolResult<FlowDetails>) => void;
-	/** Factory to wrap results into FlowDetails. */
 	makeDetails: (results: SingleResult[]) => FlowDetails;
-	/** Get a CLI flag value. */
 	getFlag: (name: string) => unknown;
-	/** Inherited CLI args for tier overrides. */
 	tierOverrideResolver: (tier: "lite" | "flash" | "full") => string | undefined;
-	/** Inherited fallback model. */
 	fallbackModel?: string;
-	/** Fork session snapshot JSONL. */
 	forkSessionSnapshotJsonl: string | null;
-	/** Project flows directory. */
 	projectFlowsDir: string | null;
-	/** Session manager for fork snapshot and session identification. */
 	sessionManager: { getHeader: () => unknown; getBranch: () => unknown[]; getSessionId: () => string };
-	/** Whether UI is available for confirmation. */
 	hasUI: boolean;
-	/** UI confirmation callback. */
 	uiConfirm: (title: string, body: string) => Promise<boolean>;
-	/** Telemetry callback. */
 	onFlowMetrics?: (metrics: FlowMetrics) => void;
-	/** Whether to prompt the user before running project-local flows. Default: true. */
 	confirmProjectFlows?: boolean;
-	/** Optional callback invoked after all flows complete to record goal usage. */
 	goalContinuationCallback?: (results: SingleResult[]) => Promise<void>;
-	/** Optional active goal context to inject into child flow prompts. */
 	goalContext?: GoalContext;
-	/** Whether to write the full child flow activation prompt to a temp file on every spawn. */
 	debugMode: boolean;
 }
 
@@ -116,9 +86,7 @@ export interface ExecuteFlowParams {
 	acceptance?: string;
 	cwd?: string;
 	complexity: Complexity;
-	/** Explicit tool list for the child process. Overrides flow frontmatter. */
 	_childTools?: string[];
-	/** Pre-dispatch results — tool outputs executed by the parent and injected into the child's prompt. */
 	preDispatchResults?: string;
 }
 
@@ -132,15 +100,6 @@ export interface ExecuteFlowResult {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getFlowCycleViolations(
-	requestedNames: Set<string>,
-	ancestorFlowStack: string[],
-): string[] {
-	if (requestedNames.size === 0 || ancestorFlowStack.length === 0) return [];
-	const stackSet = new Set(ancestorFlowStack);
-	return Array.from(requestedNames).filter((name) => stackSet.has(name));
-}
 
 function getRequestedProjectFlows(
 	flows: FlowConfig[],
@@ -176,343 +135,11 @@ async function confirmProjectFlowsIfNeeded(
 	};
 }
 
-function shouldFailover(result: SingleResult): boolean {
-	if (result.stopReason === "aborted") return false;
-	const text = `${result.errorMessage ?? ""}\n${result.stderr ?? ""}`.toLowerCase();
-	if (!text.trim()) return false;
-	if (text.includes("permission") || text.includes("invalid tool") || text.includes("bad settings")) {
-		return false;
-	}
-	if (result.exitCode > 0) return true;
-	// Some child runs log HTTP 400 / "Param Incorrect" to stderr while exiting 0
-	// without completing a turn — treat as retryable for model failover.
-	if (!isFlowComplete(result) && (text.includes("400") && text.includes("param"))) {
-		return true;
-	}
-	return false;
-}
-
-export function createGhostResult(type: string, intent: string, aim: string, model?: string, maxContextTokens?: number): SingleResult {
-	return {
-		type,
-		agentSource: "unknown",
-		intent,
-		aim,
-		exitCode: -1,
-		messages: [],
-		stderr: "",
-		usage: emptyFlowUsage(),
-		...(model ? { model } : {}),
-		...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
-	};
-}
-
-export function resolveAuditModel(
-	flows: FlowConfig[],
-	tierOverrideResolver: (tier: "lite" | "flash" | "full") => string | undefined,
-	strategy: FlowModelStrategy,
-	fallbackModel?: string,
-): { model?: string; maxContextTokens?: number } {
-	const auditFlow = flows.find((f) => f.name === "audit");
-	const tier = auditFlow?.tier ?? "flash";
-	const { candidates } = resolveFlowModelCandidates({
-		tier,
-		flowModel: auditFlow?.model,
-		cliTierOverride: tierOverrideResolver(tier),
-		strategy,
-		fallbackModel,
-	});
-	const model = candidates[0];
-	const maxContextTokens = resolveModelContextWindow(model);
-	return { model, maxContextTokens };
-}
-
-export function buildReworkIntent(
-	originalIntent: string,
-	buildAim: string,
-	acceptance: string | undefined,
-	auditFeedback: string,
-	cycleHistory?: CycleHistoryEntry[],
-): string {
-	const parts = [
-		`## Original Intent`,
-		originalIntent,
-		``,
-		`## Build Aim`,
-		buildAim,
-		``,
-	];
-	if (acceptance) {
-		parts.push(`## Acceptance Criteria`, acceptance, ``);
-	}
-	parts.push(
-		`## Audit Feedback`,
-		auditFeedback,
-		``,
-	);
-	if (cycleHistory && cycleHistory.length > 0) {
-		// Show all prior build outputs (deep-loop: every cycle, not just latest)
-		const buildOutputs = formatPriorBuildOutputs(cycleHistory);
-		if (buildOutputs) {
-			parts.push(buildOutputs, ``);
-		}
-		// Show all prior audit verdicts/feedbacks
-		const auditHistory = formatPriorAuditHistory(cycleHistory);
-		if (auditHistory) {
-			parts.push(auditHistory, ``);
-		}
-	}
-	parts.push(
-		`Fix the above issues, preserving the Original Intent and incorporating all prior cycle feedback.`,
-	);
-	return parts.join("\n");
-}
-
-async function executeSingleFlow(
-	deps: FlowExecutorDeps,
-	item: ExecuteFlowParams,
-	allResults: SingleResult[],
-	resultIndex: number,
-	toolCallId: string,
-	emitProgress: (streamingText?: string) => void,
-	selectedFlowModelConfig: LoadedFlowModelConfigs,
-): Promise<SingleResult> {
-	const {
-		flows, currentDepth, maxDepth, ancestorFlowStack, preventCycles,
-		toolOptimize, structuredOutput, cwd,
-		defaultComplexity, signal, makeDetails,
-		tierOverrideResolver, fallbackModel, forkSessionSnapshotJsonl,
-		onFlowMetrics, goalContext,
-	} = deps;
-
-	const normalizedType = item.type.toLowerCase();
-	const complexity = resolveComplexity(item.complexity, defaultComplexity);
-	const lookupName = normalizedType;
-	const targetFlow = flows.find((f) => f.name === lookupName);
-	const effectiveMaxDepth =
-		targetFlow?.maxDepth !== undefined ? targetFlow.maxDepth : maxDepth;
-
-	const shouldInheritContext = targetFlow?.inheritContext !== false;
-	const tier = targetFlow?.tier ?? "flash";
-	const { candidates } = resolveFlowModelCandidates({
-		tier,
-		flowModel: targetFlow?.model,
-		cliTierOverride: tierOverrideResolver(tier),
-		strategy: selectedFlowModelConfig.strategy,
-		fallbackModel,
-	});
-	const attemptModels = candidates.length > 0 ? candidates : [undefined];
-	const attemptedModels: string[] = [];
-	let result = allResults[resultIndex];
-	const flowStart = Date.now();
-
-	for (let attempt = 0; attempt < attemptModels.length; attempt++) {
-		const candidateModel = attemptModels[attempt];
-		if (candidateModel) attemptedModels.push(candidateModel);
-		const attemptStartMs = Date.now();
-		const attemptTimeoutMs = getComplexityTimeoutMs(complexity);
-		const maxContextTokens = resolveModelContextWindow(candidateModel);
-		const previous = allResults[resultIndex];
-		allResults[resultIndex] = {
-			type: normalizedType,
-			agentSource: targetFlow?.source ?? "unknown",
-			intent: item.intent,
-			aim: item.aim,
-			exitCode: -1,
-			messages: [],
-			stderr: "",
-			usage: emptyFlowUsage(),
-			model: candidateModel,
-			startedAtMs: attemptStartMs,
-			deadlineAtMs: attemptStartMs + attemptTimeoutMs,
-			...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
-		};
-		preserveMetadata(allResults[resultIndex], previous);
-		emitProgress();
-		result = await runFlow({
-			cwd,
-			flows,
-			flowName: lookupName,
-			intent: item.intent,
-			aim: item.aim,
-			acceptance: item.acceptance,
-			taskCwd: item.cwd,
-			forkSessionSnapshotJsonl: shouldInheritContext ? forkSessionSnapshotJsonl : null,
-			parentDepth: currentDepth,
-			parentFlowStack: ancestorFlowStack,
-			maxDepth: effectiveMaxDepth,
-			preventCycles,
-			toolOptimize,
-			structuredOutput,
-			complexity,
-			model: candidateModel,
-			maxContextTokens,
-			goalContext,
-			debugMode: deps.debugMode,
-			tools: item._childTools,
-			preDispatchResults: item.preDispatchResults,
-			signal,
-			onUpdate: (partial) => {
-				if (partial.details?.results[0]) {
-					const previous = allResults[resultIndex];
-					allResults[resultIndex] = partial.details.results[0];
-					preserveMetadata(allResults[resultIndex], previous);
-					const flowText = partial.content?.[0]?.text;
-					if (flowText !== undefined) {
-						setLiveText(`${toolCallId || 'collapsed'}#${resultIndex}`, flowText);
-						setLiveText(`collapsed#${resultIndex}`, flowText);
-					}
-					emitProgress(partial.content?.[0]?.text);
-				}
-			},
-			makeDetails,
-		});
-		const previous2 = allResults[resultIndex];
-		allResults[resultIndex] = result;
-		preserveMetadata(allResults[resultIndex], previous2);
-		emitProgress();
-		if (isFlowSuccess(result) || signal?.aborted) break;
-		if (attempt < attemptModels.length - 1 && shouldFailover(result)) {
-			continue;
-		}
-		break;
-	}
-
-	if (result && !isFlowSuccess(result) && attemptedModels.length > 1) {
-		const summary = `Model failover attempts: ${attemptedModels.join(" -> ")}`;
-		const baseStderr = result.stderr.trim();
-		result.stderr = baseStderr ? `${baseStderr}\n\n${summary}` : summary;
-		const previous3 = allResults[resultIndex];
-		allResults[resultIndex] = result;
-		preserveMetadata(allResults[resultIndex], previous3);
-		emitProgress();
-	}
-
-	if (onFlowMetrics) {
-		const flowDuration = Date.now() - flowStart;
-		onFlowMetrics({
-			type: normalizedType,
-			durationMs: flowDuration,
-			exitCode: result.exitCode,
-			success: isFlowSuccess(result),
-			model: result.model,
-			failoverCount: Math.max(0, attemptedModels.length - 1),
-			usage: result.usage,
-			source: result.agentSource,
-			depth: currentDepth + 1,
-		});
-	}
-
-	return result;
-}
-
-export interface CycleHistoryEntry {
-	cycle: number;
-	buildOutputs: string[];
-	verdict: string;
-	feedback?: string;
-	buildFeedbacks?: (string | null)[];
-}
-
-export function formatPriorAuditHistory(entries: CycleHistoryEntry[]): string {
-	if (entries.length === 0) return "";
-
-	const lines = entries.map((e) => {
-		const parts = [
-			`**Cycle ${e.cycle + 1}**`,
-			`- Verdict: ${e.verdict}`,
-		];
-		if (e.feedback) {
-			parts.push(`- Feedback: ${e.feedback.slice(0, 2000)}`);
-		}
-		if (e.buildFeedbacks && e.buildFeedbacks.length > 0) {
-			parts.push(`- Per-Build Feedback:`);
-			e.buildFeedbacks.forEach((fb, i) => {
-				if (fb) {
-					parts.push(`  - Build ${i + 1}: ${fb.slice(0, 1500)}`);
-				} else {
-					parts.push(`  - Build ${i + 1}: pass`);
-				}
-			});
-		}
-		return parts.join("\n");
-	});
-
-	return `## Prior Audit History\n\n${lines.join("\n\n")}`;
-}
-
-export function formatPriorBuildOutputs(entries: CycleHistoryEntry[]): string {
-	if (entries.length === 0) return "";
-
-	const lines = entries.map((e) => {
-		const parts = [`**Cycle ${e.cycle + 1}**`];
-		if (e.buildOutputs.length > 0) {
-			parts.push(`- Build Outputs:`);
-			e.buildOutputs.forEach((bo, i) => {
-				parts.push(`  - Build ${i + 1}: ${bo.slice(0, 3000)}`);
-			});
-		}
-		return parts.join("\n");
-	});
-
-	return `## Prior Build Outputs\n\n${lines.join("\n\n")}`;
-}
-
-export function buildGroupAuditIntent(
-	builds: Array<{ aim: string; intent: string; acceptance?: string; output: string }>,
-	cycleHistory?: CycleHistoryEntry[],
-): string {
-	const sections = builds.map((b, i) => {
-		const section = [
-			`### Build ${i + 1}`,
-			``,
-			`## Build Aim`,
-			b.aim,
-			``,
-		];
-		if (b.acceptance) {
-			section.push(`## Acceptance Criteria`, b.acceptance, ``);
-		}
-		if (b.intent) {
-			section.push(`## Build Intent`, b.intent, ``);
-		}
-		section.push(
-			`## Build Output`,
-			b.output.slice(0, MAX_AUDIT_OUTPUT_SLICE),
-		);
-		return section.join("\n");
-	});
-
-	const parts = [
-		...sections,
-		``,
-	];
-
-	if (cycleHistory && cycleHistory.length > 0) {
-		const auditHistory = formatPriorAuditHistory(cycleHistory);
-		if (auditHistory) {
-			parts.push(auditHistory, ``);
-		}
-		const buildOutputs = formatPriorBuildOutputs(cycleHistory);
-		if (buildOutputs) {
-			parts.push(buildOutputs, ``);
-		}
-	}
-
-	parts.push(
-		`Check for: security issues, correctness, completeness, edge cases, and any overlooked requirements per build. For each build, indicate whether it passes or needs rework with specific actionable feedback.`,
-	);
-
-	return parts.join("\n\n");
-}
-
 interface PingPongGroup {
   items: ExecuteFlowParams[];
   auditLoop: number;
   buildIndices: number[];
   auditIndex: number;
-  /** Explicit group ID so executeGroupedPingPong can stamp auditLoopGroupId on
-   *  re-created ghosts (it overwrites the pre-allocated ghosts from executeFlows). */
   groupId: number;
 }
 
@@ -531,8 +158,6 @@ async function executeGroupedPingPong(
   const cycleHistory: CycleHistoryEntry[] = [];
   const auditFeedbacks: (string | null)[] = new Array(items.length).fill(null);
 
-  // Initialize all slots (re-creates ghosts; must stamp auditLoopGroupId
-  // because executeFlows pre-allocation gets overwritten here).
   for (let i = 0; i < items.length; i++) {
     allResults[buildIndices[i]] = createGhostResult(items[i].type, items[i].intent, items[i].aim);
     allResults[buildIndices[i]].status = "running";
@@ -549,7 +174,6 @@ async function executeGroupedPingPong(
   const buildResults: SingleResult[] = new Array(items.length);
 
   while (cycle < maxCycles) {
-    // ─── Phase A: Run all builds in parallel ───
     for (let i = 0; i < items.length; i++) {
       allResults[buildIndices[i]].status = "running";
       allResults[buildIndices[i]].exitCode = -1;
@@ -564,7 +188,6 @@ async function executeGroupedPingPong(
     setLiveText(`collapsed#${auditIndex}`, "[awaiting...]");
     emitProgress();
 
-    // Run all builds in parallel
     const buildPromises = items.map((item, i) => {
       const buildInput = cycle > 0
         ? buildReworkIntent(item.intent, item.aim, item.acceptance, auditFeedbacks[i] ?? "No issues found.", cycleHistory)
@@ -585,7 +208,6 @@ async function executeGroupedPingPong(
     }
     emitProgress();
 
-    // Check if any build failed
     const anyBuildFailed = buildResults.some(r => !isFlowSuccess(r));
     if (anyBuildFailed) {
       const { model: skipAuditModel, maxContextTokens: skipAuditMaxCtx } = resolveAuditModel(deps.flows, deps.tierOverrideResolver, selectedFlowModelConfig.strategy, deps.fallbackModel);
@@ -601,7 +223,6 @@ async function executeGroupedPingPong(
       break;
     }
 
-    // ─── Phase B: Run ONE audit that reviews all builds ───
     for (let i = 0; i < items.length; i++) {
       allResults[buildIndices[i]].status = "awaiting";
       clearLiveText(`${key}#${buildIndices[i]}`);
@@ -635,7 +256,6 @@ async function executeGroupedPingPong(
     auditResult.auditParentType = items[0].type;
     allResults[auditIndex] = auditResult;
 
-    // Parse per-build verdicts
     const perBuildVerdicts = auditResult.structuredOutput?.builds;
     const topLevelVerdict = auditResult.structuredOutput?.verdict ?? "pass";
     const topLevelFeedback = auditResult.structuredOutput?.feedback;
@@ -653,7 +273,6 @@ async function executeGroupedPingPong(
         }
       }
     } else {
-      // Fallback: top-level verdict applies to all builds
       if (topLevelVerdict === "rework") {
         for (let i = 0; i < items.length; i++) {
           auditFeedbacks[i] = topLevelFeedback ?? "Fix issues found in audit.";
@@ -690,14 +309,12 @@ async function executeGroupedPingPong(
     }
 
     if (cycle + 1 >= maxCycles) {
-      break; // Loop exhausted
+      break;
     }
 
     cycle++;
-    // Continue loop — builds needing rework will re-run
   }
 
-  // Finalize: set real exit codes
   for (let i = 0; i < items.length; i++) {
     allResults[buildIndices[i]].exitCode = isFlowSuccess(buildResults[i]) ? 0 : (buildResults[i].exitCode > 0 ? buildResults[i].exitCode : 1);
     allResults[buildIndices[i]].status = isFlowSuccess(buildResults[i]) ? "done" : "error";
@@ -709,12 +326,19 @@ async function executeGroupedPingPong(
     allResults[auditIndex].status = "done";
   }
 
-  // Populate pingPongMeta on each build result
   for (let i = 0; i < items.length; i++) {
     allResults[buildIndices[i]].pingPongMeta = {
       cycles: cycle + 1,
       verdicts: verdictHistory,
       finalVerdict: allResults[auditIndex].structuredOutput?.verdict ?? (allResults[auditIndex].status === "skipped" ? "fail" : "pass"),
+    };
+  }
+
+  if (allResults[auditIndex].status !== "skipped") {
+    allResults[auditIndex].pingPongMeta = {
+      cycles: cycle + 1,
+      verdicts: verdictHistory,
+      finalVerdict: allResults[auditIndex].structuredOutput?.verdict ?? "pass",
     };
   }
 
@@ -727,10 +351,6 @@ async function executeGroupedPingPong(
 // FlowExecutor
 // ---------------------------------------------------------------------------
 
-/**
- * Execute a set of flow tasks with full orchestration: cycle detection,
- * project confirmation, parallel execution with model failover, and telemetry.
- */
 export async function executeFlows(
 	deps: FlowExecutorDeps,
 	params: ExecuteFlowParams[],
@@ -749,7 +369,6 @@ export async function executeFlows(
 
 	const requested = new Set<string>(params.map((f) => f.type.toLowerCase()));
 
-	// Cycle check
 	if (preventCycles) {
 		const violations = getFlowCycleViolations(requested, ancestorFlowStack);
 		if (violations.length > 0) {
@@ -765,7 +384,6 @@ export async function executeFlows(
 		}
 	}
 
-	// Project flow confirmation
 	const projectFlows = getRequestedProjectFlows(flows, requested);
 	if (projectFlows.length > 0 && confirmProjectFlows !== false) {
 		const { ok, blocked } = await confirmProjectFlowsIfNeeded(projectFlows, projectFlowsDir, hasUI, uiConfirm);
@@ -778,7 +396,6 @@ export async function executeFlows(
 		}
 	}
 
-	// Resolve model strategy
 	const cliFlowMode = normalizeFlowModeName(getFlag("flow-mode"));
 	const cliFlowModelConfig = normalizeFlowModeName(getFlag("flow-model-config"));
 	if (cliFlowMode !== undefined && cliFlowModelConfig !== undefined && cliFlowMode !== cliFlowModelConfig) {
@@ -791,12 +408,10 @@ export async function executeFlows(
 		cliFlowMode ?? cliFlowModelConfig ?? loadedFlowModelConfigs.selectedName,
 	);
 
-	// Partition params into regular and grouped ping-pong flows
 	const regularParams: ExecuteFlowParams[] = [];
 	const regularIndices: number[] = [];
 	const groups: PingPongGroup[] = [];
 
-	// Compute effective audit loop per build = max(explicit override, complexity-implied)
 	const effectiveAuditLoops = params.map((p) => {
 		if (p.type.toLowerCase() === "build") {
 			return Math.max(auditLoop ?? 0, getImpliedAuditLoop(p.complexity));
@@ -825,8 +440,8 @@ export async function executeFlows(
 					items: [params[i]],
 					auditLoop: effectiveAuditLoops[i],
 					buildIndices: [buildIndex],
-					auditIndex: -1, // placeholder; assigned after all builds
-					groupId: -1,   // placeholder; set after auditIndex is assigned
+					auditIndex: -1,
+					groupId: -1,
 				};
 				groups.push(buildGroup!);
 			}
@@ -834,19 +449,16 @@ export async function executeFlows(
 			regularIndices.push(nextIndex);
 			regularParams.push(params[i]);
 			nextIndex++;
-			// Non-build param breaks contiguity — reset so later builds start a new group
 			buildGroup = undefined;
 		}
 	}
 
-	// Assign audit indices after all builds are allocated
 	let groupCounter = 0;
 	for (const group of groups) {
 		group.auditIndex = nextIndex++;
 		group.groupId = groupCounter++;
 	}
 
-	// Pre-allocate results array
 	const allResults: SingleResult[] = new Array(nextIndex);
 	for (let i = 0; i < regularParams.length; i++) {
 		const idx = regularIndices[i];
@@ -877,7 +489,6 @@ export async function executeFlows(
 		allResults[group.auditIndex].auditLoopGroupId = group.groupId;
 	}
 
-	// Streaming progress
 	let lastEmittedSignature: string | undefined;
 	const emitProgress = (streamingText?: string) => {
 		const activeStreamingText = allResults
@@ -887,19 +498,24 @@ export async function executeFlows(
 			.at(-1);
 		const text = streamingText ?? activeStreamingText ?? "";
 
-		// Update live text store FIRST — always
-		const key = toolCallId || 'collapsed';
-		setLiveText(key, text);
-		setLiveText('collapsed', text);
-		for (let i = 0; i < allResults.length; i++) {
-			const r = allResults[i];
-			if (r.streamingText) {
-				setLiveText(`${key}#${i}`, r.streamingText);
-				setLiveText(`collapsed#${i}`, r.streamingText);
+		if (toolCallId) {
+			publishFlowLiveText(toolCallId, text);
+			for (let i = 0; i < allResults.length; i++) {
+				const r = allResults[i];
+				if (r.streamingText) {
+					publishFlowLiveTextAtIndex(toolCallId, i, r.streamingText);
+				}
+			}
+		} else {
+			setLiveText("collapsed", text);
+			for (let i = 0; i < allResults.length; i++) {
+				const r = allResults[i];
+				if (r.streamingText) {
+					setLiveText(`collapsed#${i}`, r.streamingText);
+				}
 			}
 		}
 
-		// Now check onUpdate for host callback
 		if (!onUpdate) return;
 
 		const signature =
@@ -923,8 +539,6 @@ export async function executeFlows(
 			});
 		} catch (err) {
 			if (err instanceof Error && err.message.includes("outside active run")) {
-				// Agent listener invoked from async callback (child stdout handler)
-				// after the active run context ended. Safe to drop this update.
 				return;
 			}
 			throw err;
@@ -933,7 +547,6 @@ export async function executeFlows(
 
 	emitProgress();
 
-	// Execute all flows
 	const executionStart = Date.now();
 	const regularPromise = regularParams.length > 0
 		? mapFlowConcurrent(regularParams, maxConcurrency, async (item, localIndex) => {
@@ -950,7 +563,6 @@ export async function executeFlows(
 
 	const results = [...allResults];
 
-	// Record last flow completion for dynamic notifications
 	const lastResult = results[results.length - 1];
 	if (lastResult) {
 		setFlowComplete(
@@ -961,16 +573,12 @@ export async function executeFlows(
 		);
 	}
 
-	// Mark flow completion for the continuation hold — gives the user
-	// time to read the result before the next flow auto-spawns.
 	markFlowCompleted(deps.sessionManager.getSessionId());
 
-	// Goal continuation callback
 	if (deps.goalContinuationCallback) {
 		await deps.goalContinuationCallback(results);
 	}
 
-	// Build tool result
 	const successCount = results.filter((r) => isFlowSuccess(r)).length;
 	const flowReports = results.map((r) => {
 		const output = getFlowSummaryText(r);

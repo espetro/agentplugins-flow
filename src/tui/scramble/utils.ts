@@ -54,14 +54,6 @@ export function stripDecorativeIcons(text: string): string {
 	return text.replace(DECORATIVE_ICON_RE, '');
 }
 
-export function randomizedCenter(length: number, jitterRatio?: number, rng?: FastRNG): number {
-	const min = Math.max(0, Math.floor(length * 0.2));
-	const max = Math.min(length - 1, Math.floor(length * 0.8));
-	if (max <= min) return Math.floor(length / 2);
-	const range = max - min + 1;
-	const offset = rng ? rng.nextInt(range) : Math.floor(Math.random() * range);
-	return min + offset;
-}
 
 // ---------------------------------------------------------------------------
 // Unified apply function (glitch)

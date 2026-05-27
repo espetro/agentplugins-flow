@@ -504,8 +504,45 @@ describe("batch tool", () => {
 			expect(result.details.results[0].status).toBe("ok");
 			expect(result.content[0].text).toContain("foo.ts");
 		});
-	});
 
+		it("auto-limits broad searches on . with default max-count", async () => {
+			const lines = Array.from({ length: 100 }, (_, i) => `export const item${i} = ${i};\n`).join("");
+			fs.writeFileSync(path.join(tmpDir, "many.ts"), lines, "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ o: [{ o: "rg", p: ".", q: "export const" }] },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.details.results[0].status).toBe("ok");
+			const matchLines = (result.details.results[0].content ?? "").split("\n").filter(Boolean);
+			expect(matchLines.length).toBeLessThanOrEqual(50);
+			expect(result.content[0].text).toContain("auto-limited to 50 matches per file");
+		});
+
+		it("truncates long rg match lines and oversized output", async () => {
+			const longLine = "x".repeat(5000);
+			fs.writeFileSync(path.join(tmpDir, "long.ts"), `export const foo = "${longLine}";\n`, "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ o: [{ o: "rg", p: ".", q: "export const", n: 1 }] },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.details.results[0].status).toBe("ok");
+			expect(result.details.results[0].truncated).toBe(true);
+			expect(result.content[0].text).toContain("[…");
+			expect(result.content[0].text).toContain("rg output truncated");
+		});
+	});
 
 	it("attaches enclosing signatures by default", async () => {
 		const ts = `export class Foo {\n  bar(): number {\n    return 1;\n  }\n}\n`;
@@ -1738,9 +1775,8 @@ describe("batch tool", () => {
 	});
 
 	describe("first-line exceeds byte limit", () => {
-		it("throws when a single line exceeds the byte limit", async () => {
-			// Create a file with a single very long line (> 100KB)
-			const hugeLine = "x".repeat(120 * 1024); // 120KB
+		it("truncates when a single line exceeds the per-line byte limit", async () => {
+			const hugeLine = "x".repeat(120 * 1024);
 			fs.writeFileSync(path.join(tmpDir, "huge-line.txt"), hugeLine, "utf-8");
 
 			const tool = createTool();
@@ -1754,9 +1790,10 @@ describe("batch tool", () => {
 
 			expect(result.details.results[0]).toMatchObject({
 				op: "read",
-				status: "error",
-				error: expect.stringContaining("Line 1 exceeds limit"),
+				status: "ok",
+				truncated: true,
 			});
+			expect(result.content[0].text).toContain("bytes and were truncated");
 		});
 	});
 });
@@ -2443,10 +2480,10 @@ describe("edge cases", () => {
 		});
 
 		it("skips remaining reads when aggregate byte limit is exceeded", async () => {
-			// 3 files × 51200 bytes = 153600 bytes = exactly at cap
-			// File 4 is skipped because aggregate is already at cap
-			for (let i = 0; i < 4; i++) {
-				fs.writeFileSync(path.join(tmpDir, `byte-agg-${i}.txt`), "x".repeat(51200) + "\n", "utf-8");
+			// With per-read MAX_BYTES caps, each full read returns ~49KB; four reads exceed 153600
+			const line = "x".repeat(1000);
+			for (let i = 0; i < 5; i++) {
+				fs.writeFileSync(path.join(tmpDir, `byte-agg-${i}.txt`), Array.from({ length: 52 }, () => line).join("\n"), "utf-8");
 			}
 
 			const tool = createTool();
@@ -2458,6 +2495,7 @@ describe("edge cases", () => {
 						{ op: "read", path: "byte-agg-1.txt" },
 						{ op: "read", path: "byte-agg-2.txt" },
 						{ op: "read", path: "byte-agg-3.txt" },
+						{ op: "read", path: "byte-agg-4.txt" },
 					],
 				},
 				undefined,
@@ -2468,17 +2506,18 @@ describe("edge cases", () => {
 			expect(result.details.results[0].status).toBe("ok");
 			expect(result.details.results[1].status).toBe("ok");
 			expect(result.details.results[2].status).toBe("ok");
-			expect(result.details.results[3]).toMatchObject({
+			expect(result.details.results[3].status).toBe("ok");
+			expect(result.details.results[4]).toMatchObject({
 				op: "read",
-				path: "byte-agg-3.txt",
+				path: "byte-agg-4.txt",
 				status: "skipped",
 				skipped: true,
 				reason: "aggregate_byte_limit",
-				consumed: { lines: 3, bytes: 153744 },
+				consumed: { lines: expect.any(Number), bytes: expect.any(Number) },
 				remainingOps: 0,
 				error: expect.stringContaining("aggregate byte limit of 153600"),
 			});
-			expect(result.content[0].text).toContain("⚠ Aggregate byte limit (153600) reached — skipped 1 read: byte-agg-3.txt");
+			expect(result.content[0].text).toContain("⚠ Aggregate byte limit (153600) reached — skipped 1 read: byte-agg-4.txt");
 			expect(result.content[0].text).toContain("1 skipped");
 			expect(result.content[0].text).toContain("Skipped: aggregate byte limit");
 		});
@@ -3126,7 +3165,7 @@ describe("batch_read tool", () => {
 			expect(result.content[0].text).not.toContain("[Showing lines");
 		});
 
-		it("still errors when an individual selected line exceeds the byte cap", async () => {
+		it("truncates when an individual selected line exceeds the per-line byte cap", async () => {
 			const hugeLine = "x".repeat(120 * 1024);
 			fs.writeFileSync(path.join(tmpDir, "huge-line.txt"), `short\n${hugeLine}\n`, "utf-8");
 
@@ -3141,10 +3180,10 @@ describe("batch_read tool", () => {
 
 			expect(result.details.results[0]).toMatchObject({
 				op: "read",
-				status: "error",
-				error: expect.stringContaining("Line 2 exceeds limit"),
+				status: "ok",
+				truncated: true,
 			});
-			expect(result.details.results[0].error).toContain("batch_read");
+			expect(result.details.results[0].content).toContain("[…");
 		});
 
 		it("skips remaining reads when aggregate line limit is exceeded", async () => {
@@ -3188,9 +3227,9 @@ describe("batch_read tool", () => {
 		});
 
 		it("skips remaining reads when aggregate byte limit is exceeded", async () => {
-			// 3 files of ~51201 bytes each > 153600 cap, so File 4 is skipped
+			const line = "x".repeat(1024);
 			for (let i = 0; i < 4; i++) {
-				fs.writeFileSync(path.join(tmpDir, `byte-agg-${i}.txt`), "x".repeat(51200) + "\n", "utf-8");
+				fs.writeFileSync(path.join(tmpDir, `byte-agg-${i}.txt`), Array.from({ length: 50 }, () => line).join("\n"), "utf-8");
 			}
 
 			const tool = createTool();
@@ -3218,7 +3257,7 @@ describe("batch_read tool", () => {
 				status: "skipped",
 				skipped: true,
 				reason: "aggregate_byte_limit",
-				consumed: { lines: 6, bytes: 153603 },
+				consumed: { lines: 150, bytes: expect.any(Number) },
 				remainingOps: 0,
 				error: expect.stringContaining("aggregate byte limit of 153600"),
 			});

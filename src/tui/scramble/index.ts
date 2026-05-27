@@ -1,11 +1,44 @@
 // Re-exports preserving the public API of the former src/tui/scramble.ts
 export {
-	scrambleManager,
 	ScrambleStateManager,
-	runScrambleTimer,
-	DynamicScrambleText,
-	setAnimationConfig,
 } from './manager.js';
+
+export {
+	scrambleManager,
+} from './singleton.js';
+
+export {
+	runScrambleTimer,
+	setAnimationConfig,
+} from './timer.js';
+
+export {
+	DynamicScrambleText,
+} from './dynamic-text.js';
+
+export {
+	createLineState,
+	createValueFlashState,
+	processLine,
+} from './line-state.js';
+
+export {
+	isLineAnimating,
+	hasActiveAnimations,
+	hasAnyActiveAnimations,
+} from './animation-status.js';
+
+export {
+	setupValueFlash,
+	renderValueFlash,
+	updateValueKpi,
+	updateHeaderMetricImpl,
+} from './value-flash.js';
+
+export {
+	sweepCompletedEntries,
+	completeFlowImpl,
+} from './lifecycle.js';
 
 export {
 	getLiveText,
@@ -36,7 +69,6 @@ export {
 	detectDirection,
 } from './algorithm.js';
 
-export type { TransitionDirection } from './algorithm.js';
 
 export {
 	hashNoise,
