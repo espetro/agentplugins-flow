@@ -12,7 +12,7 @@
 |----------|-------|
 | **Docs** | [`docs/autonomous-pi-testing.md`](docs/autonomous-pi-testing.md) — scripted Pi sessions over PTY • [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — configuration reference (flags, env vars, settings) • [`docs/FLOWS.md`](docs/FLOWS.md) — bundled flows, session modes, timeout behavior, flow loop & warp • [`docs/TOOLS.md`](docs/TOOLS.md) — tool reference (batch, web, ask_user) • [`docs/CUSTOM-FLOWS.md`](docs/CUSTOM-FLOWS.md) — custom flow creation and front-matter • [`docs/STRUCTURED-OUTPUT.md`](docs/STRUCTURED-OUTPUT.md) — structured JSON output schema • [`docs/NOTIFICATIONS.md`](docs/NOTIFICATIONS.md) — terminal and desktop notification config • [`docs/SNAPSHOT-INSTRUMENTATION.md`](docs/SNAPSHOT-INSTRUMENTATION.md) — dump capture, inspection, and verification guide • [`SHARED-CONTEXT-CORE2.md`](SHARED-CONTEXT-CORE2.md) — core-2 snapshot pipeline specification (verbatim-preserving) |
 | **Dump Analysis** | [`docs/dump-artifacts/README.md`](docs/dump-artifacts/README.md) — catalog of representative dump files |
-| **Workflows** | [`ci.yml`](.github/workflows/ci.yml) — lint + test on PR/push • [`bump-version.yml`](.github/workflows/bump-version.yml) — version bump → commit → tag → push • [`publish.yml`](.github/workflows/publish.yml) — npm publish with provenance |
+| **Workflows** | [`ci.yml`](.github/workflows/ci.yml) — lint + test on PR/push • [`bump-version.yml`](.github/workflows/bump-version.yml) — version bump → commit → tag → push → publish • [`publish.yml`](.github/workflows/publish.yml) — standalone manual fallback |
 | **Scripts** | [`dev-start.sh`](scripts/dev-start.sh) — start `pi` with `PI_FLOW_DUMP_SNAPSHOT` preset • [`switch.sh`](scripts/switch.sh) — toggle local ↔ remote install • [`sync-dumps.sh`](scripts/sync-dumps.sh) — sync `/tmp` dumps into `dump-artifacts/` • [`example-autonomous-pi.expect`](scripts/example-autonomous-pi.expect) — PTY test harness template • [`./tmp/validate-context-pipeline.js`](./tmp/validate-context-pipeline.js) — synthetic context pipeline validator • [`./tmp/analyze-dump.js`](./tmp/analyze-dump.js) — real dump analyzer |
 | **Key Source** | `src/index.ts` — entrypoint • `src/flow/runner.ts` — flow fork runner and process management • `src/core2/snapshot.ts` — core-2 session snapshot builder (verbatim-preserving) • `src/flow/agents.ts` — bundled flow definitions & loading • `src/batch/index.ts` / `src/batch/` — unified file/batch tools • `src/tui/render.ts` — TUI rendering & animations • `src/snapshot/structured-output.ts` — JSON output validation & enrichment • `src/tools/trace.ts` — standalone verbatim read/check tool, zero required fields • `src/tools/web-tool.ts` — search & fetch • `src/tools/ask-user.ts` — interactive prompts • `src/config/config.ts` — settings resolution • `src/notify/notify.ts` — desktop/terminal notifications • `src/flow/loop.ts` — endless loop state management (enable, disable, reset, terminate, warp tracking) • `src/flow/loop-command.ts` — `/flow:loop` slash command (enable/disable/status/stop/reset) • `src/flow/auto-warp.ts` — auto-warp trigger when loop budget is exceeded • `src/flow/loop-templates.ts` — loop runtime prompt templates • `src/flow/warp.ts` — warp distillation and session creation |
 | **Additional Source** | `src/flow/` — flow goal orchestration, continuation, loop, runner, executor, transitions, depth config, session modes, and settings commands • `src/steering/` — steering hint injection, sliding prompts, and tool utilities • `src/types/` — shared TypeScript types for flow execution, output, and UI • `src/batch/` — batch operation engine, rendering, fuzzy editing, symbol extraction • `src/config/` — TUI-safe logging and settings resolution • `src/tui/` — color themes, render utilities, single-select layout, scramble animation • `src/snapshot/` — CLI arg inheritance, runner event parsing • `src/tools/` — timed bash wrapper with deadline awareness • `src/notify/` — notification state tracking |
@@ -39,8 +39,8 @@ When the user asks to publish:
    ```bash
    gh workflow run bump-version.yml -f bump_type=prerelease
    ```
-3. The workflow bumps `package.json`, commits, tags `v*`, and pushes. The tag push automatically triggers `publish.yml` (via `push: tags: v*`) if a PAT secret is configured.
-4. **Manual fallback** — if the tag-trigger did not fire (e.g. PAT secret missing), run:
+3. The workflow bumps `package.json`, commits, tags `v*`, pushes, and **publishes to npm in the same run**. No cross-workflow trigger is required.
+4. **Manual fallback** — if you ever need to re-publish or publish a tag created outside the Release workflow, run:
    ```bash
    gh workflow run publish.yml --ref v<NEW_VERSION>
    ```
@@ -51,8 +51,8 @@ When the user asks to publish:
 | File | Trigger | Purpose |
 |------|---------|---------|
 | `ci.yml` | PR / push to `main` | Runs `lint` + `test` |
-| `bump-version.yml` | `workflow_dispatch` (patch/minor/major/prerelease) | Bumps version → commits → tags → pushes |
-| `publish.yml` | `workflow_dispatch` or push `v*` tag | Publishes to npm with provenance; alpha versions use `--tag alpha` |
+| `bump-version.yml` | `workflow_dispatch` (patch/minor/major/prerelease) | Bumps version → commits → tags → pushes → publishes |
+| `publish.yml` | `workflow_dispatch` or push `v*` tag | Standalone manual fallback; alpha versions use `--tag alpha` |
 
 ## Local Development
 

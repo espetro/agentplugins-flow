@@ -1,6 +1,12 @@
-# Publishes tagged releases to npm.
-# Trigger via tag push (v*) — preferred for trusted publishing and auto-release.
-# workflow_dispatch works as a manual fallback.
+# Standalone manual fallback for publishing tagged releases to npm.
+# The primary publish step now lives in bump-version.yml, so releases
+# normally publish end-to-end in a single workflow run. Use this only
+# when you need to re-publish or publish a tag created outside the
+# Release workflow.
+#
+# Triggers:
+#   - push: tags: v*   (legacy safety net)
+#   - workflow_dispatch (manual fallback)
 
 name: Publish
 
