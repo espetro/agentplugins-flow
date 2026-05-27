@@ -41,9 +41,7 @@ export function formatFlowTypeName(type: string): string {
 /** Format tokens-per-second to a display string. */
 export function formatTps(value: number | undefined): string {
 	if (!value || value <= 0) return "----- t/s";
-	const formatted = value >= 100
-		? Math.round(value).toString()
-		: value.toFixed(1);
+	const formatted = value.toFixed(1);
 	return `${formatted.padStart(5)} t/s`;
 }
 
@@ -131,11 +129,11 @@ export {
 } from "./context-display.js";
 
 export function formatContextLabel(ctxTokens: number, maxCtxTokens?: number): string {
-	const current = formatFixedTokens(Math.max(0, ctxTokens));
+	const current = formatFixedTokens(Math.max(0, ctxTokens)).trimStart();
 	if (maxCtxTokens === undefined) {
 		return current;
 	}
-	return `${current}/${formatFixedTokens(maxCtxTokens)}`;
+	return `${current}/${formatFixedTokens(maxCtxTokens).trimStart()}`;
 }
 
 /** Regex matching ANSI escape sequences. */
