@@ -77,7 +77,7 @@ function renderFlowHeader(
 	let headerLine: string;
 	let plainHeader: string;
 	const headerSegments: HeaderSegment[] = [
-		{ text: headerPrefix + " ", style: (s) => applyRole("treeChars", s, theme, config) },
+		{ text: headerPrefix ? headerPrefix + " " : "", style: (s) => applyRole("treeChars", s, theme, config) },
 		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(r, theme, Date.now(), flowId) + " " },
 		{ text: typeName, style: (s) => applyRole("flowName", s, theme, config) },
 	];
@@ -111,11 +111,12 @@ function renderFlowHeader(
 		const modelSegment = modelLabel ? `  ${modelLabel}` : "";
 		const statsSegment = ` · ${displayStats}`;
 		const statsPlain = stripAnsi(statsSegment);
-		headerLine = `${applyRole("treeChars", headerPrefix, theme, config)} ${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", statsSegment, theme, config)}`;
+		const prefixPart = headerPrefix ? `${applyRole("treeChars", headerPrefix, theme, config)} ` : "";
+		headerLine = `${prefixPart}${initialDot} ${applyRole("flowName", typeName, theme, config)}${applyRole("modelName", modelSegment, theme, config)}${applyRole("stats", statsSegment, theme, config)}`;
 		if (errorSegment) {
 			headerLine += ` ${theme.fg("error", errorSegment)}`;
 		}
-		plainHeader = headerPrefix + " " + dotPlaceholder + typeName + modelSegment + statsPlain + errorSegment;
+		plainHeader = (headerPrefix ? headerPrefix + " " : "") + dotPlaceholder + typeName + modelSegment + statsPlain + errorSegment;
 		headerSegments.push(
 			{ text: modelSegment, style: (s) => applyRole("modelName", s, theme, config) },
 			{ text: statsPlain, style: (s) => applyRole("stats", s, theme, config) },

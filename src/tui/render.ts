@@ -411,8 +411,8 @@ function renderStandaloneFlow(
 	},
 ): void {
 	const flowId = `${idPrefix}#${index}`;
-	const headerPrefix = isLastRoot ? "└─" : "├─";
-	const childPrefix = "   ";
+	const headerPrefix = "";
+	const childPrefix = "";
 
 	renderFlowHeader(container, r, flowId, headerPrefix, theme, now, config, sharedContext);
 	renderFlowBody(container, r, flowId, childPrefix, theme, now, config);
@@ -480,18 +480,15 @@ function renderGroup(
 	const dotPlaceholder = stripAnsi(initialDot) + " ";
 
 	// ─── Group header line (flush-left, scintillating dot, DynamicScrambleText) ───
-	const headerTreePart = isLastRoot ? "└─" : "├─";
-	const groupLabel = " audit-loop";
+	const groupLabel = "audit-loop";
 
 	const headerLine =
-		applyRole("treeChars", headerTreePart, theme, config) +
-		" " + initialDot +
+		initialDot + " " +
 		applyRole("groupHeader", groupLabel, theme, config);
 
-	const plainHeader = headerTreePart + " " + dotPlaceholder + groupLabel;
+	const plainHeader = dotPlaceholder + " " + groupLabel;
 
 	const headerSegments: HeaderSegment[] = [
-		{ text: headerTreePart + " ", style: (s) => applyRole("treeChars", s, theme, config) },
 		{ text: dotPlaceholder, style: (_s) => getScintillatingStatusDot(
 			{ ...results[group.buildIndices[0]], status: groupStatus } as SingleResult,
 			theme, Date.now(), groupFlowId,

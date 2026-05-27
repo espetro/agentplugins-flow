@@ -866,7 +866,7 @@ describe("activity panel rendering", () => {
 		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: "full" });
 		const text = extractText(rendered);
 		const scoutBlock = text.split("debug")[0];
-		const expectedBudget = getTruncationBudget(visibleLength("│  └─ msg ▸ "));
+		const expectedBudget = getTruncationBudget(visibleLength("└─ msg ▸ "));
 		expect(scoutBlock).toContain("msg ▸");
 		expect(scoutBlock).not.toContain("stale completed text");
 	});
@@ -884,7 +884,7 @@ describe("activity panel rendering", () => {
 				streamingText: longStreaming,
 			});
 			const details: FlowDetails = { mode: "flow", flowStyle: "fork", projectAgentsDir: null, results: [result, makeResult({ type: "debug" })] };
-			const expectedBudget = getTruncationBudget(visibleLength("│  └─ msg ▸ "));
+			const expectedBudget = getTruncationBudget(visibleLength("└─ msg ▸ "));
 			const expectedTail = tailText(longStreaming, expectedBudget);
 			const spy = vi.spyOn(scrambleManager, "updateMsg");
 
@@ -1047,7 +1047,7 @@ describe("activity panel rendering", () => {
 			expect(dirLine).toBeDefined();
 			// Content is pre-truncated dynamically based on terminal width (columns=40)
 			expect(dirLine).toContain("...");
-			const expectedBudget = getTruncationBudget(visibleLength("│  ├─ aim ▸ "));
+			const expectedBudget = getTruncationBudget(visibleLength("├─ aim ▸ "));
 			expect(visibleLength(dirLine.split("aim ▸")[1].trim())).toBeLessThanOrEqual(expectedBudget);
 		} finally {
 			(process.stdout as any).columns = originalColumns;
@@ -1631,7 +1631,6 @@ describe("header ANSI style preservation during animation", () => {
 			const lines = raw.split("\n");
 			const headerLine = lines[0];
 
-			expect(headerLine).toContain("\x1b[dimm├─ \x1b[39m");
 			expect(headerLine).toContain("\x1b[accentmdebug\x1b[39m");
 			expect(headerLine).toContain("\x1b[mutedm  openai/gpt-4o\x1b[39m");
 			expect(headerLine).toMatch(/5\.0/);
@@ -2074,7 +2073,7 @@ describe("flow status dot rendering", () => {
 		}
 	});
 
-	it("group preceded by sibling uses outer tree continuation (isLastRoot=false)", () => {
+	it("group preceded by sibling renders flush-left dot header", () => {
 		const scoutResult = makeResult({
 			type: "scout",
 			exitCode: 0,
@@ -2117,9 +2116,9 @@ describe("flow status dot rendering", () => {
 
 		const groupHeader = lines.find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("├─");
+		expect(groupHeader).not.toContain("├─");
+		expect(groupHeader).not.toContain("└─");
 		expect(groupHeader).toContain("audit-loop");
-		expect(groupHeader).not.toContain("│");
 
 		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
 		expect(buildHeader).toBeDefined();
@@ -2133,7 +2132,7 @@ describe("flow status dot rendering", () => {
 		// (previously: const blankLine = lines.find((l) => l === "│  │" || l.trim() === "│  │"); expect(blankLine).toBeDefined();)
 	});
 
-	it("group as last root item uses └─ and indents children", () => {
+	it("group as last root item renders flush-left dot header and indents children", () => {
 		const scoutResult = makeResult({
 			type: "scout",
 			exitCode: 0,
@@ -2168,7 +2167,8 @@ describe("flow status dot rendering", () => {
 
 		const groupHeader = lines.find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("└─");
+		expect(groupHeader).not.toContain("├─");
+		expect(groupHeader).not.toContain("└─");
 		expect(groupHeader).toContain("audit-loop");
 
 		const buildHeader = lines.find((l) => l.includes("build") && !l.includes("audit-loop"));
@@ -2180,7 +2180,7 @@ describe("flow status dot rendering", () => {
 		expect(auditHeader).toContain("└─");
 	});
 
-	it("standalone flow children always use three-space prefix, never tree continuation", () => {
+	it("standalone flow children render flush-left with tree connectors", () => {
 		const result1 = makeResult({
 			type: "scout",
 			exitCode: 0,
@@ -2205,21 +2205,30 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const lines = text.split("\n");
 
-		// First flow (scout) is not last root — its children must NOT use "│  "
+		// Standalone headers start with ● (no tree connector, no indent)
+		const scoutHeader = lines.find((l) => l.includes("scout"));
+		expect(scoutHeader).toBeDefined();
+		expect(scoutHeader).toMatch(/^●/);
+
+		const buildHeader = lines.find((l) => l.includes("build"));
+		expect(buildHeader).toBeDefined();
+		expect(buildHeader).toMatch(/^●/);
+
+		// First flow (scout) is not last root — body lines use ├─ (no indent)
 		const scoutLines = lines.slice(0, lines.findIndex((l) => l.includes("build")));
 		for (const line of scoutLines) {
 			if (line.includes("cmd ▸") || line.includes("msg ▸") || line.includes("aim ▸")) {
 				expect(line).not.toContain("│  ");
-				expect(line).toMatch(/^\s{3}/);
+				expect(line).toMatch(/^(├─|└─)/);
 			}
 		}
 
-		// Second flow (build) is last root — its children also use three spaces
+		// Second flow (build) is last root — body lines use └─ (no indent)
 		const buildLines = lines.slice(lines.findIndex((l) => l.includes("build")));
 		for (const line of buildLines) {
 			if (line.includes("cmd ▸") || line.includes("msg ▸") || line.includes("aim ▸")) {
 				expect(line).not.toContain("│  ");
-				expect(line).toMatch(/^\s{3}/);
+				expect(line).toMatch(/^(├─|└─)/);
 			}
 		}
 	});
