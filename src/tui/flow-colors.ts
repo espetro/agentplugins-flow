@@ -35,7 +35,7 @@ export const DEFAULT_FLOW_COLORS: FlowColorConfig = {
   modelName: { color: "muted", italic: true },
   stats: { color: "muted", italic: true },
   treeChars: { color: "dim" },
-  groupHeader: { color: "warning" },
+  groupHeader: { color: "muted" },
   prefixLabel: { color: "muted" },
   aimContent: { color: "dim", italic: true },
   actContent: { color: "dim", italic: true },

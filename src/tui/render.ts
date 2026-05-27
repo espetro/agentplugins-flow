@@ -458,7 +458,7 @@ function renderGroup(
 
 	let aggregateIcon: string;
 	if (anyRunning) {
-		aggregateIcon = theme.fg("warning", "↻");
+		aggregateIcon = theme.fg("accent", "●");
 	} else if (anyAwaiting) {
 		aggregateIcon = theme.fg("muted", "○");
 	} else if (allComplete && anyPass) {
@@ -491,18 +491,11 @@ function renderGroup(
 	const label = " audit-loop";
 	const badge = badgeText ? ` · ${badgeText}` : "";
 
-	// Compute trailing rule to pad to ~50 visible chars
-	const targetWidth = 50;
-	const visibleWidth = treePart.length + 1 + label.length + badge.length;
-	const ruleWidth = Math.max(0, targetWidth - visibleWidth);
-	const rule = "─".repeat(ruleWidth);
-
 	const headerLine =
 		applyRole("treeChars", treePart, theme, config) +
 		aggregateIcon +
 		applyRole("groupHeader", label, theme, config) +
-		applyRole("groupHeader", badge, theme, config) +
-		applyRole("treeChars", rule, theme, config);
+		applyRole("groupHeader", badge, theme, config);
 
 	container.addChild(new Text(headerLine, 0, 0));
 

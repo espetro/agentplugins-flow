@@ -1868,7 +1868,7 @@ describe("flow status dot rendering", () => {
 		const text = extractText(rendered);
 		const groupHeader = text.split("\n").find((l) => l.includes("audit-loop"));
 		expect(groupHeader).toBeDefined();
-		expect(groupHeader).toContain("↻");
+		expect(groupHeader).toContain("●");
 		expect(groupHeader).toContain("audit-loop");
 	});
 
@@ -1993,7 +1993,7 @@ describe("flow status dot rendering", () => {
 		const rendered = renderFlowResult({ content: [{ type: "text", text: "" }], details }, false, makeTheme(), undefined);
 		const text = extractText(rendered);
 		const lines = text.split("\n");
-		const auditHeaderIdx = lines.findIndex((l) => l.includes("○ audit") || l.includes("● audit"));
+		const auditHeaderIdx = lines.findIndex((l) => (l.includes("○ audit") || l.includes("● audit")) && !l.includes("audit-loop"));
 		expect(auditHeaderIdx).toBeGreaterThan(-1);
 		const auditAimLine = lines.slice(auditHeaderIdx).find((l) => l.includes("aim ▸"));
 		const auditCmdLine = lines.slice(auditHeaderIdx).find((l) => l.includes("cmd ▸"));
