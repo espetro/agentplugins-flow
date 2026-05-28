@@ -437,6 +437,32 @@ describe("audit loop intent helpers", () => {
 		expect(outputLine!.length).toBe(6000);
 	});
 
+	it("buildGroupAuditIntent renders ## Concerns when concern is provided", () => {
+		const audit = buildGroupAuditIntent([
+			{ aim: "Fix bug", intent: "Fix null pointer", acceptance: "Tests pass", concern: "Watch for edge cases", output: "Fixed null pointer" },
+		]);
+		expect(audit).toContain("## Concerns");
+		expect(audit).toContain("Watch for edge cases");
+	});
+
+	it("buildGroupAuditIntent omits ## Concerns when concern is undefined", () => {
+		const audit = buildGroupAuditIntent([
+			{ aim: "Fix bug", intent: "Fix null pointer", acceptance: "Tests pass", output: "Fixed null pointer" },
+		]);
+		expect(audit).not.toContain("## Concerns");
+	});
+
+	it("buildGroupAuditIntent orders sections correctly: Acceptance → Concerns → Intent", () => {
+		const audit = buildGroupAuditIntent([
+			{ aim: "Fix bug", intent: "Fix null pointer", acceptance: "Tests pass", concern: "Watch for edge cases", output: "Fixed null pointer" },
+		]);
+		const acceptanceIndex = audit.indexOf("## Acceptance Criteria");
+		const concernsIndex = audit.indexOf("## Concerns");
+		const intentIndex = audit.indexOf("## Build Intent");
+		expect(acceptanceIndex).toBeLessThan(concernsIndex);
+		expect(concernsIndex).toBeLessThan(intentIndex);
+	});
+
 	it("buildGroupAuditIntent includes Prior Audit History with per-build feedback", () => {
 		const audit = buildGroupAuditIntent(
 			[{ aim: "Test aim", intent: "test", output: "output" }],
