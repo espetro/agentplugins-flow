@@ -89,7 +89,7 @@ export function stripSteeringHintFromContent(
 /** Check whether content (string or text-part array) contains the steering hint tag. */
 export function contentContainsSteeringHintTag(content: MessageContent): boolean {
 	const hasCurrent = (text: string) => text.includes(STEERING_HINT_OPEN_TAG);
-	const hasLegacy = (text: string) => text.includes("<pi-flow-steering-hint>");
+	const hasLegacy = (text: string) => /<pi-flow-steering-hint(?:\s[^>]*)?>/.test(text);
 	const check = (text: string) => hasCurrent(text) || hasLegacy(text);
 	if (typeof content === "string") {
 		return check(content);
@@ -159,7 +159,14 @@ export function makeSteeringHintMessage(referenceMessage?: any): any | null {
 	if (!steeringConfig.enabled) {
 		return null;
 	}
-	const body = steeringConfig.customPrompt ?? STEERING_HINT;
+	let body = steeringConfig.customPrompt ?? STEERING_HINT;
+	if (steeringConfig.customPrompt) {
+		const hasCurrent = body.includes(STEERING_HINT_OPEN_TAG) && body.includes(STEERING_HINT_CLOSE_TAG);
+		const hasLegacy = /<pi-flow-steering-hint(?:\s[^>]*)?>/.test(body) && /<\/pi-flow-steering-hint(?:\s[^>]*)?>/.test(body);
+		if (!hasCurrent && !hasLegacy) {
+			body = `${STEERING_HINT_OPEN_TAG}\n${body}\n${STEERING_HINT_CLOSE_TAG}`;
+		}
+	}
 	return {
 		role: "system",
 		content: body,

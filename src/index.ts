@@ -466,34 +466,13 @@ export default function (pi: ExtensionAPI) {
 	// net, then insert the fresh hint as a separate message.
 	// Skipped for child flows (depth > 0) — they have explicit <mission> directives.
 	pi.on("context", async (event) => {
-		// Defensive normalization: ensure toolResult content is always a block array
-		// so that downstream providers (e.g. OpenAI / Anthropic adapters) don't explode
-		// on .filter() calls if a tool returned a raw string.
-		const normalizeToolMessages = (msgs: any[]): { messages: any[]; changed: boolean } => {
-			let changed = false;
-			const normalized = msgs.map((msg) => {
-				if (msg && (msg.role === "toolResult" || msg.role === "tool") && !Array.isArray(msg.content)) {
-					const text = typeof msg.content === "string" ? msg.content : "";
-					changed = true;
-					return {
-						...msg,
-						content: text ? [{ type: "text", text }] : [],
-					};
-				}
-				return msg;
-			});
-			return { messages: normalized, changed };
-		};
-
-		const { messages: normalizedMessages, changed: normalizedChanged } = normalizeToolMessages(event.messages);
-
 		if (currentDepth > 0) {
-			return normalizedChanged ? { messages: normalizedMessages } : undefined;
+			return undefined;
 		}
 
 		// Always strip old steering hint messages to prevent accumulation
-		const { messages: steeringStrippedMessages, changed: steeringChanged } = stripSteeringHintsFromMessages(normalizedMessages);
-		const messagesChanged = normalizedChanged || steeringChanged;
+		const { messages: steeringStrippedMessages, changed: steeringChanged } = stripSteeringHintsFromMessages(event.messages);
+		const messagesChanged = steeringChanged;
 
 		// Find latest user message
 		const userIndices = steeringStrippedMessages

@@ -50,12 +50,13 @@ The following content survives all six stages and is delivered to the child flow
 - **User messages** — including those containing `---` headers (these are never stripped).
 - **Assistant messages** — minus thinking blocks, API metadata, and usage telemetry.
 - **Tool results** — after batch body truncation and directive stripping.
-- **Bash output** — preserved verbatim (batch body rules do not truncate bash sections).
+- **Bash output** — batch tool bash results are preserved verbatim (batch body rules do not truncate bash sections), but standalone bash tool results are subject to standalone bash truncation based on compression levels (see §2.7).
 - **`rg` output** — preserved verbatim.
 - **Web tool results** — preserved verbatim (unless they contain batch section headers).
 - **`ask_user` results** — preserved verbatim.
 - **Non-batch tool results** — any tool result not containing `\n--- ` section headers passes through untouched.
 - **Flow tool calls and results** — name, arguments, and output text are preserved (minus `toolCallId`).
+- **Entry-level `id`** — preserved for child session manager deduplication.
 
 Test evidence: `tests/core2-snapshot.test.ts` retention suite (lines 29–110) and metadata-stripping suite (lines 500–632).
 
@@ -64,7 +65,6 @@ Test evidence: `tests/core2-snapshot.test.ts` retention suite (lines 29–110) a
 The following fields and content categories are removed by the pipeline:
 
 **From entries:**
-- `id` — session-manager deduplication IDs irrelevant to linear replay.
 - `parentId` — tree linkage is irrelevant to linear replay.
 - `timestamp` — on both the header and every entry.
 
@@ -89,6 +89,7 @@ The following fields and content categories are removed by the pipeline:
 
 **Truncated:**
 - Batch read/write/edit/context-map/file-summary bodies exceeding 6 lines — truncated to first 3 + last 3 lines.
+- Standalone bash tool results exceeding limits (default: head 30 + tail 20; light: 15+10; medium: 10+5; aggressive: 5+3 lines) are truncated.
 
 **Cleaned:**
 - `[Directive: ...]` and `[Hint: ...]` blocks — removed from all tool result text.
@@ -136,7 +137,6 @@ If `entry.type === "model_change"` or `entry.type === "thinking_level_change"`, 
 **Step B — Strip entry-level fields:**
 - `delete result.timestamp`
 - `delete result.parentId`
-- `delete result.id`
 
 **Step C — Strip message metadata:**
 For `type === "message"` entries, a copy of `entry.message` is made and the following fields are deleted:
@@ -257,12 +257,29 @@ This stage is applied inside `maybeStripBatchBodies` immediately after `stripBat
 
 Source: `src/core2/snapshot.ts:328` (inside `maybeStripBatchBodies`); `src/steering/tool-utils.ts` (`stripDirectives`).
 
+### 2.7 Standalone Bash Truncation (`truncateStandaloneBashResult`)
+
+For standalone bash tool results (where `toolName` or `name` is `"bash"`), the output is truncated to fit token limits based on the active compression level:
+
+| Compression Level | Kept Head Lines | Kept Tail Lines | Max Intact Lines |
+|-------------------|-----------------|-----------------|------------------|
+| `none` / default  | 30              | 20              | 50               |
+| `light`           | 15              | 10              | 25               |
+| `medium`          | 10              | 5               | 15               |
+| `aggressive`      | 5               | 3               | 8                |
+
+If the bash output text has more lines than the sum of the head and tail limits, the lines in between are replaced with a single placeholder line: `[...<N> lines of bash output truncated...]`.
+
+Source: `src/core2/snapshot.ts:692–761` (`truncateStandaloneBashResult`).
+
 ## §3 Processing Pipeline (Per-Entry)
 
 1. `buildCore2Snapshot()` iterates branch entries in order (`src/core2/snapshot.ts:72–77`).
 2. For each entry, `sanitizeSnapshotEntry()` runs Stage 2 (`src/core2/snapshot.ts:104–188`).
 3. `maybeStripCompaction()` runs Stage 3 (`src/core2/snapshot.ts:189–219`).
-4. `stripActiveToolCall()` runs Stage 4 if `options.activeToolCallId` is set (`src/core2/snapshot.ts:359–404`).
+4. `compressSnapshotEntry()` handles tier-based placeholder compression (`src/core2/snapshot.ts:800–860`).
+5. `truncateStandaloneBashResult()` truncates standalone bash output (`src/core2/snapshot.ts:692–761`).
+6. `stripActiveToolCall()` runs Stage 4 if `options.activeToolCallId` is set (`src/core2/snapshot.ts:359–404`).
 5. `JSON.stringify()` produces a JSONL line.
 6. `maybeStripBatchBodies()` runs Stages 5 and 6 on the string (`src/core2/snapshot.ts:283–352`).
    - Fast path: if the line does not contain `"role":"tool"` or `"role":"toolResult"`, skip.

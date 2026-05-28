@@ -9,6 +9,7 @@ import {
 	isJsonEqual,
 	stripSteeringHintsFromMessages,
 	makeSteeringHintMessage,
+	configureSteering,
 } from "../src/steering/sliding-prompt.js";
 
 describe("STEERING_HINT constants", () => {
@@ -163,5 +164,56 @@ describe("makeSteeringHintMessage", () => {
 		const ref = { timestamp: 12345 };
 		const msg = makeSteeringHintMessage(ref);
 		expect(msg.timestamp).toBe(12345);
+	});
+
+	it("wraps custom prompt in open/close steering tags if not already present", () => {
+		configureSteering({ enabled: true, customPrompt: "Custom prompt text" });
+		const msg = makeSteeringHintMessage();
+		expect(msg.content).toContain(STEERING_HINT_OPEN_TAG);
+		expect(msg.content).toContain("Custom prompt text");
+		expect(msg.content).toContain(STEERING_HINT_CLOSE_TAG);
+		configureSteering({ enabled: true });
+	});
+
+	it("does not wrap custom prompt if already wrapped in current open/close tags", () => {
+		const custom = `${STEERING_HINT_OPEN_TAG}Already wrapped${STEERING_HINT_CLOSE_TAG}`;
+		configureSteering({ enabled: true, customPrompt: custom });
+		const msg = makeSteeringHintMessage();
+		expect(msg.content).toBe(custom);
+		configureSteering({ enabled: true });
+	});
+
+	it("does not wrap custom prompt if already wrapped in legacy tags", () => {
+		const custom = "<pi-flow-steering-hint>Already wrapped</pi-flow-steering-hint>";
+		configureSteering({ enabled: true, customPrompt: custom });
+		const msg = makeSteeringHintMessage();
+		expect(msg.content).toBe(custom);
+		configureSteering({ enabled: true });
+	});
+
+	it("does not wrap custom prompt if already wrapped in legacy tags with attributes", () => {
+		const custom = "<pi-flow-steering-hint id=\"xyz\">Already wrapped</pi-flow-steering-hint id=\"xyz\">";
+		configureSteering({ enabled: true, customPrompt: custom });
+		const msg = makeSteeringHintMessage();
+		expect(msg.content).toBe(custom);
+		configureSteering({ enabled: true });
+	});
+
+	it("ensures wrapped custom prompts are correctly identified and stripped on subsequent turns", () => {
+		configureSteering({ enabled: true, customPrompt: "Custom prompt text" });
+		const msg = makeSteeringHintMessage();
+		
+		expect(contentContainsSteeringHintTag(msg.content)).toBe(true);
+
+		const messages = [
+			{ role: "system", content: msg.content },
+			{ role: "user", content: "hello" }
+		];
+		const { messages: result, changed } = stripSteeringHintsFromMessages(messages);
+		expect(result).toHaveLength(1);
+		expect(result[0].role).toBe("user");
+		expect(changed).toBe(true);
+
+		configureSteering({ enabled: true });
 	});
 });
