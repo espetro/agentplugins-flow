@@ -243,7 +243,8 @@ async function executeGroupedPingPong(
         aim: item.aim,
         intent: item.intent,
         acceptance: item.acceptance,
-        output: getFlowSummaryText(buildResults[i]),
+        concern: item.concern,
+        output: getFlowSummaryText(buildResults[i], { toolContext: false }),
       })),
       cycleHistory,
     );
@@ -296,7 +297,7 @@ async function executeGroupedPingPong(
 
     cycleHistory.push({
       cycle,
-      buildOutputs: buildResults.map((r) => getFlowSummaryText(r)),
+      buildOutputs: buildResults.map((r) => getFlowSummaryText(r, { toolContext: false })),
       verdict: anyReworkNeeded ? "rework" : "pass",
       feedback: anyReworkNeeded ? topLevelFeedback : undefined,
       buildFeedbacks: [...auditFeedbacks],

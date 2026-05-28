@@ -1406,3 +1406,139 @@ describe("formatToolCallShort — empty path", () => {
     expect(summary).not.toContain("batch read ?");
   });
 });
+
+// ---------------------------------------------------------------------------
+// getFlowSummaryText — toolContext: false option
+// ---------------------------------------------------------------------------
+
+describe("getFlowSummaryText — toolContext: false", () => {
+  it("skips [Tool Results] when final text exists", () => {
+    const result = {
+      exitCode: 0,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "bash", toolCallId: "tc1", arguments: { command: "echo hello" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          content: [{ type: "text", text: "hello" }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "All done." }] },
+      ],
+    };
+    const summary = getFlowSummaryText(result, { toolContext: false });
+    expect(summary).toBe("All done.");
+    expect(summary).not.toContain("[Tool Results]");
+  });
+
+  it("skips Partial work on error", () => {
+    const result = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "edit", toolCallId: "tc1", arguments: { path: "foo.ts", oldText: "a", newText: "b" } },
+          ],
+        },
+      ],
+      exitCode: 1,
+      stopReason: "error",
+      errorMessage: "Build failed",
+    };
+    const summary = getFlowSummaryText(result, { toolContext: false });
+    expect(summary).toBe("Build failed");
+    expect(summary).not.toContain("Partial work");
+  });
+
+  it("returns (no output) for success without final text", () => {
+    const result = {
+      exitCode: 0,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "bash", toolCallId: "tc1", arguments: { command: "echo hello" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          content: [{ type: "text", text: "hello" }],
+        },
+      ],
+    };
+    const summary = getFlowSummaryText(result, { toolContext: false });
+    expect(summary).toBe("(no output)");
+  });
+
+  it("returns (no output) for null/undefined", () => {
+    expect(getFlowSummaryText(null, { toolContext: false })).toBe("(no output)");
+    expect(getFlowSummaryText(undefined, { toolContext: false })).toBe("(no output)");
+  });
+
+  it("preserves default behavior when options is undefined", () => {
+    const result = {
+      exitCode: 0,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "bash", toolCallId: "tc1", arguments: { command: "echo hello" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          content: [{ type: "text", text: "hello" }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "All done." }] },
+      ],
+    };
+    const summary = getFlowSummaryText(result);
+    expect(summary).toContain("All done.");
+    expect(summary).toContain("[Tool Results]");
+    expect(summary).toContain("bash echo hello:");
+  });
+
+  it("preserves default behavior when toolContext is true", () => {
+    const result = {
+      exitCode: 0,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "bash", toolCallId: "tc1", arguments: { command: "echo hello" } },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "tc1",
+          content: [{ type: "text", text: "hello" }],
+        },
+        { role: "assistant", content: [{ type: "text", text: "All done." }] },
+      ],
+    };
+    const summary = getFlowSummaryText(result, { toolContext: true });
+    expect(summary).toContain("All done.");
+    expect(summary).toContain("[Tool Results]");
+    expect(summary).toContain("bash echo hello:");
+  });
+
+  it("preserves pingPongNote even with toolContext: false", () => {
+    const result = {
+      exitCode: 0,
+      messages: [],
+      pingPongMeta: {
+        cycles: 2,
+        finalVerdict: "pass",
+        verdicts: [{ cycle: 0, verdict: "pass" }],
+      },
+    };
+    const summary = getFlowSummaryText(result, { toolContext: false });
+    expect(summary).toContain("[Audit Loop: 2 cycle(s), final verdict: pass]");
+  });
+});

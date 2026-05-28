@@ -807,7 +807,11 @@ function matchToolCallsWithResults(messages: Message[], maxPairs: number): ToolP
 /** Max tool result output chars to include per tool call in the summary. */
 const TOOL_RESULT_MAX_CHARS = 2000;
 
-export function getFlowSummaryText(result?: FlowResult | null): string {
+export function getFlowSummaryText(
+	result?: FlowResult | null,
+	options?: { toolContext?: boolean },
+): string {
+	const includeToolContext = options?.toolContext !== false;
 	const finalText = getFlowFinalText(result?.messages ?? []);
 	const isError =
 		(typeof result?.exitCode === "number" && result.exitCode > 0) ||
@@ -827,24 +831,27 @@ export function getFlowSummaryText(result?: FlowResult | null): string {
 	}
 
 	// Extract tool call/result pairs for context
-	const toolPairs = matchToolCallsWithResults(result?.messages ?? [], 10);
-	const toolSummaryParts: string[] = [];
+	let toolContext = "";
+	if (includeToolContext) {
+		const toolPairs = matchToolCallsWithResults(result?.messages ?? [], 10);
+		const toolSummaryParts: string[] = [];
 
-	for (const pair of toolPairs) {
-		const callLabel = formatToolCallShort({ name: pair.name, args: pair.args });
-		if (pair.output.trim()) {
-			const truncated = pair.output.length > TOOL_RESULT_MAX_CHARS
-				? pair.output.slice(0, TOOL_RESULT_MAX_CHARS) + "\n... (truncated)"
-				: pair.output;
-			toolSummaryParts.push(`${callLabel}:\n${truncated}`);
-		} else {
-			toolSummaryParts.push(`${callLabel}: (no output)`);
+		for (const pair of toolPairs) {
+			const callLabel = formatToolCallShort({ name: pair.name, args: pair.args });
+			if (pair.output.trim()) {
+				const truncated = pair.output.length > TOOL_RESULT_MAX_CHARS
+					? pair.output.slice(0, TOOL_RESULT_MAX_CHARS) + "\n... (truncated)"
+					: pair.output;
+				toolSummaryParts.push(`${callLabel}:\n${truncated}`);
+			} else {
+				toolSummaryParts.push(`${callLabel}: (no output)`);
+			}
 		}
-	}
 
-	const toolContext = toolSummaryParts.length > 0
-		? "\n\n[Tool Results]\n" + toolSummaryParts.join("\n---\n")
-		: "";
+		toolContext = toolSummaryParts.length > 0
+			? "\n\n[Tool Results]\n" + toolSummaryParts.join("\n---\n")
+			: "";
+	}
 
 	// Append ping-pong cycle metadata if present
 	const singleResult = result as (FlowResult & Partial<SingleResult>) | null | undefined;
@@ -876,17 +883,19 @@ export function getFlowSummaryText(result?: FlowResult | null): string {
 
 	// No final text
 	if (isError) {
-		// Surface partial tool calls (excluding read) for failed/aborted flows
-		const toolCalls = extractNonReadToolCalls(result?.messages ?? []);
-		if (toolCalls.length > 0) {
-			const formatted = toolCalls.map(formatToolCallShort).join(", ");
-			return `${errorBase}\nPartial work: ${formatted}${toolContext}`;
+		if (includeToolContext) {
+			// Surface partial tool calls (excluding read) for failed/aborted flows
+			const toolCalls = extractNonReadToolCalls(result?.messages ?? []);
+			if (toolCalls.length > 0) {
+				const formatted = toolCalls.map(formatToolCallShort).join(", ");
+				return `${errorBase}\nPartial work: ${formatted}${toolContext}`;
+			}
 		}
 		return errorBase;
 	}
 
 	// Success but no final text — show tool results if any
-	if (toolContext) {
+	if (includeToolContext && toolContext) {
 		return toolContext.trim() + pingPongNote;
 	}
 

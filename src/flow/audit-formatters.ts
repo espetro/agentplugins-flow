@@ -117,7 +117,7 @@ export function formatPriorBuildOutputs(entries: CycleHistoryEntry[]): string {
 }
 
 export function buildGroupAuditIntent(
-	builds: Array<{ aim: string; intent: string; acceptance?: string; output: string }>,
+	builds: Array<{ aim: string; intent: string; acceptance?: string; concern?: string; output: string }>,
 	cycleHistory?: CycleHistoryEntry[],
 ): string {
 	const sections = builds.map((b, i) => {
@@ -130,6 +130,9 @@ export function buildGroupAuditIntent(
 		];
 		if (b.acceptance) {
 			section.push(`## Acceptance Criteria`, b.acceptance, ``);
+		}
+		if (b.concern) {
+			section.push(`## Concerns`, b.concern, ``);
 		}
 		if (b.intent) {
 			section.push(`## Build Intent`, b.intent, ``);
