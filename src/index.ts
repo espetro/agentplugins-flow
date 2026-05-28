@@ -178,7 +178,7 @@ const FlowParams = Type.Object({
 	title: "FlowToolParams",
 	description: "The root object MUST contain a 'flow' array. Never flatten fields to the root.",
 	examples: [{
-		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate" }],
+		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }],
 	}],
 });
 
@@ -737,6 +737,7 @@ export default function (pi: ExtensionAPI) {
 							intent: f.intent,
 							aim: f.aim,
 							acceptance: f.acceptance,
+							concern: f.concern,
 							cwd: f.cwd,
 							complexity: f.complexity,
 							preDispatchResults: preDispatchResults[i],

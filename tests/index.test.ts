@@ -497,6 +497,42 @@ describe("flow tool execute", () => {
 		expect(acceptanceProp.kind).toBe("optional");
 	});
 
+	it("forwards concern to runFlow via flowItems", async () => {
+		setupFlowsDir([
+			{
+				fileName: "build.md",
+				content: `---\nname: build\ndescription: Build\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		vi.mocked(runFlow).mockResolvedValue({
+			type: "scout",
+			agentSource: "project",
+			intent: "Discover things",
+			aim: "Discover codebase",
+			exitCode: 0,
+			messages: [],
+			stderr: "",
+			usage: emptyFlowUsage(),
+		});
+
+		const tool = pi.getTool("flow");
+		await tool.execute(
+			"call-1",
+			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }], confirmProjectFlows: false },
+			new AbortController().signal,
+			undefined,
+			makeMockCtx(tmpDir),
+		);
+
+		expect(runFlow).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(runFlow).mock.calls[0][0].concern).toBe("The auth module was recently refactored — verify assumptions");
+	});
+
 	it("uses PI_FLOW_COMPLEXITY as the default complexity", async () => {
 		process.env.PI_FLOW_COMPLEXITY = "complex";
 		setupFlowsDir([
