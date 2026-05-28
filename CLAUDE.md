@@ -327,6 +327,7 @@ Key env vars that control flow behavior. All are read from the `pi` process envi
 | `PI_RG_DEFAULT_MAX_COUNT` | Auto `--max-count` per file for broad `.` searches when `n` omitted (default 50). |
 | `PI_BASH_MAX_LINES` | Override the default bash max output lines limit (default 2000, Pi spec: 2000). |
 | `PI_BASH_MAX_BYTES` | Override the default bash max output bytes limit (default 51200, Pi spec: 51200). |
+| `PI_BASH_TIMEOUT_MS` | Override the default bash command timeout in milliseconds (default 120000 = 2 minutes). Applied to both batch tool soft timeout and runBashWithLimits hard timeout. |
 | `PI_FLOW_SIGKILL_TIMEOUT_MS` | Override the default SIGKILL timeout in milliseconds (default 5000). |
 | `PI_FLOW_FINISH_KILL_GRACE_MS` | Override the default finish kill grace period in milliseconds (default 5000). |
 | `PI_FLOW_AGENT_END_GRACE_MS` | Override the default agent end grace period in milliseconds (default 2000). |

@@ -30,7 +30,7 @@ import { executeOperations } from "../batch/execute.js";
 import { runBashWithLimits } from "../batch/batch-bash.js";
 import { logWarn } from "../config/log.js";
 import { runWebOps } from "./web-ops.js";
-import type { FileOpInput } from "../batch/constants.js";
+import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "../batch/constants.js";
 import type { WebOpInput } from "./web-ops.js";
 import { extractTraceStructuredOutput, resolveToolEvidence } from "../snapshot/trace-output.js";
 
@@ -112,7 +112,7 @@ async function executeDispatchOps(
 
 				if (bashOps.length > 0) {
 					for (const op of bashOps) {
-						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? 30000, signal);
+						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
 						subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
 					}
 				}
@@ -121,7 +121,7 @@ async function executeDispatchOps(
 			} else if (group.tool === "bash") {
 				const subParts: string[] = [];
 				for (const cmd of group.ops) {
-					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? 30000, signal);
+					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
 					subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
 				}
 				resultString = subParts.join("\n\n");

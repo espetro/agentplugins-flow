@@ -8,7 +8,7 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BatchTheme, FileOpInput, BatchOnUpdate } from "./constants.js";
-import { SAFE_FULL_READ_LIMIT, TARGETED_READ_LINE_LIMIT, BASH_SOFT_TIMEOUT_MS, MAX_LINES, MAX_BYTES, MAX_BASH_OUTPUT_LINES, MAX_BASH_OUTPUT_BYTES } from "./constants.js";
+import { SAFE_FULL_READ_LIMIT, TARGETED_READ_LINE_LIMIT, BASH_SOFT_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS, MAX_LINES, MAX_BYTES, MAX_BASH_OUTPUT_LINES, MAX_BASH_OUTPUT_BYTES } from "./constants.js";
 import { executeOperations, suggestSimilarFiles } from "./execute.js";
 import { expandTilde, isWithinDirectory } from "./fuzzy-edit.js";
 import {
@@ -99,7 +99,7 @@ const FileOp = Type.Object({
 		Type.Union([
 			Type.Number({
 				minimum: 1,
-				description: `Soft timeout in ms. Default: ${BASH_SOFT_TIMEOUT_MS}. Command keeps running after timeout; returns partial output with pending status. Used with o: 'bash'.`,
+				description: `Timeout in ms. Default: ${BASH_DEFAULT_TIMEOUT_MS}. Commands keep running after soft timeout; returns partial output with pending status. Used with o: 'bash'.`,
 			}),
 			Type.String({
 				description: "Type filter for o: 'rg' (e.g., 'ts', 'js'). Used with o: 'rg'.",

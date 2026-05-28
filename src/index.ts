@@ -45,7 +45,7 @@ import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 import { createTraceTool } from "./tools/trace.js";
 import { executeOperations } from "./batch/execute.js";
 import { runWebOps } from "./tools/web-ops.js";
-import type { FileOpInput } from "./batch/constants.js";
+import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "./batch/constants.js";
 import type { WebOpInput } from "./tools/web-ops.js";
 import {
 	resolveFlowDepthConfig,
@@ -218,13 +218,13 @@ async function executeDispatchOps(
 
 				if (bashOps.length > 0) {
 					for (const op of bashOps) {
-						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? 30000, signal);
+						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
 						parts.push(`### bash [${op.i ?? "auto"}] exit ${exitCode}\n\ntool_call_id: ${toolCallId}\n\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
 					}
 				}
 			} else if (group.tool === "bash") {
 				for (const cmd of group.ops) {
-					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? 30000, signal);
+					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
 					parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\n--- bash exit ${exitCode} ---\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
 				}
 			} else if (group.tool === "web") {
