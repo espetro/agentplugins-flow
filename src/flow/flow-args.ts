@@ -49,6 +49,7 @@ export function buildFlowArgs(
 	complexity: Complexity = DEFAULT_COMPLEXITY,
 	sessionTimeoutMs: number = getComplexityTimeoutMs(complexity),
 	acceptance?: string,
+	concern?: string,
 	discoveredFlows: FlowConfig[] = [],
 	parentFlowStack: string[] = [],
 	preventCycles: boolean = true,
@@ -152,8 +153,9 @@ export function buildFlowArgs(
 		: "";
 
 	const acceptanceLine = acceptance ? `\nAcceptance: ${acceptance}` : "";
+	const concernLine = concern ? `\nConcerns:\n${concern}` : "";
 	const mission =
-		`\n\n<mission>\n${intent}${acceptanceLine}\n` +
+		`\n\n<mission>\n${intent}${acceptanceLine}${concernLine}\n` +
 		`\nExecute this mission. Use only your available tools. If blocked, report why — do not guess.\n` +
 		`Follow the output format specified in your directive.\n` +
 		`</mission>`;

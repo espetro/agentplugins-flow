@@ -82,6 +82,7 @@ export async function executeSingleFlow(
 			intent: item.intent,
 			aim: item.aim,
 			acceptance: item.acceptance,
+			concern: item.concern,
 			taskCwd: item.cwd,
 			forkSessionSnapshotJsonl: shouldInheritContext ? forkSessionSnapshotJsonl : null,
 			parentDepth: currentDepth,

@@ -131,6 +131,7 @@ export interface RunFlowOptions {
 	intent: string;
 	aim: string;
 	acceptance?: string;
+	concern?: string;
 	taskCwd?: string;
 	forkSessionSnapshotJsonl: string | null;
 	parentDepth: number;
@@ -295,6 +296,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			effectiveComplexity,
 			effectiveTimeout,
 			opts.acceptance,
+			opts.concern,
 			flows,
 			parentFlowStack,
 			preventCycles,

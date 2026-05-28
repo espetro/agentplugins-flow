@@ -1472,6 +1472,80 @@ describe("acceptance field propagation", () => {
 		await promise;
 	});
 
+	it("includes Concerns line in mission when concern is provided", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			concern: "Be careful with file deletions",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		const prompt = args[args.indexOf("-p") + 1];
+
+		expect(prompt).toContain("<mission>");
+		expect(prompt).toContain("Concerns:\nBe careful with file deletions");
+		expect(prompt).toContain("</mission>");
+
+		mockProc.emit("close", 0);
+		await promise;
+	});
+
+	it("omits Concerns line when concern is not provided", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [mockFlow],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		const prompt = args[args.indexOf("-p") + 1];
+
+		expect(prompt).toContain("<mission>");
+		expect(prompt).not.toContain("Concerns:");
+
+		mockProc.emit("close", 0);
+		await promise;
+	});
+
 	it("injects available flows and guards into child activation prompt", async () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);

@@ -477,6 +477,26 @@ describe("flow tool execute", () => {
 		expect(vi.mocked(runFlow).mock.calls[0][0].complexity).toBe("complex");
 	});
 
+	it("exposes concern in the tool schema as a required string", async () => {
+		setupFlowsDir([
+			{
+				fileName: "build.md",
+				content: `---\nname: build\ndescription: Build\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		const tool = pi.getTool("flow");
+		const concernProp = tool.parameters.properties.flow.items.properties.concern;
+		expect(concernProp).toBeDefined();
+		expect(concernProp.kind).toBe("string");
+		const acceptanceProp = tool.parameters.properties.flow.items.properties.acceptance;
+		expect(acceptanceProp.kind).toBe("optional");
+	});
+
 	it("uses PI_FLOW_COMPLEXITY as the default complexity", async () => {
 		process.env.PI_FLOW_COMPLEXITY = "complex";
 		setupFlowsDir([

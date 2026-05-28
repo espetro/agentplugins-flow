@@ -129,6 +129,9 @@ const FlowItem = Type.Object({
 	acceptance: Type.Optional(
 		Type.String({ description: "Success criteria for the task." }),
 	),
+	concern: Type.String({
+		description: "Known risks, uncertainties, or areas requiring extra care. Be specific.",
+	}),
 	cwd: Type.Optional(
 		Type.String({ description: "Working directory override." }),
 	),

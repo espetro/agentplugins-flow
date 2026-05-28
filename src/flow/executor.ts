@@ -85,6 +85,7 @@ export interface ExecuteFlowParams {
 	intent: string;
 	aim: string;
 	acceptance?: string;
+	concern?: string;
 	cwd?: string;
 	complexity: Complexity;
 	_childTools?: string[];
@@ -251,6 +252,7 @@ async function executeGroupedPingPong(
       intent: `Audit the completed build flows.\n\n${auditInput}`,
       aim: `Audit ${items.length} build outputs`,
       acceptance: "Verify correctness, security, and completeness of all build flows' outputs.",
+      concern: "Verify audit accuracy against original build intents and outputs.",
       complexity: items[0]?.complexity ?? "moderate",
     };
     const auditResult = await executeSingleFlow(deps, auditItem, allResults, auditIndex, toolCallId, emitProgress, selectedFlowModelConfig);
