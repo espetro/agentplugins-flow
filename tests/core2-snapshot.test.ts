@@ -941,14 +941,81 @@ describe("buildCore2Snapshot — tier compression", () => {
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
 		
-		// First toolResult should be omitted/replaced with placeholder
+		// First toolResult should be omitted/replaced with count-aware placeholder
 		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("Bash output omitted")) as any;
 		expect(firstResult).toBeDefined();
-		expect(firstResult.message.content[0].text).toBe("[Bash output omitted; command was re-run later]");
+		expect(firstResult.message.content[0].text).toBe("[Bash output omitted; re-run 1 more time]");
 
 		// Second toolResult should be preserved verbatim
 		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("second build passed")) as any;
 		expect(secondResult).toBeDefined();
+	});
+
+	it("deduplicates repeated identical bash commands with count-aware placeholder for 3+ runs", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "bash-1", name: "bash", arguments: { command: "npm test" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-1",
+					content: [{ type: "text", text: "test 1" }]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "bash-2", name: "bash", arguments: { command: "npm test" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-2",
+					content: [{ type: "text", text: "test 2" }]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "bash-3", name: "bash", arguments: { command: "npm test" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "bash-3",
+					content: [{ type: "text", text: "test 3" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[Bash output omitted; re-run 2 more times]") as any;
+		expect(firstResult).toBeDefined();
+
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[Bash output omitted; re-run 2 more times]") as any;
+		expect(secondResult).toBeDefined();
+
+		const thirdResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("test 3")) as any;
+		expect(thirdResult).toBeDefined();
 	});
 
 	it("deduplicates repeated read/write/edit operations on the same file path", () => {
@@ -993,13 +1060,231 @@ describe("buildCore2Snapshot — tier compression", () => {
 		const snapshot = buildCore2Snapshot(makeSource(entries));
 		const parsed = parseSnapshot(snapshot);
 
-		// First toolResult should be omitted/replaced with placeholder
+		// First toolResult should be omitted/replaced with count-aware placeholder
 		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("File read output omitted")) as any;
 		expect(firstResult).toBeDefined();
-		expect(firstResult.message.content[0].text).toBe("[File read output omitted; file was accessed/modified later]");
+		expect(firstResult.message.content[0].text).toBe("[File read output omitted; read 1 more time]");
 
 		// Second toolResult should be preserved verbatim
 		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("file a content new")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("deduplicates repeated edit operations with count-aware placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-1", name: "batch", arguments: { o: [{ o: "edit", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-1",
+					content: [{ type: "text", text: "edit 1" }]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-2", name: "batch", arguments: { o: [{ o: "edit", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-2",
+					content: [{ type: "text", text: "edit 2" }]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-3", name: "batch", arguments: { o: [{ o: "edit", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-3",
+					content: [{ type: "text", text: "edit 3" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[File edit output omitted; edited 2 more times]") as any;
+		expect(firstResult).toBeDefined();
+
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[File edit output omitted; edited 2 more times]") as any;
+		expect(secondResult).toBeDefined();
+
+		const thirdResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("edit 3")) as any;
+		expect(thirdResult).toBeDefined();
+	});
+
+	it("deduplicates repeated write operations with count-aware placeholder", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-1", name: "batch", arguments: { o: [{ o: "write", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-1",
+					content: [{ type: "text", text: "write 1" }]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "batch-2", name: "batch", arguments: { o: [{ o: "write", p: "src/a.ts" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "batch-2",
+					content: [{ type: "text", text: "write 2" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[File write output omitted; written 1 more time]") as any;
+		expect(firstResult).toBeDefined();
+
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("write 2")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("deduplicates repeated flow tool calls, keeping only the latest run's output", () => {
+		const entries = [
+			// Turn 1
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "flow-1", name: "flow", arguments: { flow: [{ type: "scout" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "flow-1",
+					content: [{ type: "text", text: "first scout result" }]
+				}
+			},
+			// Turn 2
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "flow-2", name: "flow", arguments: { flow: [{ type: "scout" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "flow-2",
+					content: [{ type: "text", text: "second scout result" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		// First flow result should be replaced with placeholder
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("Flow scout output omitted")) as any;
+		expect(firstResult).toBeDefined();
+		expect(firstResult.message.content[0].text).toBe("[Flow scout output omitted; superseded by later run]");
+
+		// Second flow result should be preserved verbatim
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("second scout result")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("deduplicates multi-flow tool calls, tracking each flow type separately", () => {
+		const entries = [
+			// Turn 1: scout + build
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "flow-1", name: "flow", arguments: { flow: [{ type: "scout" }, { type: "build" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "flow-1",
+					content: [{ type: "text", text: "scout+build result" }]
+				}
+			},
+			// Turn 2: scout only
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "flow-2", name: "flow", arguments: { flow: [{ type: "scout" }] } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "flow-2",
+					content: [{ type: "text", text: "scout result 2" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+		
+		// First result should be preserved because build was not superseded
+		// (isLatest is true if ANY key is still the latest)
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("scout+build result")) as any;
+		expect(firstResult).toBeDefined();
+
+		// Second result should be preserved because scout is the latest for its type
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("scout result 2")) as any;
 		expect(secondResult).toBeDefined();
 	});
 });

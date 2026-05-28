@@ -552,7 +552,7 @@ function maybeStripCompaction(entry: unknown): unknown | null {
 
 function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 	const toolCallMap = new Map<string, { toolName: string; keys: string[]; isReadWrite: boolean; op: string }>();
-	const lastExecution = new Map<string, string>();
+	const lastExecution = new Map<string, { toolCallId: string; count: number }>();
 
 	// Scan to populate toolCallMap and lastExecution
 	for (const entry of branchEntries) {
@@ -575,7 +575,8 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 					const cmd = (tc.arguments.command || tc.arguments.c || "").trim();
 					if (cmd) {
 						toolCallMap.set(id, { toolName: "bash", keys: [`bash:${cmd}`], isReadWrite: false, op: "bash" });
-						lastExecution.set(`bash:${cmd}`, id);
+						const existing = lastExecution.get(`bash:${cmd}`);
+						lastExecution.set(`bash:${cmd}`, { toolCallId: id, count: (existing?.count ?? 0) + 1 });
 					}
 				} else if ((name === "batch" || name === "batch_read") && tc.arguments) {
 					const ops = tc.arguments.ops || tc.arguments.o || [];
@@ -589,11 +590,29 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 								const key = `${operation}:${path}`;
 								keys.push(key);
 								opType = operation;
-								lastExecution.set(key, id);
+								const existing = lastExecution.get(key);
+								lastExecution.set(key, { toolCallId: id, count: (existing?.count ?? 0) + 1 });
 							}
 						}
 						if (keys.length > 0) {
 							toolCallMap.set(id, { toolName: name, keys, isReadWrite: true, op: opType });
+						}
+					}
+				} else if (name === "flow" && tc.arguments) {
+					const flowArray = tc.arguments.flow || [];
+					if (Array.isArray(flowArray)) {
+						const keys: string[] = [];
+						for (const f of flowArray) {
+							const type = (f as Record<string, unknown>).type;
+							if (typeof type === "string") {
+								const key = `flow:${type}`;
+								keys.push(key);
+								const existing = lastExecution.get(key);
+								lastExecution.set(key, { toolCallId: id, count: (existing?.count ?? 0) + 1 });
+							}
+						}
+						if (keys.length > 0) {
+							toolCallMap.set(id, { toolName: "flow", keys, isReadWrite: false, op: "flow" });
 						}
 					}
 				}
@@ -615,12 +634,40 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 		const info = toolCallMap.get(toolCallId);
 		if (!info) return entry;
 
-		const isLatest = info.keys.some((k) => lastExecution.get(k) === toolCallId);
+		const isLatest = info.keys.some((k) => lastExecution.get(k)?.toolCallId === toolCallId);
 
 		if (!isLatest) {
-			const newContent = info.isReadWrite
-				? `[File ${info.op} output omitted; file was accessed/modified later]`
-				: `[Bash output omitted; command was re-run later]`;
+			let newContent: string;
+			if (info.toolName === "flow") {
+				const flowType = info.keys[0]?.split(":")[1] || "output";
+				newContent = `[Flow ${flowType} output omitted; superseded by later run]`;
+			} else if (info.isReadWrite) {
+				const countEntry = lastExecution.get(info.keys[0]);
+				const count = countEntry?.count ?? 1;
+				if (count > 1) {
+					const suffix = count - 1 === 1 ? "1 more time" : `${count - 1} more times`;
+					if (info.op === "edit") {
+						newContent = `[File edit output omitted; edited ${suffix}]`;
+					} else if (info.op === "read") {
+						newContent = `[File read output omitted; read ${suffix}]`;
+					} else if (info.op === "write") {
+						newContent = `[File write output omitted; written ${suffix}]`;
+					} else {
+						newContent = `[File ${info.op} output omitted; file was accessed/modified later]`;
+					}
+				} else {
+					newContent = `[File ${info.op} output omitted; file was accessed/modified later]`;
+				}
+			} else {
+				const countEntry = lastExecution.get(info.keys[0]);
+				const count = countEntry?.count ?? 1;
+				if (count > 1) {
+					const suffix = count - 1 === 1 ? "1 more time" : `${count - 1} more times`;
+					newContent = `[Bash output omitted; re-run ${suffix}]`;
+				} else {
+					newContent = `[Bash output omitted; command was re-run later]`;
+				}
+			}
 			
 			const contentVal = typeof msg.content === "string" 
 				? newContent 
