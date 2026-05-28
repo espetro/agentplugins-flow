@@ -12,6 +12,7 @@ Each flow item accepts:
 | `intent` | `string` | What the flow should do |
 | `aim` | `string` | Short headline of what the flow aims to do |
 | `acceptance` | `string` | One-sentence success criteria |
+| `concern` | `string` | Known risks, uncertainties, or areas requiring extra care. Be specific. |
 | `complexity` | `string` | Override complexity for this flow (`snap`, `simple`, `moderate`, `complex`, `intricate`) |
 | `cwd` | `string` | Override working directory |
 
