@@ -22,6 +22,7 @@ The parent stays clean; the workers stay focused.
 *   **Keep it clean:** Your main conversation thread stays free from endless transcripts.
 *   **Laser focus:** Each flow locks onto its intent without getting distracted by past messages.
 *   **Run in parallel:** Batch multiple tasks concurrently and get clean, structured results back.
+*   **Instant quick actions:** Use `trace` or `dispatch` parameters to execute reads, writes, edits, or bash commands in one round-trip step without extra model latency.
 
 ## See it in Action
 

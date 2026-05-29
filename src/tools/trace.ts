@@ -266,7 +266,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 		promptSnippet: "Quick verbatim reads, checks, and exploration. All fields optional.",
 		promptGuidelines: [
 			"All fields optional — the trace agent infers its mission from context.",
-			"Optional `dispatch` runs pre-flight reads before the trace starts.",
+			"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the trace starts.",
 		],
 		description: "Read files verbatim, run checks, explore the codebase. All fields optional.",
 		parameters: TraceParams,

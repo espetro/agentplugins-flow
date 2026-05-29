@@ -561,6 +561,7 @@ export default function (pi: ExtensionAPI) {
 			promptSnippet: "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.",
 			promptGuidelines: [
 				"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
+				"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
 				"For quick file reads/checks, use `trace` instead.",
 			],
 			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",

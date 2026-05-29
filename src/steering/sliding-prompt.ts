@@ -27,6 +27,7 @@ export const STEERING_HINT =
 	`- Use \`trace\` only for structured checks (verbatim validation, running tests, diagnostics) — not for routine file reading.\n` +
 	`- Use \`flow\` for multi-file changes, architectural research, implementation, or verification.\n` +
 	`- Transition to \`flow\` for complex tasks instead of chaining trace/batch_read calls.\n` +
+	`- Use \`trace\`/\`flow\` with \`dispatch\` to run quick edits, writes, reads, or bash commands instantly in one step.\n` +
 	`\n` +
 	`Completeness: Process every item fully. No placeholders, no truncation, no half-finished work.\n` +
 	`\n` +

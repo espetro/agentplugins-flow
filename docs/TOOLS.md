@@ -15,6 +15,7 @@ Each flow item accepts:
 | `concern` | `string` | Known risks, uncertainties, or areas requiring extra care. Be specific. |
 | `complexity` | `string` | Override complexity for this flow (`snap`, `simple`, `moderate`, `complex`, `intricate`) |
 | `cwd` | `string` | Override working directory |
+| `dispatch` | `array` | Optional list of pre-flight operations (`batch`, `bash`, `web`) to execute before starting the flow. Results are injected into the prompt. |
 
 Example:
 
@@ -57,6 +58,63 @@ Suppress the confirmation prompt before running project-local flows:
   "confirmProjectFlows": false
 }
 ```
+
+### Run pre-flight setup tasks via `dispatch`
+
+Run commands or setup files locally in one step before the flow starts:
+
+```json
+{
+  "flow": [
+    {
+      "type": "build",
+      "intent": "Implement auth tests",
+      "aim": "Add auth tests",
+      "dispatch": [
+        { "tool": "bash", "ops": [{ "c": "npm install dotenv" }] }
+      ]
+    }
+  ]
+}
+```
+
+## `trace` — quick verbatim reads, checks, and exploration
+
+A lightweight flow state with `maxDepth: 0` that runs verbatim checks, explorations, or diagnostics. All fields are optional.
+
+### Tool parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `intent` | `string` | Optional description of the search or check objective. |
+| `cwd` | `string` | Optional working directory override. |
+| `complexity` | `string` | Optional budget level (`snap`, `simple`, `moderate`, `complex`, `intricate`). |
+| `dispatch` | `array` | Optional pre-flight operations (`batch`, `bash`, `web`) to run. Results are injected into the prompt. |
+
+### Example using `dispatch` for quick edits/reads/bash
+
+Run batch modifications or terminal checks directly in a single step via `dispatch` without additional round-trips:
+
+```json
+{
+  "dispatch": [
+    {
+      "tool": "batch",
+      "ops": [
+        { "o": "write", "p": "src/temp.ts", "c": "console.log('temp');" },
+        { "o": "edit", "p": "src/index.ts", "e": [{ "f": "old code", "r": "new code" }] }
+      ]
+    },
+    {
+      "tool": "bash",
+      "ops": [
+        { "c": "npm test" }
+      ]
+    }
+  ]
+}
+```
+
 
 ## `batch` / `batch_read` — unified file operations
 
