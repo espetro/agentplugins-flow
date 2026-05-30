@@ -19,15 +19,16 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
-	`Available tools: batch_read, trace, flow, ask_user.\n` +
+	`Available tools: batch, trace, flow, ask_user.\n` +
 	`Be direct — zero preamble or filler. Answer directly when context is available.\n` +
 	`\n` +
 	`Tool selection:\n` +
 	`- Use \`batch_read\` for file reads and codebase search.\n` +
-	`- Use \`trace\` only for structured checks (verbatim validation, running tests, diagnostics) — not for routine file reading.\n` +
+	`- Only use \`trace\` for validation and short Q&A that requires involvement of bash, cli.\n` +
 	`- Use \`flow\` for multi-file changes, architectural research, implementation, or verification.\n` +
 	`- Transition to \`flow\` for complex tasks instead of chaining trace/batch_read calls.\n` +
-	`- Use \`trace\`/\`flow\` with \`dispatch\` to run quick edits, writes, reads, or bash commands instantly in one step.\n` +
+	`- Use \`trace\` with \`dispatch\` to run quick edits, writes, reads, or bash commands.\n` +
+	`- Start with \`flow-scout\` for deep context when the task is broad or unfamiliar.\n` +
 	`\n` +
 	`Completeness: Process every item fully. No placeholders, no truncation, no half-finished work.\n` +
 	`\n` +

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import registerExtension from "../src/index.js";
 import { runFlow } from "../src/flow/runner.js";
 import { emptyFlowUsage } from "../src/types/flow.js";
-import { extractTraceStructuredOutput, resolveToolEvidence } from "../src/snapshot/trace-output.js";
+import { extractTraceStructuredOutput, resolveToolEvidence, unwrapMarkdownCodeBlock } from "../src/snapshot/trace-output.js";
 
 vi.mock("../src/flow/runner.js", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/flow/runner.js")>();
@@ -64,6 +64,15 @@ describe("Trace Structured Output Parser & Resolver", () => {
 			});
 		});
 
+		it("unwraps markdown code block wrappers from note and tool_ids", () => {
+			const text = "Some response.\n```json\n{\n  \"note\": \"```markdown\\nfile content\\n```\",\n  \"tool_ids\": [\"call_1\", \"```\\ncall_2\\n```\"]\n}\n```";
+			const result = extractTraceStructuredOutput(text);
+			expect(result).toEqual({
+				note: "file content",
+				tool_ids: ["call_1", "call_2"],
+			});
+		});
+
 		it("returns undefined for missing or malformed JSON blocks", () => {
 			expect(extractTraceStructuredOutput("no JSON block here")).toBeUndefined();
 			expect(extractTraceStructuredOutput("```json\ninvalid-json\n```")).toBeUndefined();
@@ -73,6 +82,48 @@ describe("Trace Structured Output Parser & Resolver", () => {
 			expect(extractTraceStructuredOutput("```json\n{\n  \"tool_ids\": [\"call_1\"]\n}\n```")).toBeUndefined();
 			expect(extractTraceStructuredOutput("```json\n{\n  \"note\": 123,\n  \"tool_ids\": [\"call_1\"]\n}\n```")).toBeUndefined();
 			expect(extractTraceStructuredOutput("```json\n{\n  \"note\": \"test\",\n  \"tool_ids\": \"not-an-array\"\n}\n```")).toBeUndefined();
+		});
+	});
+
+	describe("unwrapMarkdownCodeBlock", () => {
+		it("strips triple-backtick fence with language tag", () => {
+			expect(unwrapMarkdownCodeBlock("```markdown\nfile content\n```")).toBe("file content");
+			expect(unwrapMarkdownCodeBlock("```js\nconst x = 1;\n```")).toBe("const x = 1;");
+		});
+
+		it("strips triple-backtick fence without language tag", () => {
+			expect(unwrapMarkdownCodeBlock("```\nplain text\n```")).toBe("plain text");
+		});
+
+		it("handles leading and trailing whitespace", () => {
+			expect(unwrapMarkdownCodeBlock("  ```markdown\nfile content\n```  ")).toBe("file content");
+			expect(unwrapMarkdownCodeBlock("\n```\nabc\n```\n")).toBe("abc");
+		});
+
+		it("returns original when no complete fence exists", () => {
+			expect(unwrapMarkdownCodeBlock("just plain text")).toBe("just plain text");
+			expect(unwrapMarkdownCodeBlock("```markdown\nno closing fence")).toBe("```markdown\nno closing fence");
+			expect(unwrapMarkdownCodeBlock("no opening fence\n```")).toBe("no opening fence\n```");
+		});
+
+		it("returns original for legitimate inline backticks", () => {
+			expect(unwrapMarkdownCodeBlock("some `code` here")).toBe("some `code` here");
+			expect(unwrapMarkdownCodeBlock("text ``` not a fence")).toBe("text ``` not a fence");
+		});
+
+		it("preserves nested code blocks inside the outer fence", () => {
+			const inner = "# Title\n\n```js\nconst x = 1;\n```\n\nMore text";
+			const wrapped = "```markdown\n" + inner + "\n```";
+			expect(unwrapMarkdownCodeBlock(wrapped)).toBe(inner);
+		});
+
+		it("returns original for empty string", () => {
+			expect(unwrapMarkdownCodeBlock("")).toBe("");
+		});
+
+		it("returns original for fence-only string", () => {
+			expect(unwrapMarkdownCodeBlock("```")).toBe("```");
+			expect(unwrapMarkdownCodeBlock("```\n```")).toBe("```\n```");
 		});
 	});
 
@@ -145,6 +196,70 @@ describe("Trace Structured Output Parser & Resolver", () => {
 		it("silently ignores missing tool IDs", () => {
 			const evidence = resolveToolEvidence(["non_existent"], [], []);
 			expect(evidence).toBe("");
+		});
+
+		it("uses a 4-backtick fence when result contains nested code blocks", () => {
+			const messages: any[] = [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							id: "call_abc",
+							name: "batch",
+							arguments: { o: [{ o: "read", p: "src/index.ts" }] },
+						},
+					],
+				},
+				{
+					role: "tool",
+					toolCallId: "call_abc",
+					content: [
+						{
+							type: "text",
+							text: "Here is some code:\n```typescript\nconst x = 1;\n```",
+						},
+					],
+				},
+			];
+
+			const evidence = resolveToolEvidence(["call_abc"], messages, []);
+			expect(evidence).toContain("## Verbatim Evidence");
+			expect(evidence).toContain("```typescript");
+			expect(evidence).toContain("const x = 1;");
+			const outputSection = evidence.split("**Output:**")[1];
+			expect(outputSection).toBeDefined();
+			expect(outputSection).toContain("````text");
+			expect(outputSection).toContain("````");
+			const lines = outputSection.split("\n");
+			const openingFence = lines.find((l) => l.startsWith("````"));
+			expect(openingFence).toBe("````text");
+		});
+
+		it("preserves a 3-backtick fence when result has no nested code blocks", () => {
+			const messages: any[] = [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							id: "call_abc",
+							name: "bash",
+							arguments: { command: "echo hello" },
+						},
+					],
+				},
+				{
+					role: "tool",
+					toolCallId: "call_abc",
+					content: [{ type: "text", text: "hello\nworld" }],
+				},
+			];
+
+			const evidence = resolveToolEvidence(["call_abc"], messages, []);
+			const outputSection = evidence.split("**Output:**")[1];
+			expect(outputSection).toContain("```text");
+			expect(outputSection).toContain("```");
 		});
 	});
 });

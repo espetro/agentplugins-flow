@@ -3,6 +3,22 @@ import { logWarn } from "../config/log.js";
 import type { TraceStructuredOutput } from "../types/output.js";
 
 /**
+ * Strip markdown code block fences from the start/end of a string when the
+ * ENTIRE string is wrapped in a fence. Returns the original string if no
+ * complete fence is found.
+ *
+ * Matches:
+ *   ^\s*```(?:\w+)?\s*\n  ...  \n\s*```\s*$
+ *
+ * Uses a greedy inner capture so nested fences are preserved.
+ */
+export function unwrapMarkdownCodeBlock(text: string): string {
+	if (!text || typeof text !== "string") return text;
+	const match = text.match(/^\s*```(?:\w+)?(?:[^\S\n]+[^\n]*)?\n([\s\S]*)\n\s*```\s*$/);
+	return match ? match[1] : text;
+}
+
+/**
  * Extract a structured JSON output block from the end of an assistant's text for trace flow.
  *
  * Looks for a final ```json ... ``` code block, parses it, and validates
@@ -12,28 +28,37 @@ import type { TraceStructuredOutput } from "../types/output.js";
 export function extractTraceStructuredOutput(text: string): TraceStructuredOutput | undefined {
 	if (!text) return undefined;
 
-	// Find the last ```json ... ``` block in the text.
-	// Scan backward from the end to handle multiple blocks.
-	const allMatches = [...text.matchAll(/```json\s*([\s\S]*?)\s*```/g)];
-	const match = allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
-	if (!match || !match[1]) return undefined;
+	// Find the last ```json block and try closing fences from the end inward
+	// to handle nested code blocks inside the JSON content.
+	const lastJsonIdx = text.lastIndexOf("```json");
+	if (lastJsonIdx === -1) return undefined;
 
-	const jsonStr = match[1].trim();
-	if (!jsonStr) return undefined;
+	const afterJson = text.slice(lastJsonIdx + 7);
+	const closePositions: number[] = [];
+	let pos = afterJson.indexOf("```");
+	while (pos !== -1) {
+		closePositions.push(pos);
+		pos = afterJson.indexOf("```", pos + 1);
+	}
 
-	try {
-		const parsed = JSON.parse(jsonStr);
-		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-			if (typeof parsed.note === "string" && Array.isArray(parsed.tool_ids)) {
-				return {
-					note: parsed.note.trim(),
-					tool_ids: parsed.tool_ids.map((id: unknown) => String(id).trim()),
-				};
+	for (let i = closePositions.length - 1; i >= 0; i--) {
+		const jsonStr = afterJson.slice(0, closePositions[i]).trim();
+		if (!jsonStr) continue;
+		try {
+			const parsed = JSON.parse(jsonStr);
+			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+				if (typeof parsed.note === "string" && Array.isArray(parsed.tool_ids)) {
+					return {
+						note: unwrapMarkdownCodeBlock(parsed.note.trim()),
+						tool_ids: parsed.tool_ids.map((id: unknown) =>
+							unwrapMarkdownCodeBlock(String(id).trim())
+						),
+					};
+				}
 			}
+		} catch {
+			// Continue trying earlier closing positions
 		}
-	} catch (e) {
-		logWarn(`[pi-agent-flow] Failed to parse trace structured output: ${e}`);
-		return undefined;
 	}
 	return undefined;
 }
@@ -79,6 +104,12 @@ function findToolResult(messages: Message[], targetId: string): string | null {
 	return outputParts.length > 0 ? outputParts.join("\n\n") : null;
 }
 
+/** Choose a backtick fence that cannot be closed by any run of backticks inside content. */
+function chooseFence(content: string): string {
+	const maxTicks = [...content.matchAll(/`+/g)].reduce((max, m) => Math.max(max, m[0].length), 0);
+	return "`".repeat(Math.max(3, maxTicks + 1));
+}
+
 /**
  * Automatically resolve tool_ids to verbatim args + output
  */
@@ -110,16 +141,20 @@ export function resolveToolEvidence(
 			continue;
 		}
 
+		const argsFence = chooseFence(JSON.stringify(toolCall.args, null, 2));
+		const outputFence = chooseFence(resultText);
+		const outputLabel = "text";
+
 		evidenceParts.push(
 			`### ${toolCall.tool} [${id}]\n` +
 			`**Args:**\n` +
-			`\`\`\`json\n` +
+			`${argsFence}json\n` +
 			`${JSON.stringify(toolCall.args, null, 2)}\n` +
-			`\`\`\`\n\n` +
+			`${argsFence}\n\n` +
 			`**Output:**\n` +
-			`\`\`\`text\n` +
+			`${outputFence}${outputLabel}\n` +
 			`${resultText}\n` +
-			`\`\`\``
+			`${outputFence}`
 		);
 	}
 
