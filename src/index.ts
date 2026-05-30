@@ -60,7 +60,7 @@ import {
 	resolveSettings,
 	type ResolvedSettings,
 } from "./config/settings-resolver.js";
-import { needsFlow, getSmartModeTools, type SmartModeConfig } from "./tools/smart-mode.js";
+import { getSmartModeTools, type SmartModeConfig, type ClassifyDeps } from "./tools/smart-mode.js";
 
 import { scrambleManager, setAnimationConfig } from "./tui/scramble/index.js";
 import { logWarn, logError } from "./config/log.js";
@@ -495,7 +495,22 @@ export default function (pi: ExtensionAPI) {
 					enabled: true,
 					debugMode: resolved.debugMode,
 				};
-				const smartTools = getSmartModeTools(baseTools, userContent, smartConfig);
+
+				// Get model and auth for LLM classification
+				const model = _sessionCtx?.model;
+				let deps: ClassifyDeps | undefined;
+				if (model) {
+					const auth = await _sessionCtx?.modelRegistry?.getApiKeyAndHeaders(model);
+					if (auth?.ok && auth?.apiKey) {
+						deps = {
+							model,
+							apiKey: auth.apiKey,
+							headers: auth.headers,
+						};
+					}
+				}
+
+				const smartTools = await getSmartModeTools(baseTools, userContent, smartConfig, deps);
 				pi.setActiveTools(smartTools);
 			}
 		}

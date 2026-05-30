@@ -1,15 +1,19 @@
 /**
  * Smart mode: classify user input to determine if flow orchestration is needed.
  *
- * Single-purpose tasks (search, research, analyze) should skip flow
- * to avoid unnecessary orchestration overhead and potential timeouts.
+ * Two-tier classification:
+ * 1. Regex fast path — catches clear-cut cases with zero latency
+ * 2. LLM fallback — handles ambiguous cases for accurate classification
  *
- * Design principles (matching pi-agent-flow conventions):
- * - Pure function, no side effects
- * - Testable in isolation
- * - Clear separation: classification vs. tool filtering
- * - Follows existing resolver pattern for settings
+ * Design principles:
+ * - Pure functions where possible
+ * - LLM call is async and isolated
+ * - Testable with mocks
+ * - Debug logging for auditability
  */
+
+import { complete } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,142 +24,229 @@ export interface SmartModeConfig {
 	debugMode?: boolean;
 }
 
-export type TaskClassification = "single-purpose" | "orchestrated";
+export type TaskClassification = "single-purpose" | "orchestrated" | "uncertain";
+
+export interface ClassificationResult {
+	classification: TaskClassification;
+	source: "regex" | "llm";
+	matches: string[];
+}
 
 // ---------------------------------------------------------------------------
-// Classification patterns
+// Regex patterns — ONLY match when 100% confident
 // ---------------------------------------------------------------------------
 
 /**
- * Patterns indicating single-purpose tasks (no flow needed).
- * Each entry is [pattern, description] for debug logging.
+ * Patterns that DEFINITELY indicate single-purpose tasks.
+ * Only match when we're absolutely certain — no false positives allowed.
  */
-const SINGLE_PURPOSE_INDICATORS: Array<[RegExp, string]> = [
-	// Search and find operations
-	[/\b(find|search|locate|grep|look\s+for|where\s+is|where\s+are|list\s+all)\b/i, "search"],
-	// Analysis and explanation
-	[/\b(analyze|analyse|summarize|summarise|explain|describe|what\s+does|how\s+does|why\s+does)\b/i, "analysis"],
-	// Read/list operations
-	[/\b(read|show|display|print|output|cat|ls|tree|view)\b/i, "read"],
-	// Check/verify operations
-	[/\b(check|verify|validate|test|inspect|examine|debug|trace)\b/i, "check"],
-	// Count/measure operations
-	[/\b(count|measure|calculate|compute|how\s+many|how\s+much|size|length)\b/i, "count"],
-	// Compare operations
-	[/\b(compare|diff|difference|contrast)\b/i, "compare"],
-	// Single action verbs
-	[/\b(fix|update|change|rename|move|delete|remove|add|create)\b.*\b(bug|error|typo|name|file)\b/i, "single-action"],
+const DEFINITE_SINGLE_PURPOSE: Array<[RegExp, string]> = [
+	// Pure search/find with no follow-up
+	[/^(find|search|locate|grep|where\s+is|where\s+are|list\s+all|show\s+me)\s+.+$/i, "search-command"],
+	// Pure read/cat operations
+	[/^(read|cat|show|display|print|view|output)\s+(the\s+)?(contents?\s+of\s+)?.+\.(json|ts|js|md|txt|yaml|yml|toml|css|html|py|rs|go|java|cpp|c|h)$/i, "read-file"],
+	// Pure check/verify
+	[/^(check|verify|validate|test|inspect|examine)\s+.+$/i, "check-command"],
+	// Pure count/measure
+	[/^(count|how\s+many|how\s+much|what('s|\s+is)\s+the\s+(size|length|number))\s+.+$/i, "count-command"],
 ];
 
 /**
- * Patterns indicating multi-step orchestrated tasks (flow needed).
+ * Patterns that DEFINITELY indicate multi-step orchestrated tasks.
  */
-const MULTI_STEP_INDICATORS: Array<[RegExp, string]> = [
-	// Sequential indicators
-	[/\b(first|then|after\s+that|finally|lastly|step\s+\d)\b/i, "sequential"],
-	// Chinese sequential indicators
-	[/第[一二三四五六七八九十]+|步骤|步[骤]?[\s\d]/, "sequential-zh"],
-	// Multiple actions with conjunctions
-	[/\b(and\s+then|then\s+and)\b/i, "conjunction"],
-	// Workflow indicators
-	[/\b(refactor|migrate|deploy|build|setup|configure|integrate|implement)\b/i, "workflow"],
-	// Planning indicators
-	[/\b(plan|strategy|roadmap|workflow|pipeline|orchestrat)\b/i, "planning"],
-	// Chinese workflow indicators
-	[/重构|迁移|部署|构建|配置|集成|实现|计划|策略|路线图|工作流|流水线|编排/, "workflow-zh"],
+const DEFINITE_MULTI_STEP: Array<[RegExp, string]> = [
+	// Explicit sequential markers with multiple actions
+	[/\b(first|1st)\b.*\b(then|2nd|after)\b.*\b(finally|3rd|last)\b/i, "explicit-sequence"],
+	// Chinese explicit sequence
+	[/第一[步骤].*第二[步骤].*第三[步骤]/, "explicit-sequence-zh"],
+	// "do X, then Y, then Z" pattern
+	[/\b\w+\s+.+,\s*then\s+\w+\s+.+,\s*then\s+\w+\s+/i, "then-sequence"],
+	// Numbered list with 3+ items (strong signal)
+	[/^\s*1\.\s+.+\n\s*2\.\s+.+\n\s*3\.\s+.+/m, "numbered-list"],
 ];
 
 // ---------------------------------------------------------------------------
-// Classification logic
+// Regex classification
 // ---------------------------------------------------------------------------
+
+/**
+ * Try to classify using regex patterns.
+ * Returns "uncertain" if no pattern matches definitively.
+ */
+export function classifyByRegex(message: string): {
+	classification: TaskClassification;
+	matches: string[];
+} {
+	const cleaned = message.trim();
+
+	// Check definite single-purpose patterns
+	for (const [pattern, description] of DEFINITE_SINGLE_PURPOSE) {
+		if (pattern.test(cleaned)) {
+			return { classification: "single-purpose", matches: [description] };
+		}
+	}
+
+	// Check definite multi-step patterns
+	for (const [pattern, description] of DEFINITE_MULTI_STEP) {
+		if (pattern.test(cleaned)) {
+			return { classification: "orchestrated", matches: [description] };
+		}
+	}
+
+	// No definitive match — needs LLM
+	return { classification: "uncertain", matches: [] };
+}
+
+// ---------------------------------------------------------------------------
+// LLM classification
+// ---------------------------------------------------------------------------
+
+const CLASSIFY_PROMPT = `You are a task classifier. Determine if the user's request is a SINGLE-PURPOSE task or a MULTI-STEP ORCHESTRATED task.
+
+SINGLE-PURPOSE tasks:
+- Search, find, locate, grep
+- Read, show, display file contents
+- Analyze, summarize, explain ONE thing
+- Check, verify, validate
+- Count, measure, calculate
+- Fix ONE bug, update ONE thing
+
+MULTI-STEP ORCHESTRATED tasks:
+- Do A, then B, then C
+- Refactor module + update tests + deploy
+- Research options + pick one + implement
+- Plan and execute a workflow
+- Tasks with explicit sequential steps
+
+Reply with ONLY one word: "single" or "multi"`;
+
+/**
+ * Classify using LLM for uncertain cases.
+ */
+export async function classifyByLLM(
+	message: string,
+	model: Model,
+	apiKey: string,
+	headers?: Record<string, string>,
+	debugMode?: boolean,
+): Promise<{ classification: TaskClassification; matches: string[] }> {
+	const messages = [
+		{
+			role: "user" as const,
+			content: [
+				{
+					type: "text" as const,
+					text: `${CLASSIFY_PROMPT}\n\nUser request: ${message}`,
+				},
+			],
+			timestamp: Date.now(),
+		},
+	];
+
+	try {
+		const response = await complete(
+			model,
+			{ messages },
+			{
+				apiKey,
+				headers,
+				maxTokens: 10,
+			},
+		);
+
+		const text = response.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("")
+			.trim()
+			.toLowerCase();
+
+		if (debugMode) {
+			console.log(`[smart-mode] LLM response: "${text}"`);
+		}
+
+		if (text.includes("multi")) {
+			return { classification: "orchestrated", matches: ["llm-classified"] };
+		}
+		if (text.includes("single")) {
+			return { classification: "single-purpose", matches: ["llm-classified"] };
+		}
+
+		// Unclear LLM response — default to orchestrated (safe)
+		return { classification: "orchestrated", matches: ["llm-unclear-default"] };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (debugMode) {
+			console.log(`[smart-mode] LLM error: ${message}`);
+		}
+		// On error, default to orchestrated (safe)
+		return { classification: "orchestrated", matches: ["llm-error-default"] };
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Main classification function
+// ---------------------------------------------------------------------------
+
+export interface ClassifyDeps {
+	model?: Model;
+	apiKey?: string;
+	headers?: Record<string, string>;
+}
 
 /**
  * Classify a user message as single-purpose or orchestrated.
- * Returns the classification and matched indicators for debugging.
+ * Uses regex fast path first, falls back to LLM for uncertain cases.
  */
-export function classifyTask(message: string): {
-	classification: TaskClassification;
-	singlePurposeMatches: string[];
-	multiStepMatches: string[];
-} {
-	const cleaned = message.trim();
-	const singlePurposeMatches: string[] = [];
-	const multiStepMatches: string[] = [];
+export async function classifyTask(
+	message: string,
+	config: SmartModeConfig,
+	deps?: ClassifyDeps,
+): Promise<ClassificationResult> {
+	// Tier 1: Regex fast path
+	const regexResult = classifyByRegex(message);
 
-	// Check single-purpose indicators
-	for (const [pattern, description] of SINGLE_PURPOSE_INDICATORS) {
-		if (pattern.test(cleaned)) {
-			singlePurposeMatches.push(description);
+	if (regexResult.classification !== "uncertain") {
+		if (config.debugMode) {
+			console.log(`[smart-mode] Regex classified as ${regexResult.classification}:`, regexResult.matches);
 		}
+		return {
+			classification: regexResult.classification,
+			source: "regex",
+			matches: regexResult.matches,
+		};
 	}
 
-	// Check multi-step indicators
-	for (const [pattern, description] of MULTI_STEP_INDICATORS) {
-		if (pattern.test(cleaned)) {
-			multiStepMatches.push(description);
+	// Tier 2: LLM fallback
+	if (deps?.model && deps?.apiKey) {
+		if (config.debugMode) {
+			console.log(`[smart-mode] Regex uncertain, falling back to LLM`);
 		}
+
+		const llmResult = await classifyByLLM(
+			message,
+			deps.model,
+			deps.apiKey,
+			deps.headers,
+			config.debugMode,
+		);
+
+		return {
+			classification: llmResult.classification,
+			source: "llm",
+			matches: llmResult.matches,
+		};
 	}
 
-	// Decision logic:
-	// - If list structure found → orchestrated (strongest signal)
-	// - If multi-step indicators found → orchestrated
-	// - If only single-purpose indicators → single-purpose
-	// - If both found → orchestrated (err on side of caution)
-	// - If neither found → check message length/structure
-
-	let classification: TaskClassification;
-
-	// Check for list structure first (strongest signal)
-	if (hasListStructure(cleaned)) {
-		classification = "orchestrated";
-	} else if (multiStepMatches.length > 0) {
-		classification = "orchestrated";
-	} else if (singlePurposeMatches.length > 0) {
-		classification = "single-purpose";
-	} else {
-		// No indicators found — use heuristics
-		classification = classifyByStructure(cleaned);
+	// No LLM available — default to orchestrated (safe)
+	if (config.debugMode) {
+		console.log(`[smart-mode] No LLM available, defaulting to orchestrated`);
 	}
-
-	return { classification, singlePurposeMatches, multiStepMatches };
-}
-
-/**
- * Check if message has list-like structure (numbered items, bullet points).
- */
-function hasListStructure(message: string): boolean {
-	const listPatterns = [
-		/^\s*[\d]+\.\s/m,
-		/^\s*[-*•]\s/m,
-		/第[一二三四五六七八九十]+/,
-		/step\s+\d/i,
-	];
-
-	return listPatterns.some(pattern => pattern.test(message));
-}
-
-/**
- * Structural heuristics when no keyword patterns match.
- */
-function classifyByStructure(message: string): TaskClassification {
-	// Very short messages are likely single-purpose
-	if (message.length < 60) {
-		return "single-purpose";
-	}
-
-	// Check for multiple sentences with different verbs
-	const sentences = message.split(/[.!?。！？\n]+/).filter(s => s.trim().length > 10);
-	if (sentences.length >= 3) {
-		// Multiple sentences might indicate multi-step
-		const verbPattern = /\b\w+(ed|ing|ize|ise|ify)\b/g;
-		const verbs = new Set(message.match(verbPattern));
-		if (verbs.size >= 3) {
-			return "orchestrated";
-		}
-	}
-
-	// Default to single-purpose for unclear cases
-	return "single-purpose";
+	return {
+		classification: "orchestrated",
+		source: "regex",
+		matches: ["no-llm-default"],
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -166,26 +257,28 @@ function classifyByStructure(message: string): TaskClassification {
  * Get active tools based on smart mode analysis.
  * If smart mode is enabled and task is single-purpose, exclude flow tool.
  */
-export function getSmartModeTools(
+export async function getSmartModeTools(
 	baseTools: string[],
 	message: string,
 	config: SmartModeConfig,
-): string[] {
+	deps?: ClassifyDeps,
+): Promise<string[]> {
 	if (!config.enabled) {
 		return baseTools;
 	}
 
-	const { classification, singlePurposeMatches, multiStepMatches } = classifyTask(message);
+	const result = await classifyTask(message, config, deps);
 
 	if (config.debugMode) {
-		console.log(`[smart-mode] Classification: ${classification}`, {
-			singlePurpose: singlePurposeMatches,
-			multiStep: multiStepMatches,
+		console.log(`[smart-mode] Classification result:`, {
+			classification: result.classification,
+			source: result.source,
+			matches: result.matches,
 			messageLength: message.trim().length,
 		});
 	}
 
-	if (classification === "orchestrated") {
+	if (result.classification === "orchestrated") {
 		return baseTools;
 	}
 
@@ -197,10 +290,14 @@ export function getSmartModeTools(
  * Check if flow is needed for a given message.
  * Convenience wrapper for boolean checks.
  */
-export function needsFlow(message: string, config: SmartModeConfig): boolean {
+export async function needsFlow(
+	message: string,
+	config: SmartModeConfig,
+	deps?: ClassifyDeps,
+): Promise<boolean> {
 	if (!config.enabled) {
 		return true;
 	}
-	const { classification } = classifyTask(message);
-	return classification === "orchestrated";
+	const result = await classifyTask(message, config, deps);
+	return result.classification === "orchestrated";
 }
