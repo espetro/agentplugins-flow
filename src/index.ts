@@ -60,6 +60,7 @@ import {
 	resolveSettings,
 	type ResolvedSettings,
 } from "./config/settings-resolver.js";
+import { needsFlow, getSmartModeTools, type SmartModeConfig } from "./tools/smart-mode.js";
 
 import { scrambleManager, setAnimationConfig } from "./tui/scramble/index.js";
 import { logWarn, logError } from "./config/log.js";
@@ -336,6 +337,10 @@ export default function (pi: ExtensionAPI) {
 		description: "Enable the batch_read tool (default: follows tool-optimize).",
 		type: "boolean",
 	});
+	pi.registerFlag("smart-mode", {
+		description: "Enable smart mode to skip flow for single-purpose tasks (default: false).",
+		type: "boolean",
+	});
 
 	// Wire up bundled notification channel
 	setupNotify(pi);
@@ -478,6 +483,22 @@ export default function (pi: ExtensionAPI) {
 		const userIndices = steeringStrippedMessages
 			.map((m: any, i: number) => (m.role === "user" ? i : -1))
 			.filter((i: number) => i !== -1);
+
+		// Smart mode: adjust tools based on user message complexity
+		if (resolved?.smartMode && userIndices.length > 0) {
+			const lastUserMsg = steeringStrippedMessages[userIndices[userIndices.length - 1]];
+			const userContent = typeof lastUserMsg.content === "string" ? lastUserMsg.content : "";
+
+			if (userContent) {
+				const baseTools = computeActiveTools(resolved.toolOptimize, resolved.traceEnabled, resolved.batchReadEnabled);
+				const smartConfig: SmartModeConfig = {
+					enabled: true,
+					debugMode: resolved.debugMode,
+				};
+				const smartTools = getSmartModeTools(baseTools, userContent, smartConfig);
+				pi.setActiveTools(smartTools);
+			}
+		}
 
 		if (userIndices.length === 0) {
 			// No user message yet: strip any stray steering hint text from systemPrompt

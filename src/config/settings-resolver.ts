@@ -30,6 +30,7 @@ const PI_FLOW_NO_GLITCH_ENV = "PI_FLOW_NO_GLITCH";
 const PI_FLOW_TOOLS_TRACE_ENV = "PI_FLOW_TOOLS_TRACE";
 const PI_FLOW_TOOLS_BATCH_READ_ENV = "PI_FLOW_TOOLS_BATCH_READ";
 const PI_FLOW_TOOL_OPTIMIZE_ENV = "PI_FLOW_TOOL_OPTIMIZE";
+const PI_FLOW_SMART_MODE_ENV = "PI_FLOW_SMART_MODE";
 
 export interface ResolvedSettings {
 	toolOptimize: boolean; structuredOutput: boolean; maxConcurrency: number;
@@ -40,6 +41,7 @@ export interface ResolvedSettings {
 	discoveredFlows: FlowConfig[]; loadedFlowModelConfigs: LoadedFlowModelConfigs;
 	activeRuntimeFlowMode: string | undefined; bodyVerbosity: "lite" | "full";
 	debugMode: boolean; traceEnabled: boolean; batchReadEnabled: boolean;
+	smartMode: boolean;
 	contextCompression?: CompressionLevel;
 }
 
@@ -146,6 +148,7 @@ export function resolveSettings(
 	const debugMode = resolveBoolean(ctx, { cliFlag: "flow-debug", envVar: "PI_FLOW_DEBUG", settingsPath: ["debugMode"], defaultValue: false });
 	const traceEnabled = resolveBoolean(ctx, { cliFlag: "tools-trace", envVar: PI_FLOW_TOOLS_TRACE_ENV, settingsPath: ["tools", "trace"], defaultValue: true });
 	const batchReadEnabled = resolveBoolean(ctx, { cliFlag: "tools-batch-read", envVar: PI_FLOW_TOOLS_BATCH_READ_ENV, settingsPath: ["tools", "batchRead"], defaultValue: toolOptimize });
+	const smartMode = resolveBoolean(ctx, { cliFlag: "smart-mode", envVar: PI_FLOW_SMART_MODE_ENV, settingsPath: ["smartMode"], defaultValue: false });
 
 	let contextCompression: CompressionLevel | undefined;
 	if (flowSettings.contextCompression && flowSettings.contextCompression !== "auto") {
@@ -157,7 +160,7 @@ export function resolveSettings(
 		steeringEnabled, steeringCustomPrompt,
 		animationEnabled, animationGlitch, askUserEnabled, askUserTimeout,
 		discoveredFlows, loadedFlowModelConfigs, activeRuntimeFlowMode,
-		bodyVerbosity, debugMode, traceEnabled, batchReadEnabled,
+		bodyVerbosity, debugMode, traceEnabled, batchReadEnabled, smartMode,
 		contextCompression,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};
