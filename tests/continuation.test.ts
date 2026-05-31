@@ -256,6 +256,13 @@ describe("continuation", () => {
     expect(true).toBe(true);
   });
 
+  it("setupContinuation clears any existing interval to prevent stale context", () => {
+    const spy = vi.spyOn(globalThis, "clearInterval");
+    setupContinuation(mockPi);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it("turn_end sends nothing when message content is empty", async () => {
     const sid = nextSessionId();
     registerSession(sid);

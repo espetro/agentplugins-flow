@@ -16,7 +16,7 @@ import { isFlowSuccess, isFlowError, isFlowComplete, getFlowOutput, emptyFlowUsa
 
 import { extractStructuredOutput } from "../snapshot/structured-output.js";
 
-import { mapFlowConcurrent } from "./runner.js";
+
 import { getFlowSummaryText } from "../snapshot/runner-events.js";
 import { normalizeFlowModeName, resolveFlowModelCandidates, resolveModelContextWindow, selectFlowModelStrategy, type LoadedFlowModelConfigs, type FlowModelStrategy } from "../config/config.js";
 import { getComplexityTimeoutMs, resolveComplexity, getImpliedAuditLoop, type Complexity } from "./complexity.js";
@@ -137,6 +137,31 @@ async function confirmProjectFlowsIfNeeded(
 	};
 }
 
+class ConcurrencyLimiter {
+  private activeCount = 0;
+  private pendingQueue: (() => void)[] = [];
+
+  constructor(private max: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.activeCount >= this.max) {
+      await new Promise<void>((resolve) => {
+        this.pendingQueue.push(resolve);
+      });
+    }
+    this.activeCount++;
+    try {
+      return await fn();
+    } finally {
+      this.activeCount--;
+      const next = this.pendingQueue.shift();
+      if (next) {
+        next();
+      }
+    }
+  }
+}
+
 interface PingPongGroup {
   items: ExecuteFlowParams[];
   auditLoop: number;
@@ -152,6 +177,7 @@ async function executeGroupedPingPong(
   toolCallId: string,
   emitProgress: (streamingText?: string) => void,
   selectedFlowModelConfig: LoadedFlowModelConfigs,
+  limiter: ConcurrencyLimiter,
 ): Promise<SingleResult[]> {
   const { items, auditLoop, buildIndices, auditIndex } = group;
   const maxCycles = (auditLoop ?? 0) + 1;
@@ -195,7 +221,7 @@ async function executeGroupedPingPong(
         ? buildReworkIntent(item.intent, item.aim, item.acceptance, auditFeedbacks[i] ?? "No issues found.", cycleHistory)
         : item.intent;
       const buildItem: ExecuteFlowParams = { ...item, intent: buildInput };
-      return executeSingleFlow(deps, buildItem, allResults, buildIndices[i], toolCallId, emitProgress, selectedFlowModelConfig);
+      return limiter.run(() => executeSingleFlow(deps, buildItem, allResults, buildIndices[i], toolCallId, emitProgress, selectedFlowModelConfig));
     });
     const newBuildResults = await Promise.all(buildPromises);
 
@@ -256,7 +282,7 @@ async function executeGroupedPingPong(
       concern: "Verify audit accuracy against original build intents and outputs.",
       complexity: items[0]?.complexity ?? "moderate",
     };
-    const auditResult = await executeSingleFlow(deps, auditItem, allResults, auditIndex, toolCallId, emitProgress, selectedFlowModelConfig);
+    const auditResult = await limiter.run(() => executeSingleFlow(deps, auditItem, allResults, auditIndex, toolCallId, emitProgress, selectedFlowModelConfig));
     auditResult.auditParentType = items[0].type;
     allResults[auditIndex] = auditResult;
 
@@ -552,15 +578,17 @@ export async function executeFlows(
 	emitProgress();
 
 	const executionStart = Date.now();
+	const limiter = new ConcurrencyLimiter(maxConcurrency);
+
 	const regularPromise = regularParams.length > 0
-		? mapFlowConcurrent(regularParams, maxConcurrency, async (item, localIndex) => {
+		? Promise.all(regularParams.map((item, localIndex) => {
 			const globalIndex = regularIndices[localIndex];
-			return executeSingleFlow(deps, item, allResults, globalIndex, toolCallId, emitProgress, selectedFlowModelConfig);
-		})
+			return limiter.run(() => executeSingleFlow(deps, item, allResults, globalIndex, toolCallId, emitProgress, selectedFlowModelConfig));
+		}))
 		: Promise.resolve([]);
 
 	const groupPromises = groups.map((group) =>
-		executeGroupedPingPong(deps, group, allResults, toolCallId, emitProgress, selectedFlowModelConfig),
+		executeGroupedPingPong(deps, group, allResults, toolCallId, emitProgress, selectedFlowModelConfig, limiter),
 	);
 
 	await Promise.all([regularPromise, ...groupPromises]);

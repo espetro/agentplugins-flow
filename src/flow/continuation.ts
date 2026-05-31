@@ -62,6 +62,8 @@ export function shutdownWakeup(): void {
 }
 
 export function setupContinuation(pi: ExtensionAPI): void {
+  shutdownWakeup();
+
   pi.on("session_start", (_event, ctx) => {
     sessionRegistry.register(ctx.cwd, ctx.sessionManager.getSessionId());
     _lastTurnEndAt.set(ctx.sessionManager.getSessionId(), Date.now());

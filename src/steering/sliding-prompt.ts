@@ -22,17 +22,22 @@ export const STEERING_HINT =
 	`Available tools: batch, trace, flow, ask_user.\n` +
 	`Be direct — zero preamble or filler. Answer directly when context is available.\n` +
 	`\n` +
+	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path.\n` +
+	`\n` +
 	`Tool selection:\n` +
 	`- Use \`batch_read\` for file reads and codebase search.\n` +
-	`- Only use \`trace\` for validation and short Q&A that requires involvement of bash, cli.\n` +
+	`- Only use \`trace\` for validation and short Q&A that requires bash or cli.\n` +
 	`- Use \`flow\` for multi-file changes, architectural research, implementation, or verification.\n` +
 	`- Transition to \`flow\` for complex tasks instead of chaining trace/batch_read calls.\n` +
-	`- Use \`trace\` with \`dispatch\` to run quick edits, writes, reads, or bash commands.\n` +
 	`- Start with \`flow-scout\` for deep context when the task is broad or unfamiliar.\n` +
 	`\n` +
-	`Completeness: Process every item fully. No placeholders, no truncation, no half-finished work.\n` +
+	`Backward: When quality or correctness is at risk — flow-audit (quality checks), flow-trace (verify/regression), flow-debug (root cause + fix), flow-build (corrections/refactor).\n` +
 	`\n` +
-	`Use \`ask_user\` for: ambiguous goals, scope confirmation before multi-step plans, or conflicting requirements.\n` +
+	`Completeness: No placeholders, no TODOs, no half-finished work.\n` +
+	`\n` +
+	`When the sign of regression is detected - backtrack IMMEDIATELY to trace/audit/build flow.\n` +
+	`\n` +
+	`Use \`ask_user\` for: ambiguous goals, or conflicting requirements, question must have bite, and impact to the final outcomes.\n` +
 	`${STEERING_HINT_CLOSE_TAG}`;
 
 const STEERING_HINT_RE = new RegExp(

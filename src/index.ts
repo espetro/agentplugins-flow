@@ -402,7 +402,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Clean up global mutable state on session shutdown
 	pi.on("session_shutdown", () => {
-
+		shutdownWakeup();
 		_sessionCtx = undefined;
 		// bashTracker and its pending OS processes are discarded on restart.
 		// This is expected — child process state is not serializable.
