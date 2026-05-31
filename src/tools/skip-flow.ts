@@ -1,5 +1,5 @@
 /**
- * Smart mode: classify user input to determine if flow orchestration is needed.
+ * Skip flow mode: classify user input to determine if flow orchestration is needed.
  *
  * Two-tier classification:
  * 1. Regex fast path — catches clear-cut cases with zero latency
@@ -13,13 +13,12 @@
  */
 
 import { complete } from "@earendil-works/pi-ai";
-import type { Model } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SmartModeConfig {
+export interface SkipFlowConfig {
 	enabled: boolean;
 	debugMode?: boolean;
 }
@@ -65,6 +64,19 @@ const DEFINITE_MULTI_STEP: Array<[RegExp, string]> = [
 	[/^\s*1\.\s+.+\n\s*2\.\s+.+\n\s*3\.\s+.+/m, "numbered-list"],
 ];
 
+// Cache to store classification results per message to prevent redundant LLM calls
+const classificationCache = new Map<string, ClassificationResult>();
+
+export function clearClassificationCache(): void {
+	classificationCache.clear();
+}
+
+/**
+ * Exclude list of words that indicate multi-step actions or sequences.
+ * If these are present, the task is ambiguous/orchestrated, so we bypass regex fast path.
+ */
+const MULTI_STEP_INDICATORS = /\b(and|then|after|next|first|finally|run|execute|fix|update|modify|change|refactor|create|make|write|add|delete|remove|rm)\b/i;
+
 // ---------------------------------------------------------------------------
 // Regex classification
 // ---------------------------------------------------------------------------
@@ -79,10 +91,15 @@ export function classifyByRegex(message: string): {
 } {
 	const cleaned = message.trim();
 
-	// Check definite single-purpose patterns
-	for (const [pattern, description] of DEFINITE_SINGLE_PURPOSE) {
-		if (pattern.test(cleaned)) {
-			return { classification: "single-purpose", matches: [description] };
+	// If message has indicators of multi-step sequences or actions, we bypass the regex single-purpose fast path.
+	const hasMultiStepIndicators = MULTI_STEP_INDICATORS.test(cleaned);
+
+	if (!hasMultiStepIndicators) {
+		// Check definite single-purpose patterns
+		for (const [pattern, description] of DEFINITE_SINGLE_PURPOSE) {
+			if (pattern.test(cleaned)) {
+				return { classification: "single-purpose", matches: [description] };
+			}
 		}
 	}
 
@@ -125,7 +142,7 @@ Reply with ONLY one word: "single" or "multi"`;
  */
 export async function classifyByLLM(
 	message: string,
-	model: Model,
+	model: any,
 	apiKey: string,
 	headers?: Record<string, string>,
 	debugMode?: boolean,
@@ -151,7 +168,7 @@ export async function classifyByLLM(
 				apiKey,
 				headers,
 				maxTokens: 10,
-			},
+			} as any,
 		);
 
 		const text = response.content
@@ -162,7 +179,7 @@ export async function classifyByLLM(
 			.toLowerCase();
 
 		if (debugMode) {
-			console.log(`[smart-mode] LLM response: "${text}"`);
+			console.log(`[skip-flow] LLM response: "${text}"`);
 		}
 
 		if (text.includes("multi")) {
@@ -177,7 +194,7 @@ export async function classifyByLLM(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (debugMode) {
-			console.log(`[smart-mode] LLM error: ${message}`);
+			console.log(`[skip-flow] LLM error: ${message}`);
 		}
 		// On error, default to orchestrated (safe)
 		return { classification: "orchestrated", matches: ["llm-error-default"] };
@@ -189,7 +206,7 @@ export async function classifyByLLM(
 // ---------------------------------------------------------------------------
 
 export interface ClassifyDeps {
-	model?: Model;
+	model?: any;
 	apiKey?: string;
 	headers?: Record<string, string>;
 }
@@ -200,53 +217,70 @@ export interface ClassifyDeps {
  */
 export async function classifyTask(
 	message: string,
-	config: SmartModeConfig,
+	config: SkipFlowConfig,
 	deps?: ClassifyDeps,
 ): Promise<ClassificationResult> {
+	const cleaned = message.trim();
+
+	// Return cached result if available
+	if (classificationCache.has(cleaned)) {
+		const cached = classificationCache.get(cleaned)!;
+		if (config.debugMode) {
+			console.log(`[skip-flow] Cache hit for message: "${cleaned.slice(0, 40)}...":`, cached.classification);
+		}
+		return cached;
+	}
+
 	// Tier 1: Regex fast path
-	const regexResult = classifyByRegex(message);
+	const regexResult = classifyByRegex(cleaned);
 
 	if (regexResult.classification !== "uncertain") {
 		if (config.debugMode) {
-			console.log(`[smart-mode] Regex classified as ${regexResult.classification}:`, regexResult.matches);
+			console.log(`[skip-flow] Regex classified as ${regexResult.classification}:`, regexResult.matches);
 		}
-		return {
+		const result: ClassificationResult = {
 			classification: regexResult.classification,
 			source: "regex",
 			matches: regexResult.matches,
 		};
+		classificationCache.set(cleaned, result);
+		return result;
 	}
 
 	// Tier 2: LLM fallback
 	if (deps?.model && deps?.apiKey) {
 		if (config.debugMode) {
-			console.log(`[smart-mode] Regex uncertain, falling back to LLM`);
+			console.log(`[skip-flow] Regex uncertain, falling back to LLM`);
 		}
 
 		const llmResult = await classifyByLLM(
-			message,
+			cleaned,
 			deps.model,
 			deps.apiKey,
 			deps.headers,
 			config.debugMode,
 		);
 
-		return {
+		const result: ClassificationResult = {
 			classification: llmResult.classification,
 			source: "llm",
 			matches: llmResult.matches,
 		};
+		classificationCache.set(cleaned, result);
+		return result;
 	}
 
 	// No LLM available — default to orchestrated (safe)
 	if (config.debugMode) {
-		console.log(`[smart-mode] No LLM available, defaulting to orchestrated`);
+		console.log(`[skip-flow] No LLM available, defaulting to orchestrated`);
 	}
-	return {
+	const result: ClassificationResult = {
 		classification: "orchestrated",
 		source: "regex",
 		matches: ["no-llm-default"],
 	};
+	classificationCache.set(cleaned, result);
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,13 +288,13 @@ export async function classifyTask(
 // ---------------------------------------------------------------------------
 
 /**
- * Get active tools based on smart mode analysis.
- * If smart mode is enabled and task is single-purpose, exclude flow tool.
+ * Get active tools based on skip flow analysis.
+ * If skip flow is enabled and task is single-purpose, exclude flow tool.
  */
-export async function getSmartModeTools(
+export async function getSkipFlowTools(
 	baseTools: string[],
 	message: string,
-	config: SmartModeConfig,
+	config: SkipFlowConfig,
 	deps?: ClassifyDeps,
 ): Promise<string[]> {
 	if (!config.enabled) {
@@ -270,7 +304,7 @@ export async function getSmartModeTools(
 	const result = await classifyTask(message, config, deps);
 
 	if (config.debugMode) {
-		console.log(`[smart-mode] Classification result:`, {
+		console.log(`[skip-flow] Classification result:`, {
 			classification: result.classification,
 			source: result.source,
 			matches: result.matches,
@@ -292,7 +326,7 @@ export async function getSmartModeTools(
  */
 export async function needsFlow(
 	message: string,
-	config: SmartModeConfig,
+	config: SkipFlowConfig,
 	deps?: ClassifyDeps,
 ): Promise<boolean> {
 	if (!config.enabled) {

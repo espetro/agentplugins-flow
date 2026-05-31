@@ -60,7 +60,7 @@ import {
 	resolveSettings,
 	type ResolvedSettings,
 } from "./config/settings-resolver.js";
-import { getSmartModeTools, type SmartModeConfig, type ClassifyDeps } from "./tools/smart-mode.js";
+import { getSkipFlowTools, clearClassificationCache, type SkipFlowConfig, type ClassifyDeps } from "./tools/skip-flow.js";
 
 import { scrambleManager, setAnimationConfig } from "./tui/scramble/index.js";
 import { logWarn, logError } from "./config/log.js";
@@ -337,8 +337,8 @@ export default function (pi: ExtensionAPI) {
 		description: "Enable the batch_read tool (default: follows tool-optimize).",
 		type: "boolean",
 	});
-	pi.registerFlag("smart-mode", {
-		description: "Enable smart mode to skip flow for single-purpose tasks (default: false).",
+	pi.registerFlag("skip-flow", {
+		description: "Enable skip flow mode to skip flow for single-purpose tasks (default: false).",
 		type: "boolean",
 	});
 
@@ -359,6 +359,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Auto-discover flows on session start
 	pi.on("session_start", async (_event, ctx) => {
+		clearClassificationCache();
 		sessionRegistry.register(ctx.cwd, ctx.sessionManager.getSessionId());
 		_sessionCtx = ctx;
 		resolved = resolveSettings(pi, ctx.cwd);
@@ -484,23 +485,31 @@ export default function (pi: ExtensionAPI) {
 			.map((m: any, i: number) => (m.role === "user" ? i : -1))
 			.filter((i: number) => i !== -1);
 
-		// Smart mode: adjust tools based on user message complexity
-		if (resolved?.smartMode && userIndices.length > 0) {
+		// Skip flow mode: adjust tools based on user message complexity
+		if (resolved?.skipFlow && userIndices.length > 0) {
 			const lastUserMsg = steeringStrippedMessages[userIndices[userIndices.length - 1]];
-			const userContent = typeof lastUserMsg.content === "string" ? lastUserMsg.content : "";
+			let userContent = "";
+			if (typeof lastUserMsg.content === "string") {
+				userContent = lastUserMsg.content;
+			} else if (Array.isArray(lastUserMsg.content)) {
+				userContent = lastUserMsg.content
+					.filter((c: any) => c && c.type === "text" && typeof c.text === "string")
+					.map((c: any) => c.text)
+					.join("\n");
+			}
 
 			if (userContent) {
 				const baseTools = computeActiveTools(resolved.toolOptimize, resolved.traceEnabled, resolved.batchReadEnabled);
-				const smartConfig: SmartModeConfig = {
+				const skipFlowConfig: SkipFlowConfig = {
 					enabled: true,
 					debugMode: resolved.debugMode,
 				};
 
 				// Get model and auth for LLM classification
-				const model = _sessionCtx?.model;
+				const model = (_sessionCtx as any)?.model;
 				let deps: ClassifyDeps | undefined;
 				if (model) {
-					const auth = await _sessionCtx?.modelRegistry?.getApiKeyAndHeaders(model);
+					const auth = await (_sessionCtx as any)?.modelRegistry?.getApiKeyAndHeaders(model);
 					if (auth?.ok && auth?.apiKey) {
 						deps = {
 							model,
@@ -510,8 +519,8 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 
-				const smartTools = await getSmartModeTools(baseTools, userContent, smartConfig, deps);
-				pi.setActiveTools(smartTools);
+				const skipTools = await getSkipFlowTools(baseTools, userContent, skipFlowConfig, deps);
+				pi.setActiveTools(skipTools);
 			}
 		}
 

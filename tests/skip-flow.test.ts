@@ -1,16 +1,24 @@
 import { describe, it, expect, vi } from "vitest";
-import { classifyByRegex, classifyTask, getSmartModeTools, needsFlow } from "../src/tools/smart-mode.js";
-import type { Model } from "@earendil-works/pi-ai";
+
+const mockComplete = vi.fn().mockResolvedValue({
+	content: [{ type: "text", text: "single" }],
+});
+
+vi.mock("@earendil-works/pi-ai", () => ({
+	complete: (...args: any[]) => mockComplete(...args),
+}));
+
+import { classifyByRegex, classifyTask, getSkipFlowTools, needsFlow, clearClassificationCache } from "../src/tools/skip-flow.js";
 
 // Mock model for testing
-const mockModel: Model = {
+const mockModel: any = {
 	id: "test-model",
 	provider: "test",
 	contextWindow: 128000,
 	maxTokens: 4096,
-} as any;
+};
 
-describe("smart-mode", () => {
+describe("skip-flow", () => {
 	describe("classifyByRegex", () => {
 		it("classifies definite search commands as single-purpose", () => {
 			expect(classifyByRegex("find all TODO comments").classification).toBe("single-purpose");
@@ -53,6 +61,13 @@ describe("smart-mode", () => {
 			expect(classifyByRegex("help me with this code").classification).toBe("uncertain");
 			expect(classifyByRegex("what should I do about this bug").classification).toBe("uncertain");
 		});
+
+		it("returns uncertain for search/read commands with sequence or action indicators", () => {
+			expect(classifyByRegex("find all TODO comments and refactor them").classification).toBe("uncertain");
+			expect(classifyByRegex("search for unused imports and delete them").classification).toBe("uncertain");
+			expect(classifyByRegex("locate the config file and update it").classification).toBe("uncertain");
+			expect(classifyByRegex("check if tests pass and fix them").classification).toBe("uncertain");
+		});
 	});
 
 	describe("classifyTask", () => {
@@ -63,22 +78,19 @@ describe("smart-mode", () => {
 		});
 
 		it("falls back to LLM when regex uncertain", async () => {
-			const mockComplete = vi.fn().mockResolvedValue({
+			mockComplete.mockClear();
+			mockComplete.mockResolvedValueOnce({
 				content: [{ type: "text", text: "single" }],
 			});
-
-			// Mock the complete function
-			vi.doMock("@earendil-works/pi-ai", () => ({
-				complete: mockComplete,
-			}));
 
 			const result = await classifyTask("help me with this code", { enabled: true }, {
 				model: mockModel,
 				apiKey: "test-key",
 			});
 
-			// Since we're testing with mocked LLM, it should use LLM
+			expect(result.classification).toBe("single-purpose");
 			expect(result.source).toBe("llm");
+			expect(mockComplete).toHaveBeenCalledTimes(1);
 		});
 
 		it("defaults to orchestrated when no LLM available", async () => {
@@ -86,30 +98,54 @@ describe("smart-mode", () => {
 			expect(result.classification).toBe("orchestrated");
 			expect(result.matches).toContain("no-llm-default");
 		});
+
+		it("caches classification results to avoid duplicate LLM calls", async () => {
+			mockComplete.mockClear();
+			mockComplete.mockResolvedValue({
+				content: [{ type: "text", text: "single" }],
+			});
+
+			// Clear cache first to ensure a clean state
+			clearClassificationCache();
+
+			const testDeps = {
+				model: mockModel,
+				apiKey: "test-key",
+			};
+
+			const result1 = await classifyTask("complex ambiguous message to classify", { enabled: true }, testDeps);
+			const result2 = await classifyTask("complex ambiguous message to classify", { enabled: true }, testDeps);
+
+			expect(result1.classification).toBe("single-purpose");
+			expect(result2.classification).toBe("single-purpose");
+			
+			// If cached, mockComplete should only be called once
+			expect(mockComplete).toHaveBeenCalledTimes(1);
+		});
 	});
 
-	describe("getSmartModeTools", () => {
+	describe("getSkipFlowTools", () => {
 		const baseTools = ["read", "bash", "flow", "trace", "ask_user"];
 
 		it("returns all tools when disabled", async () => {
-			const result = await getSmartModeTools(baseTools, "any message", { enabled: false });
+			const result = await getSkipFlowTools(baseTools, "any message", { enabled: false });
 			expect(result).toEqual(baseTools);
 		});
 
 		it("excludes flow for definite single-purpose tasks", async () => {
-			const result = await getSmartModeTools(baseTools, "find all TODO comments", { enabled: true });
+			const result = await getSkipFlowTools(baseTools, "find all TODO comments", { enabled: true });
 			expect(result).not.toContain("flow");
 			expect(result).toContain("read");
 			expect(result).toContain("bash");
 		});
 
 		it("includes flow for definite orchestrated tasks", async () => {
-			const result = await getSmartModeTools(baseTools, "first analyze, then fix, finally test", { enabled: true });
+			const result = await getSkipFlowTools(baseTools, "first analyze, then fix, finally test", { enabled: true });
 			expect(result).toContain("flow");
 		});
 
 		it("preserves tool order", async () => {
-			const result = await getSmartModeTools(baseTools, "find all TODO comments", { enabled: true });
+			const result = await getSkipFlowTools(baseTools, "find all TODO comments", { enabled: true });
 			expect(result).toEqual(["read", "bash", "trace", "ask_user"]);
 		});
 	});
