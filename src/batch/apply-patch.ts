@@ -7,6 +7,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { formatDirectoryListing } from "./format-directory-listing.js";
 
 // ---------------------------------------------------------------------------
 // Parser constants
@@ -566,6 +567,26 @@ export async function applyPatch(
 			}
 			case "update": {
 				const targetPath = path.resolve(cwd, hunk.path);
+				// Permissive directory check: if the patch target is a directory,
+				// return a listing instead of throwing EISDIR.
+				try {
+					const patchLstat = await fs.lstat(targetPath);
+					if (patchLstat.isDirectory()) {
+						const listingText = await formatDirectoryListing(hunk.path, targetPath);
+						throw new Error(`Path is a directory: ${hunk.path}. Patch not applied.
+${listingText}`);
+					}
+				} catch (err: any) {
+					if (err && err.code === "EISDIR") {
+						const listingText = await formatDirectoryListing(hunk.path, targetPath);
+						throw new Error(`Path is a directory: ${hunk.path}. Patch not applied.
+${listingText}`);
+					}
+					if (err && err.code === "ENOENT") {
+						throw new Error(`File not found: ${hunk.path}`);
+					}
+					throw err;
+				}
 				let originalContent: string;
 				try {
 					originalContent = await fs.readFile(targetPath, "utf-8");

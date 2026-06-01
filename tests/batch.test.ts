@@ -609,8 +609,9 @@ describe("batch tool", () => {
 		expect(result.details.results[0].enclosingSignatures).toBeUndefined();
 	});
 
-	it("rejects reading a directory with a friendly error", async () => {
+	it("returns a directory listing (permissive mode) when reading a directory", async () => {
 		fs.mkdirSync(path.join(tmpDir, "a-dir"));
+		fs.mkdirSync(path.join(tmpDir, "a-dir", "sub-dir"));
 		fs.writeFileSync(path.join(tmpDir, "a-dir", "file.txt"), "hello\n", "utf-8");
 
 		const tool = createTool();
@@ -622,12 +623,49 @@ describe("batch tool", () => {
 			makeCtx(tmpDir),
 		);
 
-		expect(result.details.results[0]).toMatchObject({
+		// Permissive mode: directory reads return a listing, not an error.
+		const r = result.details.results[0];
+		expect(r).toMatchObject({
 			op: "read",
-			status: "error",
-			error: expect.stringContaining("Cannot read directory"),
+			status: "ok",
+			directoryListing: true,
 		});
-		expect(result.content[0].text).toContain("Cannot read directory");
+		expect(r.content).toMatch(/📁 a-dir/);
+		expect(r.content).toMatch(/\[D\] sub-dir/);
+		expect(r.content).toMatch(/\[F\] file\.txt/);
+		expect(r.content).not.toMatch(/EISDIR/);
+		expect(r.totalLines).toBeGreaterThan(1);
+	});
+
+	it("returns a directory listing instead of EISDIR when edit targets a directory", async () => {
+		fs.mkdirSync(path.join(tmpDir, "edit-target-dir"));
+		fs.writeFileSync(path.join(tmpDir, "edit-target-dir", "inner.txt"), "hi", "utf-8");
+
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-edit-dir",
+			{
+				o: [
+					{
+						op: "edit",
+						path: "edit-target-dir",
+						edits: [{ oldText: "anything", newText: "else" }],
+					},
+				],
+			},
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		const r = result.details.results[0];
+		expect(r.op).toBe("edit");
+		expect(r.status).toBe("skipped");
+		expect(r.directoryListing).toBe(true);
+		expect(r.content).toMatch(/📁 edit-target-dir/);
+		expect(r.content).toMatch(/\[F\] inner\.txt/);
+		expect(r.content).not.toMatch(/EISDIR/);
+		expect(r.error).toMatch(/Path is a directory/);
 	});
 
 	describe("write operations", () => {
@@ -3318,8 +3356,9 @@ describe("batch_read tool", () => {
 				path: "small.txt",
 			});
 		});
-		it("rejects reading a directory with a friendly error", async () => {
+		it("returns a directory listing (permissive mode) when reading a directory", async () => {
 			fs.mkdirSync(path.join(tmpDir, "a-dir"));
+			fs.mkdirSync(path.join(tmpDir, "a-dir", "sub-dir"));
 			fs.writeFileSync(path.join(tmpDir, "a-dir", "file.txt"), "hello\n", "utf-8");
 
 			const tool = createTool();
@@ -3331,12 +3370,18 @@ describe("batch_read tool", () => {
 				makeCtx(tmpDir),
 			);
 
-			expect(result.details.results[0]).toMatchObject({
+			// Permissive mode: directory reads return a listing, not an error.
+			const r = result.details.results[0];
+			expect(r).toMatchObject({
 				op: "read",
-				status: "error",
-				error: expect.stringContaining("Cannot read directory"),
+				status: "ok",
+				directoryListing: true,
 			});
-			expect(result.content[0].text).toContain("Cannot read directory");
+			expect(r.content).toMatch(/📁 a-dir/);
+			expect(r.content).toMatch(/\[D\] sub-dir/);
+			expect(r.content).toMatch(/\[F\] file\.txt/);
+			expect(r.content).not.toMatch(/EISDIR/);
+			expect(r.totalLines).toBeGreaterThan(1);
 		});
 	});
 

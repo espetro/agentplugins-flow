@@ -277,6 +277,9 @@ export function applyEdits(
 // ---------------------------------------------------------------------------
 
 export function expandTilde(inputPath: string): string {
+	// Defensive: handle non-string input (null, undefined, number, etc.) gracefully
+	// so downstream code never sees an opaque TypeError.
+	if (typeof inputPath !== "string") return inputPath as unknown as string;
 	if (inputPath === "~") return os.homedir();
 	if (inputPath.startsWith("~/")) return path.join(os.homedir(), inputPath.slice(2));
 	return inputPath;
@@ -297,6 +300,12 @@ export function isWithinDirectory(child: string, parent: string): boolean {
 }
 
 export async function validatePath(inputPath: string, cwd: string): Promise<{ path: string; warning?: string }> {
+	// Defensive: require a non-empty string. Without this, `path.resolve(cwd, "")`
+	// silently returns `cwd` (a directory), which later surfaces as a raw EISDIR
+	// from fs.readFile. Failing fast here gives a clear, actionable error.
+	if (typeof inputPath !== "string" || inputPath.length === 0) {
+		throw new Error("p (path) is required for file operations. Received an empty or missing path.");
+	}
 	let expandedPath = expandTilde(inputPath);
 	if (expandedPath.startsWith("@")) {
 		expandedPath = expandedPath.slice(1);

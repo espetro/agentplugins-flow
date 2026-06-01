@@ -27,6 +27,8 @@ export const TARGETED_READ_LINE_LIMIT = 500;
 export const MAX_CONTEXT_MAP_ENTRIES = 100;
 export const MAX_TOTAL_RESULT_LINES = 1500;
 export const BATCH_READ_MAX_TOTAL_BYTES = 150 * 1024; // 150KB
+export const MAX_DIRECTORY_LISTING_ENTRIES = getEnvInt("PI_BATCH_MAX_DIR_ENTRIES", 1000);
+
 export const BASH_SOFT_TIMEOUT_MS = 120_000;
 export const BASH_DEFAULT_TIMEOUT_MS = getEnvInt("PI_BASH_TIMEOUT_MS", 120_000);
 export const BASH_POLL_TAIL_LINES = 50;
@@ -156,6 +158,7 @@ export interface OpResult {
 	blocksChanged?: number;
 	totalLines?: number;
 	contextMap?: boolean;
+	directoryListing?: boolean;
 	language?: string;
 	symbols?: ContextMapEntry[];
 	symbolsTruncated?: boolean;

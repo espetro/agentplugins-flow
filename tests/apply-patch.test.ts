@@ -660,4 +660,42 @@ describe("batch patch integration", () => {
 		const content = fs.readFileSync(path.join(tmpDir, "batch-patch.txt"), "utf-8");
 		expect(content).toBe("hello from batch\n");
 	});
+
+
+// ---------------------------------------------------------------------------
+// Permissive mode: directory targets return a listing instead of EISDIR
+// ---------------------------------------------------------------------------
+
+describe("applyPatch permissive directory handling", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-patch-dir-"));
+	});
+
+	afterEach(() => {
+		try {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		} catch {}
+	});
+
+	it("returns a directory listing when patching a directory (no raw EISDIR)", async () => {
+		fs.mkdirSync(path.join(tmpDir, "patch-target-dir"));
+		fs.mkdirSync(path.join(tmpDir, "patch-target-dir", "nested"));
+		fs.writeFileSync(path.join(tmpDir, "patch-target-dir", "hello.txt"), "hi", "utf-8");
+
+		const patchText = `*** Begin Patch
+*** Update File: patch-target-dir
+@@
+-old
++new
+*** End Patch`;
+
+		await expect(applyPatch(patchText, tmpDir)).rejects.toThrow(/Path is a directory/);
+		await expect(applyPatch(patchText, tmpDir)).rejects.toThrow(/📁 patch-target-dir/);
+		await expect(applyPatch(patchText, tmpDir)).rejects.toThrow(/\[D\] nested/);
+		await expect(applyPatch(patchText, tmpDir)).rejects.toThrow(/\[F\] hello\.txt/);
+		await expect(applyPatch(patchText, tmpDir)).rejects.not.toThrow(/EISDIR/);
+	});
+});
 });

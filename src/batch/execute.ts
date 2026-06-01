@@ -38,6 +38,7 @@ import {
 	expandTilde,
 	validatePath,
 } from "./fuzzy-edit.js";
+import { formatDirectoryListing } from "./format-directory-listing.js";
 import { applyPatch } from "./apply-patch.js";
 import { buildFileContextMap } from "./symbols.js";
 
@@ -337,20 +338,56 @@ export async function executeOperations(
 						throw new Error(`File not readable: ${op.p}`);
 					}
 
-					let stat;
+					let lstatResult;
 					try {
-						stat = await fs.lstat(resolvedPath);
+						lstatResult = await fs.lstat(resolvedPath);
 					} catch (err: any) {
 						if (err.code === "ENOENT") {
 							throw new Error(`File not found: ${op.p}`);
 						}
 						throw err;
 					}
-					if (stat.isDirectory()) {
-						throw new Error(`Cannot read directory: ${op.p}. Provide a file path instead, or use ls to list contents.`);
+					// Use `stat` (which follows symlinks) for the directory check.
+					// `lstat` reports the symlink itself, not its target, so a symlink
+					// to a directory would pass `lstat.isDirectory() === false` and then
+					// `fs.readFile` would follow the symlink and throw a raw EISDIR.
+					// Falling back to `lstat` if `stat` fails (e.g. broken symlink).
+					let statResult;
+					try {
+						statResult = await fs.stat(resolvedPath);
+					} catch {
+						statResult = lstatResult;
+					}
+					if (lstatResult.isDirectory() || statResult.isDirectory()) {
+						// Permissive mode: any file op on a directory returns a listing
+						// instead of throwing EISDIR. The agent can read the listing and
+						// pick a file path to operate on.
+						const listingText = await formatDirectoryListing(op.p, resolvedPath);
+						const listingLines = listingText.split("\n");
+						results.push({
+							op: "read",
+							path: op.p,
+							status: "ok",
+							content: listingText,
+							totalLines: listingLines.length,
+							directoryListing: true,
+						});
+						counts.read++;
+						break;
 					}
 
-					const rawContent = await fs.readFile(resolvedPath, "utf-8");
+					let rawContent: string;
+					try {
+						rawContent = await fs.readFile(resolvedPath, "utf-8");
+					} catch (err: any) {
+						// Belt-and-suspenders: convert raw Node EISDIR into a friendly error
+						// in case any other code path (race, broken symlink, etc.) slips past
+						// the directory check above.
+						if (err && err.code === "EISDIR") {
+							throw new Error(`Cannot read directory: ${op.p}. Provide a file path instead, or use ls to list contents.`);
+						}
+						throw err;
+					}
 					const { text } = stripBom(rawContent);
 					const allLines = text.split("\n");
 					const totalFileLines = allLines.length;
@@ -423,8 +460,15 @@ export async function executeOperations(
 						throw new Error("c (content) is required for write operations.");
 					}
 					await withFileMutationQueue(resolvedPath, async () => {
-						let writeStat;
-						try { writeStat = await fs.lstat(resolvedPath); } catch (e) { logWarn(`[pi-agent-flow] lstat failed for ${resolvedPath}: ${e}`); }
+						// lstat reports the symlink itself; stat follows it. Check both so
+						// a symlink-to-directory is rejected with a clear error instead of
+						// leaking a raw EISDIR from fs.writeFile.
+						let writeLstat;
+						try { writeLstat = await fs.lstat(resolvedPath); } catch (e) { logWarn(`[pi-agent-flow] lstat failed for ${resolvedPath}: ${e}`); }
+						let writeStat: typeof writeLstat = writeLstat;
+						if (writeLstat && !writeLstat.isDirectory()) {
+							try { writeStat = await fs.stat(resolvedPath); } catch { writeStat = writeLstat; }
+						}
 						if (writeStat?.isDirectory()) {
 							throw new Error(`Cannot write to directory: ${op.p}. Provide a file path instead.`);
 						}
@@ -447,6 +491,43 @@ export async function executeOperations(
 						throw new Error("e (edits) array is required for edit operations.");
 					}
 					const edits = op.e;
+
+					// Permissive directory check: if the edit target is a directory,
+					// return a listing instead of throwing EISDIR.
+					try {
+						const editLstat = await fs.lstat(resolvedPath);
+						if (editLstat.isDirectory()) {
+							const listingText = await formatDirectoryListing(op.p, resolvedPath);
+							results.push({
+								op: "edit",
+								path: op.p,
+								status: "skipped",
+								skipped: true,
+								content: listingText,
+								directoryListing: true,
+								error: `Path is a directory: ${op.p}. No edits applied — pick a file from the listing.`,
+								hint: "Use o: 'read' to inspect the directory, then re-call edit with a file path.",
+							});
+							counts.skipped++;
+							break;
+						}
+					} catch (err: any) {
+						if (err && err.code === "EISDIR") {
+							const listingText = await formatDirectoryListing(op.p, resolvedPath);
+							results.push({
+								op: "edit",
+								path: op.p,
+								status: "skipped",
+								skipped: true,
+								content: listingText,
+								directoryListing: true,
+								error: `Path is a directory: ${op.p}. No edits applied.`,
+							});
+							counts.skipped++;
+							break;
+						}
+						throw err;
+					}
 
 					const blocksChanged = await withFileMutationQueue(resolvedPath, async () => {
 						const rawContent = await fs.readFile(resolvedPath, "utf-8");
