@@ -91,6 +91,10 @@ A lightweight flow state with `maxDepth: 0` that runs verbatim checks, explorati
 | `complexity` | `string` | Optional budget level (`snap`, `simple`, `moderate`, `complex`, `intricate`). |
 | `dispatch` | `array` | Optional pre-flight operations (`batch`, `bash`, `web`) to run. Results are injected into the prompt. |
 
+### Snapshot behavior
+
+`trace` receives the **main agent's full session context** — no tier-based message cap, no profile-based compression. The `tier: lite` in `agents/trace.md` only affects which model is selected (cheaper/faster), not the snapshot content. The shared context display accurately reflects the main agent's actual message counts and conversation history.
+
 ### Example using `dispatch` for quick edits/reads/bash
 
 Run batch modifications or terminal checks directly in a single step via `dispatch` without additional round-trips:
@@ -115,6 +119,28 @@ Run batch modifications or terminal checks directly in a single step via `dispat
 }
 ```
 
+### Lenient dispatch
+
+The `trace` and `flow` dispatch surfaces are **forgiving** — they automatically normalize common shape mistakes the model makes before validation. The underlying `batch` and `bash` tools themselves remain strict; the leniency only applies at the dispatch entry point.
+
+**Boundary: `batch` stays precise; `trace`/`flow` dispatch is forgiving.**
+
+Input → normalized output pairs:
+
+| Input | Normalized | Note |
+|---|---|---|
+| Bare string at top level or inside `ops` | `bash` op `{c: string}` | `string → bash[1]` |
+| Single object inside `ops` (where array expected) | wrapped in array | `single obj → array[1]` |
+| `batch` op `{p: "x.ts"}` (no `o`) | infers `o: "read"` | `inferred o=read` |
+| `batch` op `{c: "ls"}` (no `p`) | infers `o: "bash"`, `p: "ls"` | `inferred o=bash` |
+| `batch` op `{p: "x", c: "code"}` | infers `o: "write"` | `inferred o=write` |
+| `batch` op `{p: "x", e: [...]}` | infers `o: "edit"` | `inferred o=edit` |
+| `bash` op with stray `tool` key | strips it | `stripped stray tool` |
+| `web` op `{q: "..."}` (no `o`) | infers `o: "search"` | `inferred o=search` |
+| `web` op `{u: "..."}` (no `o`) | infers `o: "fetch"` | `inferred o=fetch` |
+| Nested `{tool, ops: {item: {...}}}` inside an op | flattens to inner item | `flattened nested dispatcher` |
+
+When any normalization occurs, the resulting prompt is annotated with a `normalized:` section listing the applied fixes so the agent knows what happened.
 
 ## `batch` / `batch_read` — unified file operations
 

@@ -12,7 +12,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { runFlowWithLiveSession } from "../flow/flow-live.js";
-import { discoverFlows, getFlowTier, type FlowConfig } from "../flow/agents.js";
+import { discoverFlows, type FlowConfig } from "../flow/agents.js";
 import { buildSnapshotWithCompression, parseSharedContext } from "../core2/snapshot.js";
 import {
 	resolveFlowModelCandidates,
@@ -33,6 +33,7 @@ import { runWebOps } from "./web-ops.js";
 import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "../batch/constants.js";
 import type { WebOpInput } from "./web-ops.js";
 import { extractTraceStructuredOutput, resolveToolEvidence } from "../snapshot/trace-output.js";
+import { prepareTraceDispatchArguments } from "./trace-dispatch-prep.js";
 
 // ---------------------------------------------------------------------------
 // Dispatch schemas — mirror of the flow-tool dispatch (kept here to avoid
@@ -195,6 +196,9 @@ export const TraceParams = Type.Object({
 	examples: [
 		{},
 		{ dispatch: [{ tool: "batch", ops: [{ o: "read", p: "src/main.ts" }] }] },
+		{ dispatch: [{ tool: "bash", ops: ["git status"] }] },
+		{ dispatch: [{ tool: "batch", ops: [{ p: "src/index.ts" }] }] },
+		{ dispatch: [{ tool: "bash", ops: [{ tool: "bash", ops: { item: { c: "ls" } } }] }] },
 	],
 });
 
@@ -232,12 +236,24 @@ function resolveTraceRuntime(
 	});
 	const resolvedModel = candidates[0];
 	const maxContextTokens = resolveModelContextWindow(resolvedModel);
+	// INTENTIONALLY OMIT: `tier` and `compressionProfile`.
+	//
+	// Trace is a leaf tool that must see the main agent's FULL context.
+	// Passing `tier: lite` would cap messages to 30 (lite default), causing
+	// 0 user messages to appear in the shared context display.
+	// Passing `compressionProfile: files-first` would filter/drop messages
+	// based on profile scoring, again hiding the main agent's conversation.
+	//
+	// The `tier: lite` in agents/trace.md only affects MODEL SELECTION
+	// (cheaper model), NOT snapshot compression.
+	//
+	// Bug history (2026-06): these WERE previously passed, causing the
+	// shared context to show 0 user messages. Fixed by removing them.
+	// DO NOT re-add tier or compressionProfile here.
 	const { snapshot: forkSessionSnapshotJsonl, stats: compressionStats } = buildSnapshotWithCompression(
 		ctx.sessionManager,
 		{
 			activeToolCallId: toolCallId,
-			tier: traceFlow.tier ?? getFlowTier("trace"),
-			compressionProfile: traceFlow.contextProfile,
 			compressionLevel: opts.getSettings?.()?.contextCompression,
 		},
 		maxContextTokens,
@@ -270,6 +286,11 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 		],
 		description: "Read files verbatim, run checks, explore the codebase. All fields optional.",
 		parameters: TraceParams,
+		prepareArguments: (input: unknown) => {
+			const result = prepareTraceDispatchArguments(input);
+			if (result.notes.length === 0) return input;
+			return { ...(input as object), dispatch: result.dispatch, _dispatchNotes: result.notes };
+		},
 
 		async execute(
 			toolCallId: string,
@@ -319,7 +340,11 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			const preDispatch = params.dispatch?.length
 				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
 				: undefined;
-			const preDispatchResults = preDispatch?.promptString;
+			let preDispatchResults = preDispatch?.promptString;
+			const dispatchNotes = (params as unknown as Record<string, unknown>)._dispatchNotes as string[] | undefined;
+			if (dispatchNotes && dispatchNotes.length > 0) {
+				preDispatchResults = `normalized:\n${dispatchNotes.map((n) => `- ${n}`).join("\n")}\n\n${preDispatchResults ?? ""}`;
+			}
 			const preDispatchMessages = preDispatch?.messages ?? [];
 
 			const result = await runFlowWithLiveSession(

@@ -287,10 +287,6 @@ export function runBashWithLimits(
 	});
 }
 
-export function generateBashId(): string {
-	return Math.random().toString(36).slice(2, 10);
-}
-
 /**
  * Truncate bash stdout/stderr to prevent oversized tool results.
  * Applies line limit first, then byte limit, with clear markers.
@@ -303,17 +299,8 @@ export function truncateBashOutput(
 	return truncateBashOutputText(text, maxBytes, maxLines);
 }
 
-/** Normalize a bash op from prepareArguments into a canonical form. */
-export function normalizeBashOp(raw: Record<string, unknown>): Record<string, unknown> {
-	return {
-		o: "bash",
-		c: raw.c ?? raw.command,
-		i: raw.i ?? raw.id ?? generateBashId(),
-		t: raw.t ?? raw.timeout,
-		h: raw.h ?? raw.cwdPath ?? raw.cwd,
-		p: raw.p ?? raw.h ?? ".",
-	};
-}
+// Re-export normalizeBashOp and generateBashId from normalize.ts for backward compatibility
+export { normalizeBashOp, generateBashId } from "./normalize.js";
 
 /**
  * Execute a batch of bash ops concurrently.

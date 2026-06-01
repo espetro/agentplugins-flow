@@ -43,6 +43,7 @@ import * as sessionRegistry from "./flow/session-registry.js";
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 
 import { createTraceTool } from "./tools/trace.js";
+import { prepareFlowDispatchArguments } from "./flow/flow-dispatch-prep.js";
 import { executeOperations } from "./batch/execute.js";
 import { runWebOps } from "./tools/web-ops.js";
 import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "./batch/constants.js";
@@ -611,6 +612,8 @@ export default function (pi: ExtensionAPI) {
 			],
 			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",
 			parameters: FlowParams,
+			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
+			prepareArguments: prepareFlowDispatchArguments,
 
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				if (!resolved) {
@@ -713,7 +716,12 @@ export default function (pi: ExtensionAPI) {
 				const preDispatchResults = await Promise.all(
 					params.flow.map(async (f: Static<typeof FlowItem>) => {
 						if (!f.dispatch || f.dispatch.length === 0) return undefined;
-						return executeDispatchOps(f.dispatch, f.cwd ?? ctx.cwd, ctx, signal);
+						const result = await executeDispatchOps(f.dispatch, f.cwd ?? ctx.cwd, ctx, signal);
+						const notes = (f as unknown as Record<string, unknown>)._dispatchNotes as string[] | undefined;
+						if (notes && notes.length > 0) {
+							return `normalized:\n${notes.map((n) => `- ${n}`).join("\n")}\n\n${result}`;
+						}
+						return result;
 					})
 				);
 
