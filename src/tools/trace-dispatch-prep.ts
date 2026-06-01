@@ -34,9 +34,17 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 	const dispatch: Array<{ tool: "batch" | "bash" | "web"; ops: unknown[] }> = [];
 	let changed = false;
 
-	for (const group of rawDispatch) {
-		if (!group || typeof group !== "object") {
+	for (let i = 0; i < rawDispatch.length; i++) {
+		const group = rawDispatch[i];
+		if (group === null || group === undefined) {
 			changed = true;
+			notes.push(`dispatch[${i}]: dropped null/undefined`);
+			continue;
+		}
+		if (typeof group !== "object" || Array.isArray(group)) {
+			changed = true;
+			const type = Array.isArray(group) ? "array" : typeof group;
+			notes.push(`dispatch[${i}]: dropped non-object (${type})`);
 			continue;
 		}
 		const rawG = group as Record<string, unknown>;

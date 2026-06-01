@@ -23,6 +23,7 @@ import {
 	executeBatchBash,
 } from "./batch-bash.js";
 import { normalizeBatchOp, generateBashId } from "./normalize.js";
+import { coerceArrayOfObjects } from "../tools/array-coerce.js";
 import { checkLoopGuard } from "../tools/loop-guard.js";
 import { logWarn } from "../config/log.js";
 import { runWebOps } from "../tools/web-ops.js";
@@ -265,17 +266,24 @@ function prepareArguments(input: unknown): { o: unknown[]; w?: unknown[] } | unk
 		opsArray = [];
 	}
 
+	const sanitized = coerceArrayOfObjects<Record<string, unknown>>(opsArray, { label: "batch.o" });
+
 	// Normalize each operation to single-letter form
 	const result: { o: unknown[]; w?: unknown[] } = {
-		o: opsArray.map((op: unknown) => {
-			if (!op || typeof op !== "object") return op;
-			return normalizeBatchOp(op as Record<string, unknown>);
-		}),
+		o: sanitized.value.map((op) => normalizeBatchOp(op)),
 	};
 
-	// Extract web ops if present
+	// Extract and sanitize web ops if present
 	if (Array.isArray(args.w)) {
-		result.w = args.w;
+		const sanitizedW = coerceArrayOfObjects<Record<string, unknown>>(args.w, { label: "batch.w" });
+		if (sanitizedW.value.length > 0) {
+			result.w = sanitizedW.value;
+		} else if (args.w.length > 0) {
+			// User provided w but sanitization dropped everything — preserve the empty
+			// result so the user sees "no valid web ops" rather than a schema crash.
+			result.w = [];
+		}
+		// If args.w was provided as an empty array, leave result.w undefined.
 	}
 
 	return result;
@@ -314,8 +322,8 @@ export function createBatchReadTool() {
 	return {
 		name: "batch_read",
 		label: "batch_read",
-		description: "Read multiple files or file sections in one call.",
-		promptSnippet: "Read multiple files/sections in one call",
+		description: "Read multiple files or file sections in one call. Read-only — does not support edit/write/delete/bash/patch; use the full `batch` tool for those.",
+		promptSnippet: "Read multiple files/sections in one call (read-only)",
 		promptGuidelines: [
 			"Combine multiple read/rg ops into one call.",
 			"Use `s` (start line) and `l` (line count) to target specific sections of large files.",

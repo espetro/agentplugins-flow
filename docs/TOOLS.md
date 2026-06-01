@@ -204,6 +204,8 @@ When **tool optimization** is enabled (default), the separate `read` / `write` /
 - **`batch`** — sequential read, write, edit, and delete operations in one call. Edits use fuzzy matching and preserve line endings.
 - **`batch_read`** — read-only variant for multiple reads. Small full-file reads return raw content; large full-file reads return code/infra context maps or total line counts, and oversized targeted reads are capped with continuation guidance.
 
+  > **Caution:** `batch_read` only supports read-only operations (`read` and `rg`). It does **not** support `edit`, `write`, `delete`, `bash`, or `patch` — use the full `batch` tool for those.
+
 ## `batch_bash_poll` — poll pending bash commands
 
 For child flows using the `batch` tool, `batch_bash_poll` lets the agent check on pending bash operations that exceeded the soft timeout. Pass the operation IDs from the pending results to retrieve completed output or see updated partial output.

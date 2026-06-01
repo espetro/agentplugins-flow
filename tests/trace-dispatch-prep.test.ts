@@ -90,7 +90,7 @@ describe("prepareTraceDispatchArguments", () => {
 		expect(result.notes).toEqual(["flattened nested dispatcher"]);
 	});
 
-	it("passes canonical flat array unchanged with no notes", () => {
+	it("passes canonical flat array unchanged with no notes and no changed flag", () => {
 		const input = {
 			dispatch: [
 				{ tool: "batch", ops: [{ o: "read", p: "src/main.ts" }] },
@@ -100,6 +100,17 @@ describe("prepareTraceDispatchArguments", () => {
 		const result = prepareTraceDispatchArguments(input);
 		expect(result.dispatch).toEqual(input.dispatch);
 		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(false);
+	});
+
+		it("returns changed: false for non-object input", () => {
+		const result = prepareTraceDispatchArguments("string");
+		expect(result.changed).toBe(false);
+	});
+
+	it("returns changed: false for missing dispatch", () => {
+		const result = prepareTraceDispatchArguments({ intent: "test" });
+		expect(result.changed).toBe(false);
 	});
 
 	it("handles the exact bug report nested dispatcher case", () => {
@@ -124,5 +135,51 @@ describe("prepareTraceDispatchArguments", () => {
 			},
 		]);
 		expect(result.notes).toEqual(["flattened nested dispatcher"]);
+	});
+
+
+	// --- changed flag for silent-drop cases ---
+	// The normalizer transforms input without adding notes in these cases.
+	// The changed flag is the canonical signal that the prep layer relies on.
+
+	it("REGRESSION: changed: true for group with no valid tool (silent drop)", () => {
+		const result = prepareTraceDispatchArguments({ dispatch: [{}] });
+		expect(result.dispatch).toEqual([]);
+		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(true);
+	});
+
+	it("REGRESSION: changed: true for null/undefined/false/0 ops (silent drop)", () => {
+		const result = prepareTraceDispatchArguments({
+			dispatch: [{ tool: "bash", ops: [null, undefined, false, 0] }],
+		});
+		expect(result.dispatch).toEqual([{ tool: "bash", ops: [] }]);
+		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(true);
+	});
+
+	it("REGRESSION: changed: true for missing ops field (silent drop)", () => {
+		const result = prepareTraceDispatchArguments({ dispatch: [{ tool: "bash" }] });
+		expect(result.dispatch).toEqual([{ tool: "bash", ops: [] }]);
+		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(true);
+	});
+
+	it("REGRESSION: changed: true for non-string-non-object ops (silent drop)", () => {
+		const result = prepareTraceDispatchArguments({
+			dispatch: [{ tool: "bash", ops: 42 }],
+		});
+		expect(result.dispatch).toEqual([{ tool: "bash", ops: [] }]);
+		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(true);
+	});
+
+	it("REGRESSION: changed: true for non-object op inside ops array (silent drop)", () => {
+		const result = prepareTraceDispatchArguments({
+			dispatch: [{ tool: "bash", ops: [42, true] }],
+		});
+		expect(result.dispatch).toEqual([{ tool: "bash", ops: [] }]);
+		expect(result.notes).toEqual([]);
+		expect(result.changed).toBe(true);
 	});
 });

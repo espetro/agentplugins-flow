@@ -183,6 +183,11 @@ const FlowParams = Type.Object({
 		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }],
 	}, {
 		flow: [{ type: "scout", intent: "Map auth files", aim: "Map auth", complexity: "simple", concern: "verify", dispatch: [{ t: "bash", o: [{ cmd: "ls src/auth" }] }] }]
+	}, {
+		flow: [
+			{ type: "scout", intent: "Map auth files", aim: "Map auth", complexity: "simple", concern: "verify" },
+			{ type: "build", intent: "Implement JWT middleware", aim: "Add JWT", complexity: "complex", concern: "stateless only" },
+		],
 	}],
 });
 
@@ -611,8 +616,9 @@ export default function (pi: ExtensionAPI) {
 				"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
 				"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
 				"For quick file reads/checks, use `trace` instead.",
+				"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
 			],
-			description: "Dives into specialized flow states. Requires a `flow` array of tasks with specific `complexity` (snap, simple, moderate, complex, intricate).",
+			description: "Dives into specialized flow states. Requires a `flow` array of complete task objects with specific `complexity` (snap, simple, moderate, complex, intricate).",
 			parameters: FlowParams,
 			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
 			prepareArguments: prepareFlowDispatchArguments,
@@ -726,6 +732,17 @@ export default function (pi: ExtensionAPI) {
 						return result;
 					})
 				);
+
+				// Surface flow-level normalization notes
+				const flowNotes = (params as unknown as Record<string, unknown>)._flowNotes as string[] | undefined;
+				if (flowNotes && flowNotes.length > 0) {
+					const noteText = `flow normalized:\n${flowNotes.map((n) => `- ${n}`).join("\n")}`;
+					if (preDispatchResults[0] === undefined) {
+						(preDispatchResults as (string | undefined)[])[0] = noteText;
+					} else {
+						(preDispatchResults as string[])[0] = `${noteText}\n\n${preDispatchResults[0]}`;
+					}
+				}
 
 				let result: Awaited<ReturnType<typeof executeFlows>>;
 				try {
