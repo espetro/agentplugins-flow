@@ -96,7 +96,7 @@ export function createBatchCliTool(bashTracker?: BashProcessTracker, toolOptimiz
       input: unknown,
       signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      ctx: { cwd: string },
+      ctx: { cwd: string; sessionManager?: { getSessionDir(): string } },
     ) {
       let cmd: string;
       let cwd: string;
@@ -111,7 +111,7 @@ export function createBatchCliTool(bashTracker?: BashProcessTracker, toolOptimiz
       }
 
       try {
-        const { text, results, hasError } = await runBatchCli(cmd, cwd, bashTracker, signal);
+        const { text, results, hasError } = await runBatchCli(cmd, cwd, bashTracker, ctx.sessionManager, signal);
         return {
           content: [{ type: "text", text }],
           details: { results },

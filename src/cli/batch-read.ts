@@ -302,6 +302,8 @@ export async function runBatchReadCli(
     ops.push({ cmd: link.cmd, output, error, failed, skipped: false });
     if (failed) {
       previousFailed = true;
+    } else {
+      previousFailed = false;
     }
   }
 

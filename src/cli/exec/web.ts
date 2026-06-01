@@ -5,6 +5,7 @@ import { CliError } from "../parse.js";
 export async function runWebSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
+  sessionManager?: { getSessionDir(): string },
   signal?: AbortSignal,
 ): Promise<{ output: string; results: OpResult[]; error?: string; failed: boolean }> {
   if (parsed.positionals.length === 0) {
@@ -38,15 +39,14 @@ export async function runWebSubcommand(
     }
     const format = typeof parsed.flags.format === "string" ? parsed.flags.format : undefined;
 
-    // Need a sessionManager for temp file storage; if not available, use a minimal mock
-    const sessionDir = (global as any).__pi_session_dir ?? cwd;
-    const ctx = {
-      sessionManager: {
-        getSessionDir: () => sessionDir,
-      },
-    };
+    if (!sessionManager) {
+      throw new CliError(
+        "web fetch requires a session manager.",
+        "Session manager not available. Ensure this is running inside a pi session.",
+      );
+    }
 
-    const result = await runWebFetch({ url, format }, ctx, signal);
+    const result = await runWebFetch({ url, format }, { sessionManager }, signal);
     const output = result.content[0].text;
     const results: OpResult[] = [{
       op: "fetch",

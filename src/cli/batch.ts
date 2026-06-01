@@ -170,6 +170,7 @@ async function dispatchSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   bashTracker: BashProcessTracker | undefined,
+  sessionManager: { getSessionDir(): string } | undefined,
   signal?: AbortSignal,
 ): Promise<{ output: string; results: import("../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
   switch (subcommand) {
@@ -188,7 +189,7 @@ async function dispatchSubcommand(
     case "rg":
       return runRgSubcommand(parsed, cwd, signal);
     case "web":
-      return runWebSubcommand(parsed, cwd, signal);
+      return runWebSubcommand(parsed, cwd, sessionManager, signal);
     case "poll":
       return runPollSubcommand(parsed, cwd, bashTracker, signal);
     default:
@@ -222,6 +223,7 @@ export async function runBatchCli(
   cmd: string,
   cwd: string,
   bashTracker: BashProcessTracker | undefined,
+  sessionManager?: { getSessionDir(): string },
   signal?: AbortSignal,
 ): Promise<{ text: string; results: import("../batch/constants.js").OpResult[]; hasError: boolean }> {
   const trimmed = cmd.trim();
@@ -266,6 +268,7 @@ export async function runBatchCli(
             parsed,
             cwd,
             bashTracker,
+            sessionManager,
             signal,
           );
           output = result.output;
@@ -289,6 +292,8 @@ export async function runBatchCli(
     ops.push({ cmd: link.cmd, output, error, failed, skipped: false });
     if (failed) {
       previousFailed = true;
+    } else {
+      previousFailed = false;
     }
   }
 

@@ -224,5 +224,17 @@ describe("batch_read CLI tool", () => {
       expect(result.content[0].text).toContain("op 1/2");
       expect(result.content[0].text).toContain("op 2/2");
     });
+
+    it("resets previousFailed on success after ;", async () => {
+      fs.writeFileSync(path.join(tmpDir, "a.txt"), "A\n", "utf-8");
+      fs.writeFileSync(path.join(tmpDir, "b.txt"), "B\n", "utf-8");
+      fs.writeFileSync(path.join(tmpDir, "c.txt"), "C\n", "utf-8");
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "read a.txt && read missing.txt; read b.txt && read c.txt" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.content[0].text).toContain("A");
+      expect(result.content[0].text).toContain("B");
+      expect(result.content[0].text).toContain("C");
+      expect(result.content[0].text).not.toContain("SKIPPED");
+    });
   });
 });

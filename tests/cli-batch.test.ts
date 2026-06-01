@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createBatchCliTool } from "../src/cli/register.js";
 import { BashProcessTracker } from "../src/batch/batch-bash.js";
+import * as webOps from "../src/tools/web-ops.js";
 
 describe("batch CLI tool", () => {
   let tmpDir: string;
@@ -24,7 +25,12 @@ describe("batch CLI tool", () => {
   }
 
   function makeCtx(cwd: string) {
-    return { cwd };
+    return {
+      cwd,
+      sessionManager: {
+        getSessionDir: () => cwd,
+      },
+    };
   }
 
   describe("read", () => {
@@ -137,6 +143,51 @@ describe("batch CLI tool", () => {
       const result = await tool.execute("call-1", { cmd: "read missing.txt && read a.txt" }, undefined, undefined, makeCtx(tmpDir));
       expect(result.content[0].text).toContain("SKIPPED");
       expect(result.content[0].text).not.toContain("A");
+    });
+
+    it("resets previousFailed on success after ;", async () => {
+      fs.writeFileSync(path.join(tmpDir, "a.txt"), "A\n", "utf-8");
+      fs.writeFileSync(path.join(tmpDir, "b.txt"), "B\n", "utf-8");
+      fs.writeFileSync(path.join(tmpDir, "c.txt"), "C\n", "utf-8");
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "read a.txt && read missing.txt; read b.txt && read c.txt" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.content[0].text).toContain("A");
+      expect(result.content[0].text).toContain("B");
+      expect(result.content[0].text).toContain("C");
+      expect(result.content[0].text).not.toContain("SKIPPED");
+    });
+  });
+
+  describe("web", () => {
+    it("searches via web search", async () => {
+      const spy = vi.spyOn(webOps, "runWebSearch").mockResolvedValue({
+        content: [{ type: "text" as const, text: "1. Result\n   https://example.com" }],
+        details: { query: "test", results: [], errors: undefined },
+      });
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "web search -q test" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.content[0].text).toContain("Result");
+      expect(result.content[0].text).toContain("https://example.com");
+      spy.mockRestore();
+    });
+
+    it("fetches via web fetch", async () => {
+      const spy = vi.spyOn(webOps, "runWebFetch").mockResolvedValue({
+        content: [{ type: "text" as const, text: "Fetched content" }],
+        details: { filePath: "/tmp/fetch.md", contentLength: 100 },
+      });
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "web fetch -u https://example.com" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.content[0].text).toContain("Fetched content");
+      spy.mockRestore();
+    });
+  });
+
+  describe("poll", () => {
+    it("polls pending bash by id", async () => {
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "bash echo hello" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.content[0].text).toContain("hello");
     });
   });
 
