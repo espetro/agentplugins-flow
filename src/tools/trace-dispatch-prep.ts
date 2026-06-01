@@ -50,8 +50,12 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 		if (ops && typeof ops === "object" && !Array.isArray(ops)) {
 			const opsObj = ops as Record<string, unknown>;
 			// Check for nested dispatcher: { tool, ops: { item: {...} } }
-			if (opsObj.item && typeof opsObj.item === "object" && !Array.isArray(opsObj.item)) {
-				ops = [opsObj.item];
+			if (opsObj.item && typeof opsObj.item === "object") {
+				if (Array.isArray(opsObj.item)) {
+					ops = opsObj.item;
+				} else {
+					ops = [opsObj.item];
+				}
 				notes.push("flattened nested dispatcher");
 			} else {
 				ops = [ops];
@@ -79,9 +83,16 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 			// Flatten nested dispatcher inside ops array: { tool: 'bash', ops: { item: {...} } }
 			if (opObj.tool && opObj.ops) {
 				const innerOps = opObj.ops as Record<string, unknown>;
-				if (innerOps.item && typeof innerOps.item === "object" && !Array.isArray(innerOps.item)) {
-					const flatOp = { ...innerOps.item } as Record<string, unknown>;
-					applyInference(flatOp, tool as string, notes, normalizedOps);
+				if (innerOps.item && typeof innerOps.item === "object") {
+					if (Array.isArray(innerOps.item)) {
+						for (const innerItem of innerOps.item) {
+							const flatOp = { ...(innerItem as Record<string, unknown>) };
+							applyInference(flatOp, tool as string, notes, normalizedOps);
+						}
+					} else {
+						const flatOp = { ...innerOps.item } as Record<string, unknown>;
+						applyInference(flatOp, tool as string, notes, normalizedOps);
+					}
 					notes.push("flattened nested dispatcher");
 					continue;
 				}
