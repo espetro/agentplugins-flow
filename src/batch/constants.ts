@@ -127,6 +127,8 @@ export interface FileOpInput {
 	q?: string;
 	n?: number;
 	u?: number;
+	append?: boolean;
+	allOccurrences?: boolean;
 }
 
 export interface RgOpInput {

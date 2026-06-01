@@ -120,4 +120,31 @@ describe("parseCommand", () => {
     const result = parseCommand(["cmd", "-c=7"], TEST_SPEC);
     expect(result.flags.count).toBe(7);
   });
+
+  it("parses repeated string flags into array when multi: true", () => {
+    const multiSpec = {
+      find: { short: "f", type: "string" as const, multi: true },
+      replace: { short: "r", type: "string" as const, multi: true },
+    };
+    const result = parseCommand(["edit", "-f", "foo", "-f", "bar", "-r", "baz", "path"], multiSpec);
+    expect(result.flags.find).toEqual(["foo", "bar"]);
+    expect(result.flags.replace).toEqual(["baz"]);
+    expect(result.positionals).toEqual(["path"]);
+  });
+
+  it("parses repeated boolean flags into array when multi: true", () => {
+    const multiSpec = {
+      flag: { short: "f", type: "boolean" as const, multi: true },
+    };
+    const result = parseCommand(["cmd", "-f", "-f", "-f"], multiSpec);
+    expect(result.flags.flag).toEqual([true, true, true]);
+  });
+
+  it("parses repeated number flags into array when multi: true", () => {
+    const multiSpec = {
+      count: { short: "c", type: "number" as const, multi: true },
+    };
+    const result = parseCommand(["cmd", "-c", "1", "--count", "2"], multiSpec);
+    expect(result.flags.count).toEqual([1, 2]);
+  });
 });

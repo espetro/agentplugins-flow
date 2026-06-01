@@ -649,7 +649,7 @@ describe("batch patch integration", () => {
 *** End Patch`;
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "patch", p: ".", c: patch }] },
+			{ cmd: `patch -c '${patch}'` },
 			undefined,
 			undefined,
 			{ cwd: tmpDir },

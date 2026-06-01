@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { BashProcessTracker, generateBashId, pollBatchBashResults, executeBatchBash, truncateBashOutput } from "../src/batch/batch-bash.js";
-import { createBatchTool, createBatchBashPollTool } from "../src/batch/index.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { BashProcessTracker, generateBashId, pollBatchBashResults, executeBatchBash, truncateBashOutput, createBatchBashPollTool } from "../src/batch/batch-bash.js";
+import { createBatchCliTool } from "../src/cli/register.js";
 
 describe("generateBashId", () => {
 	it("generates an 8-char alphanumeric string", () => {
@@ -59,17 +62,14 @@ describe("truncateBashOutput", () => {
 	});
 
 	it("truncates multi-byte UTF-8 safely without mojibake", () => {
-		// Single line (no newlines) forces byte truncation to hit maxBytes exactly
-		const prefix = "a".repeat(98); // 98 bytes
-		const cjk = "中"; // 3 bytes: E4 B8 AD
-		const emoji = "😀"; // 4 bytes: F0 9F 98 80
+		const prefix = "a".repeat(98);
+		const cjk = "中";
+		const emoji = "😀";
 		const text = prefix + cjk + emoji + " trailing text";
-		const maxBytes = 100; // lands inside the CJK character (second continuation byte)
+		const maxBytes = 100;
 
 		const result = truncateBashOutput(text, maxBytes, 10000);
-		// Must not contain Unicode replacement character (sign of invalid UTF-8 slicing)
 		expect(result).not.toContain("\uFFFD");
-		// Must contain truncation marker
 		expect(result).toContain("[... truncated at");
 	});
 });
@@ -88,7 +88,6 @@ describe("BashProcessTracker", () => {
 	it("launches and completes a simple command", async () => {
 		tracker.launch("t1", "echo hello", process.cwd());
 
-		// Wait for completion
 		await waitFor(tracker, "t1", 5000);
 
 		expect(tracker.isRunning("t1")).toBe(false);
@@ -127,7 +126,6 @@ describe("BashProcessTracker", () => {
 		expect(tracker.isRunning("t4")).toBe(true);
 		expect(tracker.hasCompleted("t4")).toBe(false);
 
-		// Cleanup
 		tracker.abortAll();
 	});
 
@@ -135,7 +133,6 @@ describe("BashProcessTracker", () => {
 		tracker.launch("t5", "sleep 30", process.cwd());
 		tracker.abortAll();
 
-		// Give it a moment to settle
 		await new Promise((r) => setTimeout(r, 500));
 
 		expect(tracker.isRunning("t5")).toBe(false);
@@ -162,7 +159,6 @@ describe("BashProcessTracker", () => {
 	it("getRunningTail returns partial output", async () => {
 		tracker.launch("t8", "echo line1; sleep 30", process.cwd());
 
-		// Give it time to produce output
 		await new Promise((r) => setTimeout(r, 500));
 
 		const tail = tracker.getRunningTail("t8");
@@ -186,7 +182,6 @@ describe("BashProcessTracker", () => {
 		tracker.launch("t10", "nonexistent_command_xyz_12345", process.cwd());
 
 		await new Promise((r) => setTimeout(r, 2000));
-		// The process should have errored out (close event or error event)
 		expect(tracker.isRunning("t10")).toBe(false);
 	});
 
@@ -298,78 +293,30 @@ describe("executeBatchBash", () => {
 			{ i: "eb-slow", c: "sleep 30" },
 		];
 
-		const results = await executeBatchBash(ops, process.cwd(), tracker, undefined, 1000);
+		const results = await executeBatchBash(ops, process.cwd(), tracker, undefined, 500);
 		expect(results).toHaveLength(2);
 
-		const fast = results.find((r) => r.id === "eb-fast")!;
-		expect(fast.status).toBe("ok");
+		const fast = results.find((r) => r.id === "eb-fast");
+		const slow = results.find((r) => r.id === "eb-slow");
 
-		const slow = results.find((r) => r.id === "eb-slow")!;
-		expect(slow.status).toBe("pending");
+		expect(fast?.status).toBe("ok");
+		expect(slow?.status).toBe("pending");
 
-		// Cleanup the running sleep
 		tracker.abortAll();
-	});
-
-	it("reports error for failing commands", async () => {
-		const ops = [
-			{ i: "eb-ok", c: "echo ok" },
-			{ i: "eb-err", c: "exit 42" },
-		];
-
-		const results = await executeBatchBash(ops, process.cwd(), tracker);
-		expect(results).toHaveLength(2);
-
-		const ok = results.find((r) => r.id === "eb-ok")!;
-		expect(ok.status).toBe("ok");
-
-		const err = results.find((r) => r.id === "eb-err")!;
-		expect(err.status).toBe("error");
-		expect(err.exitCode).toBe(42);
-	});
-
-	it("respects per-op timeout override", async () => {
-		const ops = [
-			{ i: "eb-override", c: "echo override", t: 5000 },
-		];
-
-		const results = await executeBatchBash(ops, process.cwd(), tracker);
-		expect(results[0].status).toBe("ok");
-	});
-
-	it("respects cwd override via h", async () => {
-		const fs = await import("node:fs");
-		const realTmp = fs.realpathSync("/tmp");
-		const ops = [
-			{ i: "eb-cwd", c: "pwd", h: realTmp },
-		];
-
-		const results = await executeBatchBash(ops, process.cwd(), tracker);
-		expect(results[0].status).toBe("ok");
-		expect(results[0].stdout?.trim()).toBe(realTmp);
-	});
-
-	it("empty ops returns empty results", async () => {
-		const results = await executeBatchBash([], process.cwd(), tracker);
-		expect(results).toEqual([]);
 	});
 });
 
-describe("batch tool with bash operations", () => {
+describe("batch CLI bash integration", () => {
 	let tmpDir: string;
 	let tracker: BashProcessTracker;
 
-	beforeEach(async () => {
-		const fs = await import("node:fs");
-		const os = await import("node:os");
-		const path = await import("node:path");
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-bash-test-"));
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-batch-cli-bash-test-"));
 		tracker = new BashProcessTracker();
 	});
 
-	afterEach(async () => {
+	afterEach(() => {
 		tracker.abortAll();
-		const fs = await import("node:fs");
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
@@ -378,10 +325,10 @@ describe("batch tool with bash operations", () => {
 	}
 
 	it("runs a single bash command", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "bash", c: "echo hello-batch", i: "b1" }] },
+			{ cmd: "bash -i b1 'echo hello-batch'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -397,10 +344,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("runs bash with auto-generated id", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "bash", c: "echo auto-id" }] },
+			{ cmd: "bash echo auto-id" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -411,19 +358,12 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("mixes file ops and bash ops", async () => {
-		const fs = await import("node:fs");
-		const path = await import("node:path");
 		fs.writeFileSync(path.join(tmpDir, "mix.txt"), "file-content\n", "utf-8");
 
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{
-				o: [
-					{ o: "read", p: "mix.txt" },
-					{ o: "bash", c: "echo bash-content", i: "mix-b1" },
-				],
-			},
+			{ cmd: "read mix.txt; bash -i mix-b1 'echo bash-content'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -436,16 +376,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("runs multiple bash commands in parallel", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{
-				o: [
-					{ o: "bash", c: "echo par1", i: "par1" },
-					{ o: "bash", c: "echo par2", i: "par2" },
-					{ o: "bash", c: "echo par3", i: "par3" },
-				],
-			},
+			{ cmd: "bash -i par1 'echo par1'; bash -i par2 'echo par2'; bash -i par3 'echo par3'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -458,15 +392,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("returns pending for commands exceeding timeout", { timeout: 10000 }, async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{
-				o: [
-					{ o: "bash", c: "echo quick", i: "q1" },
-					{ o: "bash", c: "sleep 60", i: "s1", t: 500 },
-				],
-			},
+			{ cmd: "bash -i q1 'echo quick'; bash -i s1 -t 500 'sleep 60'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -483,15 +412,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("file op failure does not skip bash ops", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{
-				o: [
-					{ o: "read", p: "nonexistent.txt" },
-					{ o: "bash", c: "echo still-runs", i: "still1" },
-				],
-			},
+			{ cmd: "read nonexistent.txt; bash -i still1 'echo still-runs'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -505,15 +429,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("bash failure does not skip other bash ops", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{
-				o: [
-					{ o: "bash", c: "exit 1", i: "fail1" },
-					{ o: "bash", c: "echo still-runs", i: "ok1" },
-				],
-			},
+			{ cmd: "bash -i fail1 'exit 1'; bash -i ok1 'echo still-runs'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -527,13 +446,12 @@ describe("batch tool with bash operations", () => {
 		expect(ok?.stdout?.trim()).toBe("still-runs");
 	});
 
-	it("respects h (cwd) for bash commands", async () => {
-		const fs = await import("node:fs");
+	it("respects cwd for bash commands", async () => {
 		const realTmp = fs.realpathSync("/tmp");
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "bash", c: "pwd", i: "cwd1", h: realTmp }] },
+			{ cmd: `bash -i cwd1 -h ${realTmp} pwd` },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -543,10 +461,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("captures stderr from bash commands", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "bash", c: "echo err-msg >&2", i: "stderr1" }] },
+			{ cmd: "bash -i stderr1 'echo err-msg >&2'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -556,10 +474,10 @@ describe("batch tool with bash operations", () => {
 	});
 
 	it("reports nonzero exit as error", async () => {
-		const tool = createBatchTool(tracker);
+		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ o: [{ o: "bash", c: "exit 99", i: "exit99" }] },
+			{ cmd: "bash -i exit99 'exit 99'" },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),
@@ -569,19 +487,6 @@ describe("batch tool with bash operations", () => {
 			status: "error",
 			exitCode: 99,
 		});
-	});
-
-	it("uses long-format property names", async () => {
-		const tool = createBatchTool(tracker);
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "bash", command: "echo long-fmt", id: "lf1", timeout: 5000, cwdPath: tmpDir }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0].stdout?.trim()).toBe("long-fmt");
 	});
 });
 

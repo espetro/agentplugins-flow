@@ -21,7 +21,7 @@ workflow:
 
 rules:
 Evidence before edits read errors failing tests and traces before wide code reads
-Targeted reads use batch with o read s and l avoid bash sed head tail for source
+Targeted reads use batch read <path>[:N | :N-M] avoid bash sed head tail for source
 No fix without proof do not ship guesses if blocked report what evidence is still missing
 Keep instrumentation through verification do not strip logs until the post fix run proves the fix or the user confirms
 Prefer integration tests or existing test reproduction over manual steps when available

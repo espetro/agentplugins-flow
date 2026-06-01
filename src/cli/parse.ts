@@ -9,12 +9,13 @@ export interface FlagSpec {
     short?: string;
     type: "boolean" | "string" | "number";
     description?: string;
+    multi?: boolean;
   };
 }
 
 export interface ParsedCommand {
   subcommand: string;
-  flags: Record<string, string | number | boolean>;
+  flags: Record<string, string | number | boolean | Array<string | number | boolean>>;
   positionals: string[];
 }
 
@@ -33,7 +34,7 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
   }
 
   const subcommand = tokens[0];
-  const flags: Record<string, string | number | boolean> = {};
+  const flags: Record<string, string | number | boolean | Array<string | number | boolean>> = {};
   const positionals: string[] = [];
   let endOfFlags = false;
 
@@ -75,7 +76,12 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
 
       const cfg = spec[name];
       if (cfg.type === "boolean") {
-        flags[name] = true;
+        if (cfg.multi) {
+          const existing = flags[name];
+          flags[name] = Array.isArray(existing) ? [...existing, true] : [true];
+        } else {
+          flags[name] = true;
+        }
       } else {
         if (value === undefined) {
           if (i + 1 >= tokens.length) {
@@ -83,18 +89,25 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
           }
           value = tokens[++i];
         }
+        let parsedValue: string | number;
         if (cfg.type === "number") {
           if (value === "") {
-            flags[name] = "";
+            parsedValue = "";
           } else {
             const num = Number(value);
             if (!Number.isFinite(num)) {
               throw new CliError(`Flag --${name} expects a number, got: ${value}`);
             }
-            flags[name] = num;
+            parsedValue = num;
           }
         } else {
-          flags[name] = value;
+          parsedValue = value;
+        }
+        if (cfg.multi) {
+          const existing = flags[name];
+          flags[name] = Array.isArray(existing) ? [...existing, parsedValue] : [parsedValue];
+        } else {
+          flags[name] = parsedValue;
         }
       }
       continue;
@@ -111,7 +124,12 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
         }
         const cfg = spec[name];
         if (cfg.type === "boolean") {
-          flags[name] = true;
+          if (cfg.multi) {
+            const existing = flags[name];
+            flags[name] = Array.isArray(existing) ? [...existing, true] : [true];
+          } else {
+            flags[name] = true;
+          }
         } else {
           // Non-boolean short flag: if it's the last char in the bundle,
           // consume the next token as value. Otherwise, consume the rest of this token.
@@ -129,18 +147,25 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
             }
             j = chars.length; // break out of inner loop
           }
+          let parsedValue: string | number;
           if (cfg.type === "number") {
             if (value === "") {
-              flags[name] = "";
+              parsedValue = "";
             } else {
               const num = Number(value);
               if (!Number.isFinite(num)) {
                 throw new CliError(`Flag -${ch} (--${name}) expects a number, got: ${value}`);
               }
-              flags[name] = num;
+              parsedValue = num;
             }
           } else {
-            flags[name] = value;
+            parsedValue = value;
+          }
+          if (cfg.multi) {
+            const existing = flags[name];
+            flags[name] = Array.isArray(existing) ? [...existing, parsedValue] : [parsedValue];
+          } else {
+            flags[name] = parsedValue;
           }
           break;
         }

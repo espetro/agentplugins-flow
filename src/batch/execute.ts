@@ -535,11 +535,24 @@ export async function executeOperations(
 						const originalEnding = detectLineEnding(contentWithoutBom);
 						const normalizedContent = normalizeToLF(contentWithoutBom);
 
-						const { newContent, blocksChanged: changed } = applyEdits(
-							normalizedContent,
-							edits,
-							op.p,
-						);
+						let newContent: string;
+						let changed: number;
+
+						if (op.append) {
+							// Append mode: append the replacement text of each edit
+							const appendText = edits.map((e) => e.r).join("\n");
+							newContent = normalizedContent + (normalizedContent.endsWith("\n") ? "" : "\n") + appendText;
+							changed = edits.length;
+						} else {
+							const result = applyEdits(
+								normalizedContent,
+								edits,
+								op.p,
+								op.allOccurrences,
+							);
+							newContent = result.newContent;
+							changed = result.blocksChanged;
+						}
 
 						const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 						await fs.writeFile(resolvedPath, finalContent, "utf-8");

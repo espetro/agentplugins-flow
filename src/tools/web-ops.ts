@@ -100,7 +100,7 @@ export async function runWebOps(
 // Search
 // ---------------------------------------------------------------------------
 
-async function runWebSearch(
+export async function runWebSearch(
 	params: { query: string },
 	signal?: AbortSignal,
 ) {
@@ -285,7 +285,7 @@ async function duckDuckGoHtmlSearch(query: string, signal?: AbortSignal): Promis
 // Fetch
 // ---------------------------------------------------------------------------
 
-async function runWebFetch(
+export async function runWebFetch(
 	params: { url: string; format?: string },
 	ctx: { sessionManager: { getSessionDir(): string } },
 	signal?: AbortSignal,

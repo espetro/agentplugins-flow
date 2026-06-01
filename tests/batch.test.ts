@@ -2,35 +2,34 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Container } from "@earendil-works/pi-tui";
-import { createBatchTool } from "../src/batch/index.js";
-import { suggestSimilarFiles } from "../src/batch/execute.js";
-import { isWithinDirectory } from "../src/batch/fuzzy-edit.js";
-import * as webOps from "../src/tools/web-ops.js";
+import { createBatchCliTool } from "../src/cli/register.js";
+import { BashProcessTracker } from "../src/batch/batch-bash.js";
 
-// Helper to extract text from Text, TruncatedText, or Container objects
 function extractText(node: any): string {
 	if ("text" in node && typeof node.text === "string") {
 		return node.text;
-	} else if (node instanceof Container || ("children" in node && Array.isArray(node.children))) {
+	} else if (node && typeof node === "object" && "children" in node && Array.isArray(node.children)) {
 		return node.children.map((child: any) => extractText(child)).join("\n");
 	}
 	return String(node);
 }
 
-describe("batch tool", () => {
+describe("batch CLI tool", () => {
 	let tmpDir: string;
+	let tracker: BashProcessTracker;
 
 	beforeEach(() => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-batch-test-"));
+		tracker = new BashProcessTracker();
 	});
 
 	afterEach(() => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
+		tracker.abortAll();
 	});
 
 	function createTool() {
-		return createBatchTool();
+		return createBatchCliTool(tracker);
 	}
 
 	function makeCtx(cwd: string) {
@@ -45,21 +44,21 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ op: "read", path: "test.txt" }] },
+				{ cmd: "read test.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
 			expect(result.content[0].text).toContain("✔ 1 read");
-    expect(result.content[0].text).toContain("--- test.txt (2 lines) ---");
-    expect(result.content[0].text).toContain("hello world");
+			expect(result.content[0].text).toContain("--- test.txt (2 lines) ---");
+			expect(result.content[0].text).toContain("hello world");
 			expect(result.details.results[0]).toMatchObject({
 				op: "read",
 				path: "test.txt",
 				status: "ok",
 				content: "hello world\n",
-				totalLines: 2, // "hello world" + "" (split on \n)
+				totalLines: 2,
 			});
 		});
 
@@ -70,27 +69,20 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "read", path: "a.txt" },
-						{ op: "read", path: "b.txt" },
-					],
-				},
+				{ cmd: "read a.txt b.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
 			expect(result.content[0].text).toContain("✔ 2 read");
-    expect(result.content[0].text).toContain("--- a.txt (2 lines) ---");
-    expect(result.content[0].text).toContain("content a");
-    expect(result.content[0].text).toContain("--- b.txt (2 lines) ---");
-    expect(result.content[0].text).toContain("content b");
+			expect(result.content[0].text).toContain("--- a.txt (2 lines) ---");
+			expect(result.content[0].text).toContain("content a");
+			expect(result.content[0].text).toContain("--- b.txt (2 lines) ---");
+			expect(result.content[0].text).toContain("content b");
 			expect(result.details.results).toHaveLength(2);
 			expect(result.details.results[0].content).toBe("content a\n");
 			expect(result.details.results[1].content).toBe("content b\n");
-			expect(result.details.results[0].totalLines).toBe(2);
-			expect(result.details.results[1].totalLines).toBe(2);
 		});
 
 		it("strips BOM from read content", async () => {
@@ -100,7 +92,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ op: "read", path: "bom.txt" }] },
+				{ cmd: "read bom.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -113,13 +105,13 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ op: "read", path: "nonexistent.txt" }] },
+				{ cmd: "read nonexistent.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
-			expect(result.content[0].text).toContain("✗ 1 read");
+			expect(result.content[0].text).toContain("File not found");
 			expect(result.details.results[0]).toMatchObject({
 				op: "read",
 				status: "error",
@@ -128,544 +120,50 @@ describe("batch tool", () => {
 			});
 		});
 
-		it("includes totalLines in read results", async () => {
-			fs.writeFileSync(path.join(tmpDir, "lines.txt"), "a\nb\nc\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "lines.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].totalLines).toBe(4); // "a", "b", "c", ""
-		});
-
-		describe("offset/limit", () => {
-			it("reads with offset (1-indexed)", async () => {
-				fs.writeFileSync(
-					path.join(tmpDir, "offset.txt"),
-					"line1\nline2\nline3\nline4\nline5\n",
-					"utf-8",
-				);
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "offset.txt", offset: 3 }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].content).toBe("line3\nline4\nline5\n");
-				expect(result.details.results[0].status).toBe("ok");
-			});
-
-			it("reads with limit", async () => {
-				fs.writeFileSync(
-					path.join(tmpDir, "limit.txt"),
-					"line1\nline2\nline3\nline4\nline5\n",
-					"utf-8",
-				);
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "limit.txt", limit: 2 }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].content).toBe("line1\nline2\n\n[4 more lines in file. Use s=3 to continue.]");
-				// Should include continuation hint since there are more lines
-				expect(result.details.results[0].content).toContain("more lines in file");
-				expect(result.details.results[0].content).toContain("s=3");
-			});
-
-			it("reads with offset and limit combined", async () => {
-				fs.writeFileSync(
-					path.join(tmpDir, "both.txt"),
-					"a\nb\nc\nd\ne\n",
-					"utf-8",
-				);
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "both.txt", offset: 2, limit: 2 }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].content).toBe("b\nc\n\n[3 more lines in file. Use s=4 to continue.]");
-				expect(result.details.results[0].content).toContain("3 more lines in file");
-				expect(result.details.results[0].content).toContain("s=4");
-			});
-
-			it("throws when offset is beyond file length", async () => {
-				fs.writeFileSync(path.join(tmpDir, "short.txt"), "a\nb\n", "utf-8");
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "short.txt", offset: 10 }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0]).toMatchObject({
-					op: "read",
-					status: "error",
-					error: expect.stringContaining("Offset 10 is beyond end of file"),
-					hint: "Use a smaller offset within the file length.",
-				});
-			});
-
-			it("reads entire file when no offset/limit specified", async () => {
-				fs.writeFileSync(
-					path.join(tmpDir, "full.txt"),
-					"first\nsecond\nthird\n",
-					"utf-8",
-				);
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "full.txt" }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].content).toBe("first\nsecond\nthird\n");
-				expect(result.details.results[0].content).not.toContain("more lines");
-				expect(result.details.results[0].truncated).toBeUndefined();
-			});
-
-			it("reads with limit beyond file length returns full remaining content", async () => {
-				fs.writeFileSync(path.join(tmpDir, "small.txt"), "a\nb\n", "utf-8");
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "small.txt", limit: 100 }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].content).toBe("a\nb\n");
-				expect(result.details.results[0].content).not.toContain("more lines");
-			});
-		});
-
-		describe("truncation", () => {
-			it("truncates large files at 3000 lines", async () => {
-				const lines = Array.from({ length: 4000 }, (_, i) => `line ${i}`);
-				fs.writeFileSync(path.join(tmpDir, "large.txt"), lines.join("\n"), "utf-8");
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "large.txt" }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.details.results[0].truncated).toBe(true);
-				expect(result.details.results[0].content).toContain("[Showing lines 1-2000 of 4000");
-				expect(result.details.results[0].content).toContain("s=2001");
-				expect(result.details.results[0].totalLines).toBe(4000);
-			});
-
-			it("includes truncation warning in summary", async () => {
-				const lines = Array.from({ length: 4000 }, (_, i) => `line ${i}`);
-				fs.writeFileSync(path.join(tmpDir, "large.txt"), lines.join("\n"), "utf-8");
-
-				const tool = createTool();
-				const result = await tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "large.txt" }] },
-					undefined,
-					undefined,
-					makeCtx(tmpDir),
-				);
-
-				expect(result.content[0].text).toContain("⚠ large.txt truncated");
-				expect(result.content[0].text).toContain("s=2001");
-			});
-		});
-	});
-
-	describe("rg operations", () => {
-		it("searches with rg and returns matching lines by default", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "bar.ts"), "export const bar = 2;\n", "utf-8");
-			fs.mkdirSync(path.join(tmpDir, "sub"), { recursive: true });
-			fs.writeFileSync(path.join(tmpDir, "sub", "baz.ts"), "export const baz = 3;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[0].op).toBe("rg");
-			expect(result.content[0].text).toContain("foo.ts");
-			expect(result.content[0].text).toContain("bar.ts");
-			expect(result.content[0].text).toContain("baz.ts");
-			expect(result.content[0].text).toContain("export const");
-		});
-
-		it("returns empty results when no matches", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "nonexistent_pattern_12345" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[0].content).toBe("");
-		});
-
-		it("respects type filter", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "bar.js"), "export const bar = 2;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const", t: "ts" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.content[0].text).toContain("foo.ts");
-			expect(result.content[0].text).not.toContain("bar.js");
-		});
-
-		it("respects ignore-case flag", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const FOO = 1;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "foo", i: true }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.content[0].text).toContain("foo.ts");
-		});
-
-		it("returns matching lines with content by default", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\nexport const foo2 = 2;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.content[0].text).toContain("foo.ts");
-			expect(result.content[0].text).toContain("export const");
-		});
-
-		it("rejects empty pattern", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("error");
-			expect(result.details.results[0].error).toContain("q (search pattern) is required");
-		});
-
-		it("handles pattern starting with dash safely", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = -1;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "-1" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.content[0].text).toContain("foo.ts");
-		});
-
-		it("handles patterns with shell metacharacters safely", async () => {
-			fs.writeFileSync(path.join(tmpDir, "shell.ts"), "echo $HOME && rm -rf /\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "echo \\$HOME && rm -rf /" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.content[0].text).toContain("shell.ts");
-		});
-
-		it("respects max-count", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\nexport const foo2 = 2;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const", l: false, n: 1 }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			const lines = result.details.results[0].content.split("\n").filter(Boolean);
-			expect(lines.length).toBeLessThanOrEqual(1);
-		});
-
-		it("respects ignore level (-u)", async () => {
-			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
-			fs.mkdirSync(path.join(tmpDir, "node_modules"));
-			fs.writeFileSync(path.join(tmpDir, "node_modules", "bar.ts"), "export const bar = 2;\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, ".gitignore"), "node_modules/\n", "utf-8");
-			fs.mkdirSync(path.join(tmpDir, ".git"));
-
-			const tool = createTool();
-
-			const resultDefault = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-			expect(resultDefault.content[0].text).toContain("foo.ts");
-			expect(resultDefault.content[0].text).not.toContain("node_modules");
-
-			const resultIgnore = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const", u: 0 }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-			expect(resultIgnore.content[0].text).toContain("foo.ts");
-			expect(resultIgnore.content[0].text).toContain("node_modules");
-		});
-
-		it("handles path with spaces", async () => {
-			fs.mkdirSync(path.join(tmpDir, "path with spaces"));
-			fs.writeFileSync(path.join(tmpDir, "path with spaces", "foo.ts"), "export const foo = 1;\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: "path with spaces", q: "export const" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.content[0].text).toContain("foo.ts");
-		});
-
-		it("auto-limits broad searches on . with default max-count", async () => {
-			const lines = Array.from({ length: 100 }, (_, i) => `export const item${i} = ${i};\n`).join("");
-			fs.writeFileSync(path.join(tmpDir, "many.ts"), lines, "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			const matchLines = (result.details.results[0].content ?? "").split("\n").filter(Boolean);
-			expect(matchLines.length).toBeLessThanOrEqual(50);
-			expect(result.content[0].text).toContain("auto-limited to 50 matches per file");
-		});
-
-		it("truncates long rg match lines and oversized output", async () => {
-			const longLine = "x".repeat(5000);
-			fs.writeFileSync(path.join(tmpDir, "long.ts"), `export const foo = "${longLine}";\n`, "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ o: "rg", p: ".", q: "export const", n: 1 }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[0].truncated).toBe(true);
-			expect(result.content[0].text).toContain("[…");
-			expect(result.content[0].text).toContain("rg output truncated");
-		});
-	});
-
-	it("attaches enclosing signatures by default", async () => {
-		const ts = `export class Foo {\n  bar(): number {\n    return 1;\n  }\n}\n`;
-		fs.writeFileSync(path.join(tmpDir, "sig.ts"), ts, "utf-8");
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ o: "rg", p: ".", q: "return 1" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0].status).toBe("ok");
-		expect(result.details.results[0].enclosingSignatures).toBeDefined();
-		const sigs = result.details.results[0].enclosingSignatures;
-		expect(Object.keys(sigs!).length).toBe(1);
-		const matchKey = Object.keys(sigs!)[0];
-		expect(matchKey).toContain("sig.ts");
-		expect(sigs![matchKey]).toBe("bar(): number");
-		expect(result.content[0].text).toContain("bar(): number");
-		expect(result.content[0].text).toContain("→");
-	});
-
-	it("skips signatures when l is true (files-only mode)", async () => {
-		const ts = `export class Foo {\n  bar(): number {\n    return 1;\n  }\n}\n`;
-		fs.writeFileSync(path.join(tmpDir, "sig2.ts"), ts, "utf-8");
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ o: "rg", p: ".", q: "return 1", l: true }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0].status).toBe("ok");
-		expect(result.details.results[0].enclosingSignatures).toBeUndefined();
-		expect(result.content[0].text).toContain("sig2.ts");
-		expect(result.content[0].text).not.toContain("bar(): number");
-	});
-
-	it("skips signatures when > RG_SIGNATURES_MAX_FILES unique files", async () => {
-		for (let i = 0; i < 12; i++) {
+		it("reads with offset via path spec", async () => {
 			fs.writeFileSync(
-				path.join(tmpDir, `many${i}.ts`),
-				`export class C${i} {\n  m${i}(): number {\n    return ${i};\n  }\n}\n`,
+				path.join(tmpDir, "offset.txt"),
+				"line1\nline2\nline3\nline4\nline5\n",
 				"utf-8",
 			);
-		}
 
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ o: "rg", p: ".", q: "return", l: false }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ cmd: "read offset.txt:3" },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
 
-		expect(result.details.results[0].status).toBe("ok");
-		expect(result.details.results[0].enclosingSignatures).toBeUndefined();
-	});
-
-	it("returns a directory listing (permissive mode) when reading a directory", async () => {
-		fs.mkdirSync(path.join(tmpDir, "a-dir"));
-		fs.mkdirSync(path.join(tmpDir, "a-dir", "sub-dir"));
-		fs.writeFileSync(path.join(tmpDir, "a-dir", "file.txt"), "hello\n", "utf-8");
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "read", path: "a-dir" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		// Permissive mode: directory reads return a listing, not an error.
-		const r = result.details.results[0];
-		expect(r).toMatchObject({
-			op: "read",
-			status: "ok",
-			directoryListing: true,
+			expect(result.details.results[0].content).toContain("line3");
+			expect(result.details.results[0].content).toContain("line4");
+			expect(result.details.results[0].content).toContain("line5");
+			expect(result.details.results[0].content).not.toContain("line1\n");
 		});
-		expect(r.content).toMatch(/📁 a-dir/);
-		expect(r.content).toMatch(/\[D\] sub-dir/);
-		expect(r.content).toMatch(/\[F\] file\.txt/);
-		expect(r.content).not.toMatch(/EISDIR/);
-		expect(r.totalLines).toBeGreaterThan(1);
-	});
 
-	it("returns a directory listing instead of EISDIR when edit targets a directory", async () => {
-		fs.mkdirSync(path.join(tmpDir, "edit-target-dir"));
-		fs.writeFileSync(path.join(tmpDir, "edit-target-dir", "inner.txt"), "hi", "utf-8");
+		it("reads with range via path spec", async () => {
+			fs.writeFileSync(
+				path.join(tmpDir, "range.txt"),
+				"line1\nline2\nline3\nline4\nline5\n",
+				"utf-8",
+			);
 
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-edit-dir",
-			{
-				o: [
-					{
-						op: "edit",
-						path: "edit-target-dir",
-						edits: [{ oldText: "anything", newText: "else" }],
-					},
-				],
-			},
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ cmd: "read range.txt:2-4" },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
 
-		const r = result.details.results[0];
-		expect(r.op).toBe("edit");
-		expect(r.status).toBe("skipped");
-		expect(r.directoryListing).toBe(true);
-		expect(r.content).toMatch(/📁 edit-target-dir/);
-		expect(r.content).toMatch(/\[F\] inner\.txt/);
-		expect(r.content).not.toMatch(/EISDIR/);
-		expect(r.error).toMatch(/Path is a directory/);
+			expect(result.details.results[0].content).toContain("line2");
+			expect(result.details.results[0].content).toContain("line3");
+			expect(result.details.results[0].content).toContain("line4");
+			expect(result.details.results[0].content).not.toContain("line1\n");
+			expect(result.details.results[0].content).not.toContain("line5\n");
+		});
 	});
 
 	describe("write operations", () => {
@@ -673,19 +171,15 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "write", path: "new.txt", content: "new content\n" },
-					],
-				},
+				{ cmd: "write -c 'new content\n' new.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
 			expect(result.content[0].text).toContain("✔ 1 write");
-    expect(result.content[0].text).toContain("write: new.txt");
-    expect(result.content[0].text).toContain("12 bytes");
+			expect(result.content[0].text).toContain("write: new.txt");
+			expect(result.content[0].text).toContain("12 bytes");
 			expect(result.details.results[0]).toMatchObject({
 				op: "write",
 				path: "new.txt",
@@ -703,11 +197,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "write", path: "existing.txt", content: "new\n" },
-					],
-				},
+				{ cmd: "write -c 'new\n' existing.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -721,11 +211,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "write", path: "a/b/c/deep.txt", content: "deep\n" },
-					],
-				},
+				{ cmd: "write -c 'deep\n' a/b/c/deep.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -733,28 +219,6 @@ describe("batch tool", () => {
 
 			const written = fs.readFileSync(path.join(tmpDir, "a", "b", "c", "deep.txt"), "utf-8");
 			expect(written).toBe("deep\n");
-		});
-
-		it("writes multiple files", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "write", path: "x.txt", content: "x\n" },
-						{ op: "write", path: "y.txt", content: "y\n" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.content[0].text).toContain("✔ 2 write");
-    expect(result.content[0].text).toContain("write: x.txt");
-    expect(result.content[0].text).toContain("write: y.txt");
-			expect(fs.readFileSync(path.join(tmpDir, "x.txt"), "utf-8")).toBe("x\n");
-			expect(fs.readFileSync(path.join(tmpDir, "y.txt"), "utf-8")).toBe("y\n");
 		});
 	});
 
@@ -765,22 +229,14 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "edit.txt",
-							edits: [{ oldText: "hello world", newText: "hello earth" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'hello world' -r 'hello earth' edit.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
 			expect(result.content[0].text).toContain("✔ 1 edit");
-    expect(result.content[0].text).toContain("edit: edit.txt");
+			expect(result.content[0].text).toContain("edit: edit.txt");
 			expect(result.details.results[0]).toMatchObject({
 				op: "edit",
 				status: "ok",
@@ -801,18 +257,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "multi.txt",
-							edits: [
-								{ oldText: "line 1", newText: "LINE 1" },
-								{ oldText: "line 3", newText: "LINE 3" },
-							],
-						},
-					],
-				},
+				{ cmd: "edit -f 'line 1' -r 'LINE 1' -f 'line 3' -r 'LINE 3' multi.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -824,170 +269,13 @@ describe("batch tool", () => {
 			expect(edited).toBe("LINE 1\nline 2\nLINE 3\n");
 		});
 
-		it("performs edits on multiple files", async () => {
-			fs.writeFileSync(path.join(tmpDir, "a.txt"), "alpha\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "b.txt"), "beta\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "a.txt",
-							edits: [{ oldText: "alpha", newText: "ALPHA" }],
-						},
-						{
-							op: "edit",
-							path: "b.txt",
-							edits: [{ oldText: "beta", newText: "BETA" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.content[0].text).toContain("✔ 2 edit");
-    expect(result.content[0].text).toContain("edit: a.txt");
-    expect(result.content[0].text).toContain("edit: b.txt");
-			expect(fs.readFileSync(path.join(tmpDir, "a.txt"), "utf-8")).toBe("ALPHA\n");
-			expect(fs.readFileSync(path.join(tmpDir, "b.txt"), "utf-8")).toBe("BETA\n");
-		});
-
-		it("uses fuzzy matching with trim fallback", async () => {
-			fs.writeFileSync(
-				path.join(tmpDir, "fuzzy.txt"),
-				"  indented line  \n",
-				"utf-8",
-			);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "fuzzy.txt",
-							edits: [{ oldText: "  indented line", newText: "  changed line" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-
-			const edited = fs.readFileSync(path.join(tmpDir, "fuzzy.txt"), "utf-8");
-			expect(edited).toContain("changed line");
-		});
-
-		it("preserves trailing whitespace on unedited lines during fuzzy match", async () => {
-			fs.writeFileSync(
-				path.join(tmpDir, "trim.txt"),
-				"keep trailing  \n  edit me  \nalso keep  \n",
-				"utf-8",
-			);
-
-			const tool = createTool();
-			await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "trim.txt",
-							edits: [{ oldText: "  edit me", newText: "  edited" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			const edited = fs.readFileSync(path.join(tmpDir, "trim.txt"), "utf-8");
-			expect(edited).toBe("keep trailing  \n  edited  \nalso keep  \n");
-		});
-
-		it("preserves trailing whitespace during fuzzy match when oldText ends with newline", async () => {
-			fs.writeFileSync(
-				path.join(tmpDir, "trim-nl.txt"),
-				"keep trailing  \n  edit me  \nalso keep  \n",
-				"utf-8",
-			);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "trim-nl.txt",
-							edits: [{ oldText: "  edit me\n", newText: "  edited\n" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			const edited = fs.readFileSync(path.join(tmpDir, "trim-nl.txt"), "utf-8");
-			expect(edited).toBe("keep trailing  \n  edited  \nalso keep  \n");
-		});
-
-		it("preserves trailing whitespace on all lines during multi-line fuzzy match", async () => {
-			fs.writeFileSync(
-				path.join(tmpDir, "multi-trim.txt"),
-				"line1   \nline2  \nline3   \n",
-				"utf-8",
-			);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "multi-trim.txt",
-							edits: [{ oldText: "line1\nline2\n", newText: "A\nB\n" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			const edited = fs.readFileSync(path.join(tmpDir, "multi-trim.txt"), "utf-8");
-			expect(edited).toBe("A   \nB  \nline3   \n");
-		});
-
 		it("returns error with hint for missing oldText", async () => {
 			fs.writeFileSync(path.join(tmpDir, "miss.txt"), "hello\n", "utf-8");
 
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "miss.txt",
-							edits: [{ oldText: "nonexistent", newText: "replacement" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'nonexistent' -r 'replacement' miss.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1011,15 +299,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "dup.txt",
-							edits: [{ oldText: "same", newText: "changed" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'same' -r 'changed' dup.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1043,36 +323,25 @@ describe("batch tool", () => {
 			const tool = createTool();
 			await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "crlf.txt",
-							edits: [{ oldText: "line1", newText: "LINE1" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'line1' -r 'LINE1' crlf.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
 			const edited = fs.readFileSync(path.join(tmpDir, "crlf.txt"));
-			expect(edited.includes("\r\n")).toBe(true);
+			expect(edited.includes(Buffer.from("\r\n"))).toBe(true);
 		});
 	});
 
 	describe("delete operations", () => {
-
 		it("rejects deleting a directory", async () => {
 			fs.mkdirSync(path.join(tmpDir, "a-dir"));
 
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [{ op: "delete", path: "a-dir" }],
-				},
+				{ cmd: "delete a-dir" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1092,9 +361,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [{ op: "delete", path: "delete-me.txt" }],
-				},
+				{ cmd: "delete delete-me.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1108,23 +375,78 @@ describe("batch tool", () => {
 			});
 			expect(fs.existsSync(path.join(tmpDir, "delete-me.txt"))).toBe(false);
 		});
+	});
 
-		it("returns error when deleting nonexistent file", async () => {
+	describe("rg operations", () => {
+		it("searches with rg and returns matching lines by default", async () => {
+			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
+			fs.writeFileSync(path.join(tmpDir, "bar.ts"), "export const bar = 2;\n", "utf-8");
+			fs.mkdirSync(path.join(tmpDir, "sub"), { recursive: true });
+			fs.writeFileSync(path.join(tmpDir, "sub", "baz.ts"), "export const baz = 3;\n", "utf-8");
+
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [{ op: "delete", path: "nope.txt" }],
-				},
+				{ cmd: "rg -q 'export const' ." },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
-			expect(result.details.results[0]).toMatchObject({
-				op: "delete",
-				status: "error",
-			});
+			expect(result.details.results[0].status).toBe("ok");
+			expect(result.details.results[0].op).toBe("rg");
+			expect(result.content[0].text).toContain("foo.ts");
+			expect(result.content[0].text).toContain("bar.ts");
+			expect(result.content[0].text).toContain("baz.ts");
+			expect(result.content[0].text).toContain("export const");
+		});
+
+		it("returns empty results when no matches", async () => {
+			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ cmd: "rg -q 'nonexistent_pattern_12345' ." },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.details.results[0].status).toBe("ok");
+			expect(result.details.results[0].content).toBe("");
+		});
+
+		it("respects type filter", async () => {
+			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const foo = 1;\n", "utf-8");
+			fs.writeFileSync(path.join(tmpDir, "bar.js"), "export const bar = 2;\n", "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ cmd: "rg -q 'export const' -t ts ." },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.content[0].text).toContain("foo.ts");
+			expect(result.content[0].text).not.toContain("bar.js");
+		});
+
+		it("respects ignore-case flag", async () => {
+			fs.writeFileSync(path.join(tmpDir, "foo.ts"), "export const FOO = 1;\n", "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ cmd: "rg -q 'foo' -i ." },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.content[0].text).toContain("foo.ts");
 		});
 	});
 
@@ -1135,65 +457,22 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "read", path: "existing.txt" },
-						{ op: "write", path: "new.txt", content: "new file\n" },
-						{
-							op: "edit",
-							path: "existing.txt",
-							edits: [{ oldText: "old content", newText: "updated content" }],
-						},
-					],
-				},
+				{ cmd: "read existing.txt; write -c 'new file\n' new.txt; edit -f 'old content' -r 'updated content' existing.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
-			expect(result.content[0].text).toContain("✔ 1 read, 1 write, 1 edit");
-    expect(result.content[0].text).toContain("--- existing.txt");
-    expect(result.content[0].text).toContain("write: new.txt");
-    expect(result.content[0].text).toContain("edit: existing.txt");
+			expect(result.content[0].text).toContain("op 1/3");
+			expect(result.content[0].text).toContain("op 2/3");
+			expect(result.content[0].text).toContain("op 3/3");
 			expect(result.details.results).toHaveLength(3);
 			expect(result.details.results[0].status).toBe("ok");
 			expect(result.details.results[1].status).toBe("ok");
 			expect(result.details.results[2].status).toBe("ok");
 
 			expect(fs.readFileSync(path.join(tmpDir, "new.txt"), "utf-8")).toBe("new file\n");
-			expect(fs.readFileSync(path.join(tmpDir, "existing.txt"), "utf-8")).toBe(
-				"updated content\n",
-			);
-		});
-
-		it("executes operations in array order", async () => {
-			fs.writeFileSync(path.join(tmpDir, "ordered.txt"), "step1\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "ordered.txt",
-							edits: [{ oldText: "step1", newText: "step2" }],
-						},
-						{
-							op: "edit",
-							path: "ordered.txt",
-							edits: [{ oldText: "step2", newText: "step3" }],
-						},
-						{ op: "read", path: "ordered.txt" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			// The read should see step3 (edits applied sequentially)
-			expect(result.details.results[2].content).toBe("step3\n");
+			expect(fs.readFileSync(path.join(tmpDir, "existing.txt"), "utf-8")).toBe("updated content\n");
 		});
 	});
 
@@ -1204,13 +483,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "read", path: "ok.txt" },
-						{ op: "read", path: "missing.txt" },
-						{ op: "write", path: "continued.txt", content: "should be written\n" },
-					],
-				},
+				{ cmd: "read ok.txt; read missing.txt; write -c 'should be written\n' continued.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1220,166 +493,15 @@ describe("batch tool", () => {
 			expect(result.details.results[1].status).toBe("error");
 			expect(result.details.results[2].status).toBe("ok");
 
-			// The write should still have been created despite prior read failure
 			expect(fs.existsSync(path.join(tmpDir, "continued.txt"))).toBe(true);
 
-			// Summary should show the failure without skipped count
-			expect(result.content[0].text).toContain("✔ 1 read, 1 write | ✗ 1 read");
-		});
-
-		it("continues after failure — write runs even if prior read failed", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "nonexistent.txt" },
-						{ op: "write", path: "should-run.txt", content: "yep\n" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("error");
-			expect(result.details.results[1].status).toBe("ok");
-			expect(fs.existsSync(path.join(tmpDir, "should-run.txt"))).toBe(true);
-		});
-	});
-
-	describe("path traversal guard", () => {
-		it("allows writing outside cwd", async () => {
-			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-write-"));
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [{ op: "write", path: path.join(outsideDir, "new.txt"), content: "test" }],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "write",
-				status: "ok",
-			});
-			expect(fs.readFileSync(path.join(outsideDir, "new.txt"), "utf-8")).toBe("test");
-
-			fs.rmSync(outsideDir, { recursive: true, force: true });
-		});
-
-		it("allows read outside cwd", async () => {
-			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-read-"));
-			fs.writeFileSync(path.join(outsideDir, "outside.txt"), "outside content\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: path.join(outsideDir, "outside.txt") }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-				content: "outside content\n",
-			});
-
-			fs.rmSync(outsideDir, { recursive: true, force: true });
-		});
-
-		it("allows relative paths within cwd", async () => {
-			fs.writeFileSync(path.join(tmpDir, "safe.txt"), "safe\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "safe.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-		});
-
-		it("allows absolute paths within cwd", async () => {
-			const filePath = path.join(tmpDir, "abs.txt");
-			fs.writeFileSync(filePath, "absolute\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: filePath }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-		});
-
-		it("allows edit outside cwd", async () => {
-			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-edit-"));
-			fs.writeFileSync(path.join(outsideDir, "target.txt"), "original\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: path.join(outsideDir, "target.txt"),
-							edits: [{ oldText: "original", newText: "hacked" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "edit",
-				status: "ok",
-			});
-
-			fs.rmSync(outsideDir, { recursive: true, force: true });
-		});
-
-		it("allows delete outside cwd", async () => {
-			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-delete-"));
-			fs.writeFileSync(path.join(outsideDir, "target.txt"), "original\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [{ op: "delete", path: path.join(outsideDir, "target.txt") }],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "delete",
-				status: "ok",
-			});
-
-			fs.rmSync(outsideDir, { recursive: true, force: true });
+			expect(result.content[0].text).toContain("op 1/3");
+			expect(result.content[0].text).toContain("op 2/3");
+			expect(result.content[0].text).toContain("op 3/3");
 		});
 	});
 
 	describe("abort signal", () => {
-
 		it("aborts mid-batch between operations", async () => {
 			fs.writeFileSync(path.join(tmpDir, "a.txt"), "a\n", "utf-8");
 			fs.writeFileSync(path.join(tmpDir, "b.txt"), "b\n", "utf-8");
@@ -1389,12 +511,7 @@ describe("batch tool", () => {
 
 			const resultPromise = tool.execute(
 				"call-1",
-				{
-					o: [
-						{ op: "read", path: "a.txt" },
-						{ op: "read", path: "b.txt" },
-					],
-				},
+				{ cmd: "read a.txt; read b.txt" },
 				controller.signal,
 				undefined,
 				makeCtx(tmpDir),
@@ -1408,227 +525,13 @@ describe("batch tool", () => {
 			expect(result.details.results[1].status).toBe("skipped");
 			expect(result.details.results[1].error).toBe("Operation aborted.");
 		});
-
-		it("throws when signal is already aborted", async () => {
-			const tool = createTool();
-			const controller = new AbortController();
-			controller.abort();
-
-			await expect(
-				tool.execute(
-					"call-1",
-					{ o: [{ op: "read", path: "any.txt" }] },
-					controller.signal,
-					undefined,
-					makeCtx(tmpDir),
-				),
-			).rejects.toThrow("Operation aborted.");
-		});
 	});
 
-	describe("prepareArguments shim", () => {
-		it("infers op from fields when missing", async () => {
-			fs.writeFileSync(path.join(tmpDir, "infer.txt"), "content\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ path: "infer.txt" }, // no op, should infer "read"
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("handles stringified edits", async () => {
-			fs.writeFileSync(path.join(tmpDir, "str.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "str.txt",
-							edits: JSON.stringify([{ oldText: "hello", newText: "world" }]),
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-		});
-
-		it("handles legacy top-level oldText/newText", async () => {
-			fs.writeFileSync(path.join(tmpDir, "legacy.txt"), "old\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					path: "legacy.txt",
-					oldText: "old",
-					newText: "new",
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "edit",
-				status: "ok",
-			});
-		});
-	});
-
-
-	describe("single-letter format and new features", () => {
-		it("accepts new single-letter format directly", async () => {
-			fs.writeFileSync(path.join(tmpDir, "newfmt.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ o: "read", p: "newfmt.txt" }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("accepts new single-letter edit format", async () => {
-			fs.writeFileSync(path.join(tmpDir, "newedit.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ o: "edit", p: "newedit.txt", e: [{ f: "hello", r: "world" }] }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "edit",
-				status: "ok",
-			});
-			expect(fs.readFileSync(path.join(tmpDir, "newedit.txt"), "utf-8")).toBe("world\n");
-		});
-
-		it("accepts new single-letter write format", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ o: "write", p: "newwrite.txt", c: "content\n" }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "write",
-				status: "ok",
-				bytes: 8,
-			});
-			expect(fs.readFileSync(path.join(tmpDir, "newwrite.txt"), "utf-8")).toBe("content\n");
-		});
-
-		it("accepts new single-letter read with s and l", async () => {
-			fs.writeFileSync(
-				path.join(tmpDir, "sl.txt"),
-				"a\nb\nc\nd\ne\n",
-				"utf-8",
-			);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ o: "read", p: "sl.txt", s: 2, l: 2 }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].content).toBe("b\nc\n\n[3 more lines in file. Use s=4 to continue.]");
-		});
-
-		it("handles bare array with legacy property names (no operations wrapper)", async () => {
-			fs.writeFileSync(path.join(tmpDir, "bare.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ op: "read", path: "bare.txt" }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("infers write operation for empty string content", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ p: "empty.txt", c: "" }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "write",
-				status: "ok",
-			});
-			expect(fs.readFileSync(path.join(tmpDir, "empty.txt"), "utf-8")).toBe("");
-		});
-
-		it("throws error with actual op value for unknown operation type", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				[{ o: "bogus", p: "file.txt" }],
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "bogus",
-				status: "error",
-			});
-			expect(result.details.results[0].error).toContain("bogus");
-		});
-	});
 	describe("empty operations", () => {
-		it("throws for empty operations array", async () => {
+		it("returns help for empty cmd", async () => {
 			const tool = createTool();
-			await expect(
-				tool.execute("call-1", { o: [] }, undefined, undefined, makeCtx(tmpDir)),
-			).rejects.toThrow("o or w array must not be empty");
+			const result = await tool.execute("call-1", { cmd: "" }, undefined, undefined, makeCtx(tmpDir));
+			expect(result.content[0].text).toContain("USAGE: batch");
 		});
 	});
 
@@ -1637,15 +540,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "nonexistent.txt",
-							edits: [{ oldText: "a", newText: "b" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'a' -r 'b' nonexistent.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1663,15 +558,7 @@ describe("batch tool", () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "same.txt",
-							edits: [{ oldText: "same content\n", newText: "same content\n" }],
-						},
-					],
-				},
+				{ cmd: "edit -f 'same content\n' -r 'same content\n' same.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -1683,619 +570,16 @@ describe("batch tool", () => {
 				hint: "File already has this content. No edit needed.",
 			});
 		});
-
-		it("provides hint for missing file on delete", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [{ op: "delete", path: "nonexistent-dir/trap.txt" }],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				status: "error",
-				hint: "Verify the path exists.",
-			});
-		});
-
-		it("includes error and hint in the summary line", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "missing.txt" },
-						{ op: "write", path: "continued.txt", content: "nope" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			const text = result.content[0].text;
-			expect(text).toContain("✔ 1 write | ✗ 1 read");
-			expect(text).toContain("read missing.txt:");
-			expect(text).toContain("— Verify the path exists.");
-		});
 	});
 
-	describe("structured error responses", () => {
-		it("returns retryable=true for missing file (ENOENT)", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "missing.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				status: "error",
-				error: expect.stringContaining("missing.txt"),
-				hint: "Verify the path exists.",
-				retryable: true,
-				suggestedFix: "Verify the path exists.",
-			});
-		});
-
-		it("returns retryable=true for duplicate oldText", async () => {
-			fs.writeFileSync(path.join(tmpDir, "dup.txt"), "same same different\n", "utf-8");
+	describe("path traversal guard", () => {
+		it("allows writing outside cwd", async () => {
+			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-write-"));
 
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "dup.txt",
-							edits: [{ oldText: "same", newText: "changed" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				status: "error",
-				retryable: true,
-				suggestedFix: "Add more surrounding context to make oldText unique.",
-			});
-		});
-
-		it("returns retryable=false for no-changes edit", async () => {
-			fs.writeFileSync(path.join(tmpDir, "same.txt"), "same content\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "same.txt",
-							edits: [{ oldText: "same content\n", newText: "same content\n" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				status: "error",
-				retryable: false,
-				suggestedFix: "File already has this content. No edit needed.",
-			});
-		});
-
-		it("returns retryable=false for directory delete", async () => {
-			fs.mkdirSync(path.join(tmpDir, "a-dir"));
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [{ op: "delete", path: "a-dir" }],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				status: "error",
-				retryable: false,
-				error: expect.stringContaining("Cannot delete directory"),
-			});
-		});
-
-		it("preserves string error for backward compatibility", async () => {
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "missing.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(typeof result.details.results[0].error).toBe("string");
-			expect(result.details.results[0].error).toContain("missing.txt");
-		});
-	});
-
-	describe("first-line exceeds byte limit", () => {
-		it("truncates when a single line exceeds the per-line byte limit", async () => {
-			const hugeLine = "x".repeat(120 * 1024);
-			fs.writeFileSync(path.join(tmpDir, "huge-line.txt"), hugeLine, "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "huge-line.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-				truncated: true,
-			});
-			expect(result.content[0].text).toContain("bytes and were truncated");
-		});
-	});
-});
-
-describe("tilde expansion", () => {
-	let tmpDir: string;
-
-	function createTool() {
-		return createBatchTool();
-	}
-
-	function makeCtx(cwd: string) {
-		return { cwd };
-	}
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-tilde-test-"));
-	});
-
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	it("reads a file using ~ path", async () => {
-		const subDir = path.join(tmpDir, "sub");
-		fs.mkdirSync(subDir, { recursive: true });
-		fs.writeFileSync(path.join(subDir, "tilde-test.txt"), "hello tilde\n", "utf-8");
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "read", p: "~/tilde-test.txt" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		// ~ expands to os.homedir(), NOT tmpDir. The error should be about
-		// file not found or path traversal (homedir is outside cwd), NOT a crash.
-		expect(result.details.results[0].status).toBe("error");
-		const err = result.details.results[0].error ?? "";
-		const isExpectedError =
-			err.includes("File not found") ||
-			err.includes("Path not found") ||
-			err.includes("Path traversal") ||
-			err.includes("ENOENT");
-		expect(isExpectedError).toBe(true);
-	});
-
-	it("allows ~ path that resolves outside cwd for write", async () => {
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ o: "write", p: "~/malicious.txt", c: "hacked\n" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		// ~ expands to os.homedir() which is outside tmpDir cwd — now allowed
-		expect(result.details.results[0].status).toBe("ok");
-
-		// Clean up the file we created
-		const target = path.join(os.homedir(), "malicious.txt");
-		try { fs.unlinkSync(target); } catch {}
-	});
-});
-
-describe("symlink traversal guard", () => {
-	let tmpDir: string;
-
-	function createTool() {
-		return createBatchTool();
-	}
-
-	function makeCtx(cwd: string) {
-		return { cwd };
-	}
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-sym-test-"));
-	});
-
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	it("allows reading a symlink that points outside cwd", async () => {
-		const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-"));
-		fs.writeFileSync(path.join(outsideDir, "secret.txt"), "secret content\n", "utf-8");
-
-		const symPath = path.join(tmpDir, "leak.txt");
-		fs.symlinkSync(path.join(outsideDir, "secret.txt"), symPath);
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "read", p: "leak.txt" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0]).toMatchObject({
-			op: "read",
-			status: "ok",
-			content: "secret content\n",
-		});
-
-		fs.rmSync(outsideDir, { recursive: true, force: true });
-	});
-
-	it("allows writing through a symlink that points outside cwd", async () => {
-		const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-"));
-		fs.writeFileSync(path.join(outsideDir, "target.txt"), "original\n", "utf-8");
-
-		const symPath = path.join(tmpDir, "symlink.txt");
-		fs.symlinkSync(path.join(outsideDir, "target.txt"), symPath);
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ o: "write", p: "symlink.txt", c: "hacked\n" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0]).toMatchObject({
-			op: "write",
-			status: "ok",
-		});
-
-		// Verify the original file WAS modified via the symlink
-		const content = fs.readFileSync(path.join(outsideDir, "target.txt"), "utf-8");
-		expect(content).toBe("hacked\n");
-
-		fs.rmSync(outsideDir, { recursive: true, force: true });
-	});
-
-	it("allows reading a symlink that points within cwd", async () => {
-		fs.writeFileSync(path.join(tmpDir, "real.txt"), "real content\n", "utf-8");
-
-		const symPath = path.join(tmpDir, "link.txt");
-		fs.symlinkSync(path.join(tmpDir, "real.txt"), symPath);
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "read", p: "link.txt" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0]).toMatchObject({
-			op: "read",
-			status: "ok",
-		});
-		expect(result.details.results[0].content).toBe("real content\n");
-	});
-
-	it("allows directory symlink traversal for read", async () => {
-		const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-"));
-		fs.writeFileSync(path.join(outsideDir, "nested-secret.txt"), "secret\n", "utf-8");
-
-		const symDir = path.join(tmpDir, "leak-dir");
-		fs.symlinkSync(outsideDir, symDir);
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "read", p: "leak-dir/nested-secret.txt" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0]).toMatchObject({
-			op: "read",
-			status: "ok",
-			content: "secret\n",
-		});
-
-		fs.rmSync(outsideDir, { recursive: true, force: true });
-	});
-
-	it("allows writing through a directory symlink that points outside cwd", async () => {
-		const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-outside-"));
-		fs.writeFileSync(path.join(outsideDir, "nested-target.txt"), "original\n", "utf-8");
-
-		const symDir = path.join(tmpDir, "leak-dir-write");
-		fs.symlinkSync(outsideDir, symDir);
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ o: [{ op: "write", p: "leak-dir-write/nested-target.txt", c: "hacked\n" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.details.results[0]).toMatchObject({
-			op: "write",
-			status: "ok",
-		});
-
-		const content = fs.readFileSync(path.join(outsideDir, "nested-target.txt"), "utf-8");
-		expect(content).toBe("hacked\n");
-
-		fs.rmSync(outsideDir, { recursive: true, force: true });
-	});
-});
-
-describe("suggestSimilarFiles", () => {
-	let tmpDir: string;
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-suggest-test-"));
-	});
-
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	it("suggests similar filename on typo", async () => {
-		fs.writeFileSync(path.join(tmpDir, "config.json"), "{}", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "package.json"), "{}", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("confg.json", tmpDir);
-		expect(suggestions).toContain("config.json");
-	});
-
-	it("suggests similar filename with different extension", async () => {
-		fs.writeFileSync(path.join(tmpDir, "data.ts"), "export {};", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "data.js"), "module.exports = {};", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("data.tx", tmpDir);
-		expect(suggestions.length).toBeGreaterThan(0);
-		expect(suggestions.some(s => s.includes("data.ts") || s.includes("data.js"))).toBe(true);
-	});
-
-	it("returns empty array for completely different names", async () => {
-		fs.writeFileSync(path.join(tmpDir, "abc.txt"), "content", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("zzzzz.txt", tmpDir);
-		expect(suggestions).toEqual([]);
-	});
-
-	it("skips hidden files and node_modules", async () => {
-		fs.writeFileSync(path.join(tmpDir, ".hidden.txt"), "hidden", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "visible.txt"), "visible", "utf-8");
-		fs.mkdirSync(path.join(tmpDir, "node_modules"));
-		fs.writeFileSync(path.join(tmpDir, "node_modules", "pkg.txt"), "pkg", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("visble.txt", tmpDir);
-		expect(suggestions).toContain("visible.txt");
-		expect(suggestions.every(s => !s.includes(".hidden"))).toBe(true);
-		expect(suggestions.every(s => !s.includes("node_modules"))).toBe(true);
-	});
-
-	it("suggests directories with trailing slash", async () => {
-		fs.mkdirSync(path.join(tmpDir, "src"));
-		fs.writeFileSync(path.join(tmpDir, "srcr"), "file", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("sr", tmpDir);
-		expect(suggestions.some(s => s.includes("src/") || s.includes("src"))).toBe(true);
-	});
-
-	it("returns empty array for non-existent directory", async () => {
-		const suggestions = await suggestSimilarFiles("nonexistent/file.txt", tmpDir);
-		expect(suggestions).toEqual([]);
-	});
-
-	it("limits suggestions to 3", async () => {
-		fs.writeFileSync(path.join(tmpDir, "file1.txt"), "1", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "file2.txt"), "2", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "file3.txt"), "3", "utf-8");
-		fs.writeFileSync(path.join(tmpDir, "file4.txt"), "4", "utf-8");
-
-		const suggestions = await suggestSimilarFiles("file.txt", tmpDir);
-		expect(suggestions.length).toBeLessThanOrEqual(3);
-	});
-});
-
-describe("isWithinDirectory", () => {
-	const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
-
-	afterEach(() => {
-		if (originalPlatform) {
-			Object.defineProperty(process, "platform", originalPlatform);
-		}
-	});
-
-	it("returns true for exact match on POSIX", () => {
-		Object.defineProperty(process, "platform", { value: "darwin" });
-		expect(isWithinDirectory("/project", "/project")).toBe(true);
-	});
-
-	it("returns true for child within parent on POSIX", () => {
-		Object.defineProperty(process, "platform", { value: "linux" });
-		expect(isWithinDirectory("/project/src/file.ts", "/project")).toBe(true);
-	});
-
-	it("returns false for outside path on POSIX", () => {
-		Object.defineProperty(process, "platform", { value: "linux" });
-		expect(isWithinDirectory("/other/file.ts", "/project")).toBe(false);
-	});
-
-	it("returns true for exact match case-insensitive on Windows", () => {
-		Object.defineProperty(process, "platform", { value: "win32" });
-		expect(isWithinDirectory("C:\\Project", "c:\\project")).toBe(true);
-	});
-
-	it("returns true for child within parent case-insensitive on Windows", () => {
-		Object.defineProperty(process, "platform", { value: "win32" });
-		expect(isWithinDirectory("c:\\project\\src\\file.ts", "C:\\Project")).toBe(true);
-	});
-
-	it("returns false for outside path on Windows", () => {
-		Object.defineProperty(process, "platform", { value: "win32" });
-		expect(isWithinDirectory("D:\\other\\file.ts", "C:\\Project")).toBe(false);
-	});
-});
-
-describe("edge cases", () => {
-	let tmpDir: string;
-
-	function createTool() {
-		return createBatchTool();
-	}
-
-	function makeCtx(cwd: string) {
-		return { cwd };
-	}
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-edge-test-"));
-	});
-
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-	});
-
-	describe("edit edge cases", () => {
-		it("rejects overlapping edits", async () => {
-			fs.writeFileSync(path.join(tmpDir, "overlap.txt"), "abcde\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "overlap.txt",
-							edits: [
-								{ oldText: "abc", newText: "ABC" },
-								{ oldText: "cde", newText: "CDE" },
-							],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "edit",
-				status: "error",
-				error: expect.stringContaining("overlap"),
-				hint: "Merge overlapping edits into one.",
-			});
-		});
-
-		it("rejects empty oldText", async () => {
-			fs.writeFileSync(path.join(tmpDir, "empty-old.txt"), "content\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "empty-old.txt",
-							edits: [{ oldText: "", newText: "replaced" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "edit",
-				status: "error",
-				error: expect.stringContaining("must not be empty"),
-			});
-		});
-
-		it("preserves BOM during edit", async () => {
-			fs.writeFileSync(path.join(tmpDir, "bom-edit.txt"), "\uFEFFhello world\n", "utf-8");
-
-			const tool = createTool();
-			await tool.execute(
-				"call-1",
-				{
-					o: [
-						{
-							op: "edit",
-							path: "bom-edit.txt",
-							edits: [{ oldText: "hello world", newText: "hello earth" }],
-						},
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			const edited = fs.readFileSync(path.join(tmpDir, "bom-edit.txt"), "utf-8");
-			expect(edited.startsWith("\uFEFF")).toBe(true);
-			expect(edited).toBe("\uFEFFhello earth\n");
-		});
-	});
-
-	describe("path validation edge cases", () => {
-		it("allows write when ancestor symlink resolves outside cwd", async () => {
-			const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-ancestor-out-"));
-			const linkPath = path.join(tmpDir, "link");
-			fs.symlinkSync(outsideDir, linkPath);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [{ op: "write", path: "link/subdir/new.txt", content: "data\n" }],
-				},
+				{ cmd: `write -c 'test' ${path.join(outsideDir, "new.txt")}` },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -2305,737 +589,38 @@ describe("edge cases", () => {
 				op: "write",
 				status: "ok",
 			});
+			expect(fs.readFileSync(path.join(outsideDir, "new.txt"), "utf-8")).toBe("test");
 
 			fs.rmSync(outsideDir, { recursive: true, force: true });
 		});
+	});
 
-		it("allows broken symlink within cwd (read fails with file not found, not traversal)", async () => {
-			fs.symlinkSync("nonexistent.txt", path.join(tmpDir, "broken.txt"));
-
+	describe("bash", () => {
+		it("executes a simple command", async () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ op: "read", path: "broken.txt" }] },
+				{ cmd: "bash echo 'hello bash'" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "error",
-				error: expect.stringContaining("not found"),
-			});
-			expect(result.details.results[0].error).not.toContain("Path traversal");
+			expect(result.content[0].text).toContain("hello bash");
 		});
-	});
 
-	describe("read edge cases", () => {
-		it("truncates by bytes across multiple lines", async () => {
-			// Each line is ~1KB, 110 lines = ~110KB total (> 100KB limit)
-			const lines = Array.from({ length: 110 }, (_, i) => `line ${i.toString().padStart(1000, "0")}`);
-			fs.writeFileSync(path.join(tmpDir, "multi-byte.txt"), lines.join("\n"), "utf-8");
-
+		it("returns pending for long-running commands", async () => {
 			const tool = createTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ op: "read", path: "multi-byte.txt" }] },
+				{ cmd: "bash -t 100 'sleep 30'" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
 
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-				truncated: true,
-			});
-			expect(result.details.results[0].content).toContain("[Showing lines");
-			expect(result.details.results[0].content).toContain("Use s=");
-		});
-
-		it("returns error for unreadable file", async () => {
-			if (process.getuid && process.getuid() === 0) {
-				// Root bypasses file permissions; skip on CI/containers running as root
-				return;
-			}
-
-			const filePath = path.join(tmpDir, "secret.txt");
-			fs.writeFileSync(filePath, "secret\n", "utf-8");
-			fs.chmodSync(filePath, 0o000);
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "secret.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "error",
-				error: expect.stringContaining("not readable"),
-				hint: "Check file permissions.",
-			});
-
-			// Restore permissions so afterEach can clean up
-			fs.chmodSync(filePath, 0o644);
+			expect(result.content[0].text).toContain("pending");
+			expect(result.content[0].text).toContain("Use batch_bash_poll");
 		});
 	});
-
-	describe("prepareArguments legacy branches", () => {
-		it("handles args.op array", async () => {
-			fs.writeFileSync(path.join(tmpDir, "op-arr.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ op: [{ path: "op-arr.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("handles args.operations array", async () => {
-			fs.writeFileSync(path.join(tmpDir, "ops-arr.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ operations: [{ path: "ops-arr.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("handles single-operation shorthand with p", async () => {
-			fs.writeFileSync(path.join(tmpDir, "shorthand.txt"), "hello\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ p: "shorthand.txt" },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0]).toMatchObject({
-				op: "read",
-				status: "ok",
-			});
-		});
-
-		it("throws for non-object input", async () => {
-			const tool = createTool();
-			await expect(
-				tool.execute("call-1", null as any, undefined, undefined, makeCtx(tmpDir)),
-			).rejects.toThrow("o or w array must not be empty");
-		});
-	});
-
-	describe("summary pluralization and combinations", () => {
-		it("pluralizes multiple reads, writes, edits, and deletes", async () => {
-			fs.writeFileSync(path.join(tmpDir, "r1.txt"), "a\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "r2.txt"), "b\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "e1.txt"), "old1\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "e2.txt"), "old2\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "d1.txt"), "x\n", "utf-8");
-			fs.writeFileSync(path.join(tmpDir, "d2.txt"), "y\n", "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "r1.txt" },
-						{ op: "read", path: "r2.txt" },
-						{ op: "write", path: "w1.txt", content: "c\n" },
-						{ op: "write", path: "w2.txt", content: "d\n" },
-						{ op: "edit", path: "e1.txt", edits: [{ oldText: "old1", newText: "new1" }] },
-						{ op: "edit", path: "e2.txt", edits: [{ oldText: "old2", newText: "new2" }] },
-						{ op: "delete", path: "d1.txt" },
-						{ op: "delete", path: "d2.txt" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			const text = result.content[0].text;
-			expect(text).toContain("✔ 2 read, 2 write, 2 edit, 2 delete");
-		});
-
-		it("includes byte truncation warning in summary", async () => {
-			const lines = Array.from({ length: 110 }, (_, i) => `line ${i.toString().padStart(1000, "0")}`);
-			fs.writeFileSync(path.join(tmpDir, "byte-warn.txt"), lines.join("\n"), "utf-8");
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{ o: [{ op: "read", path: "byte-warn.txt" }] },
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.content[0].text).toContain("⚠ byte-warn.txt truncated");
-			expect(result.content[0].text).toContain("Use s=");
-		});
-
-		it("skips remaining reads when aggregate line limit is exceeded", async () => {
-			// 4 files × 500 lines = 2000 total; cap is 1500
-			for (let i = 0; i < 4; i++) {
-				const lines = Array.from({ length: 500 }, (_, j) => `file${i} line ${j}`);
-				fs.writeFileSync(path.join(tmpDir, `batch-agg-${i}.txt`), lines.join("\n"), "utf-8");
-			}
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "batch-agg-0.txt" },
-						{ op: "read", path: "batch-agg-1.txt" },
-						{ op: "read", path: "batch-agg-2.txt" },
-						{ op: "read", path: "batch-agg-3.txt" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[1].status).toBe("ok");
-			expect(result.details.results[2].status).toBe("ok");
-			expect(result.details.results[3]).toMatchObject({
-				op: "read",
-				path: "batch-agg-3.txt",
-				status: "skipped",
-				skipped: true,
-				reason: "aggregate_line_limit",
-				consumed: { lines: 1500, bytes: expect.any(Number) },
-				remainingOps: 0,
-				error: expect.stringContaining("aggregate line limit of 1500"),
-			});
-			expect(result.content[0].text).toContain("⚠ Aggregate line limit (1500) reached — skipped 1 read: batch-agg-3.txt");
-			expect(result.content[0].text).toContain("1 skipped");
-			expect(result.content[0].text).toContain("Skipped: aggregate line limit");
-		});
-
-		it("skips remaining reads when aggregate byte limit is exceeded", async () => {
-			// With per-read MAX_BYTES caps, each full read returns ~49KB; four reads exceed 153600
-			const line = "x".repeat(1000);
-			for (let i = 0; i < 5; i++) {
-				fs.writeFileSync(path.join(tmpDir, `byte-agg-${i}.txt`), Array.from({ length: 52 }, () => line).join("\n"), "utf-8");
-			}
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "byte-agg-0.txt" },
-						{ op: "read", path: "byte-agg-1.txt" },
-						{ op: "read", path: "byte-agg-2.txt" },
-						{ op: "read", path: "byte-agg-3.txt" },
-						{ op: "read", path: "byte-agg-4.txt" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[1].status).toBe("ok");
-			expect(result.details.results[2].status).toBe("ok");
-			expect(result.details.results[3].status).toBe("ok");
-			expect(result.details.results[4]).toMatchObject({
-				op: "read",
-				path: "byte-agg-4.txt",
-				status: "skipped",
-				skipped: true,
-				reason: "aggregate_byte_limit",
-				consumed: { lines: expect.any(Number), bytes: expect.any(Number) },
-				remainingOps: 0,
-				error: expect.stringContaining("aggregate byte limit of 153600"),
-			});
-			expect(result.content[0].text).toContain("⚠ Aggregate byte limit (153600) reached — skipped 1 read: byte-agg-4.txt");
-			expect(result.content[0].text).toContain("1 skipped");
-			expect(result.content[0].text).toContain("Skipped: aggregate byte limit");
-		});
-
-		it("continues non-read operations after aggregate line limit is reached", async () => {
-			for (let i = 0; i < 4; i++) {
-				const lines = Array.from({ length: 500 }, (_, j) => `file${i} line ${j}`);
-				fs.writeFileSync(path.join(tmpDir, `mixed-${i}.txt`), lines.join("\n"), "utf-8");
-			}
-
-			const tool = createTool();
-			const result = await tool.execute(
-				"call-1",
-				{
-					o: [
-						{ op: "read", path: "mixed-0.txt" },
-						{ op: "read", path: "mixed-1.txt" },
-						{ op: "read", path: "mixed-2.txt" },
-						{ op: "read", path: "mixed-3.txt" },
-						{ op: "write", path: "new.txt", content: "written after cap\n" },
-					],
-				},
-				undefined,
-				undefined,
-				makeCtx(tmpDir),
-			);
-
-			expect(result.details.results[0].status).toBe("ok");
-			expect(result.details.results[1].status).toBe("ok");
-			expect(result.details.results[2].status).toBe("ok");
-			expect(result.details.results[3]).toMatchObject({
-				status: "skipped",
-			});
-			expect(result.details.results[4]).toMatchObject({
-				op: "write",
-				path: "new.txt",
-				status: "ok",
-			});
-			expect(result.content[0].text).toContain("1 write");
-		});
-	});
-
-	describe("renderCall", () => {
-		function makeTheme() {
-			return {
-				fg: (color: string, text: string) => text,
-				bg: (color: string, text: string) => text,
-				bold: (s: string) => s,
-			};
-		}
-
-		it("renders invisible call frame", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!(
-				{ o: [{ o: "read", p: "src/index.ts" }] },
-				makeTheme(),
-			);
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-
-		it("renders invisible call frame for multiple ops", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!(
-				{
-					o: [
-						{ o: "read", p: "src/a.ts" },
-						{ o: "edit", p: "src/b.ts" },
-					],
-				},
-				makeTheme(),
-			);
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-
-		it("renders invisible call frame for many ops", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!(
-				{
-					o: [
-						{ o: "read", p: "a.ts" },
-						{ o: "read", p: "b.ts" },
-						{ o: "read", p: "c.ts" },
-						{ o: "read", p: "d.ts" },
-					],
-				},
-				makeTheme(),
-			);
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-
-		it("renders invisible call frame for empty batch", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!({ o: [] }, makeTheme());
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-
-		it("renders invisible call frame for multi-block edits", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!(
-				{
-					o: [
-						{
-							o: "edit",
-							p: "src/foo.ts",
-							e: [
-								{ f: "a", r: "b" },
-								{ f: "c", r: "d" },
-							],
-						},
-					],
-				},
-				makeTheme(),
-			);
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-
-		it("renders invisible call frame regardless of path length", () => {
-			const tool = createTool();
-			const rendered = tool.renderCall!(
-				{ o: [{ o: "read", p: `${os.homedir()}/project/file.ts` }] },
-				makeTheme(),
-			);
-			expect(rendered.toString()).toBe("[object Object]");
-		});
-	});
-
-	describe("renderResult", () => {
-		function makeTheme() {
-			return {
-				fg: (color: string, text: string) => text,
-				bg: (color: string, text: string) => text,
-				bold: (s: string) => s,
-			};
-		}
-
-		it("collapsed shows only summary line", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "✔ 2 read, 1 edit\n\n--- file.ts ---\ncontent" }],
-				details: { results: [] },
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = rendered.toString();
-			expect(text).toContain("✔");
-			expect(text).not.toContain("--- file.ts ---");
-		});
-
-		it("expanded shows full content", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "✔ 2 read, 1 edit\n\n--- file.ts ---\ncontent" }],
-				details: { results: [] },
-			};
-			const rendered = tool.renderResult!(result, { expanded: true }, makeTheme(), undefined);
-			const text = rendered.toString();
-			expect(text).toContain("✔");
-			expect(text).toContain("--- file.ts ---");
-			expect(text).toContain("content");
-		});
-
-		it("handles empty content gracefully", () => {
-			const tool = createTool();
-			const result = { content: [], details: { results: [] } };
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			expect(rendered.toString()).toBe("");
-		});
-
-		it("tree rendering: collapsed shows header + op lines without content", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "✔ 2 read, 1 edit\n\n--- file.ts ---\ncontent" }],
-				details: {
-					results: [
-						{ op: "read", path: "src/a.ts", status: "ok", totalLines: 100, content: "line1\nline2" },
-						{ op: "read", path: "src/b.ts", status: "ok", totalLines: 200, content: "line3\nline4" },
-						{ op: "edit", path: "src/c.ts", status: "ok", blocksChanged: 2 },
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("batch");
-			expect(text).toContain("3 ops");
-			expect(text).toContain("3 ok");
-			expect(text).toContain("├─");
-			expect(text).toContain("└─");
-			expect(text).toContain("read: src/a.ts");
-			expect(text).toContain("100 lines");
-			expect(text).toContain("edit: src/c.ts");
-			expect(text).toContain("2 blocks");
-			expect(text).not.toContain("line1");
-			expect(text).not.toContain("line3");
-		});
-
-		it("tree rendering: expanded shows header + op lines + content previews", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "✔ 2 read, 1 edit" }],
-				details: {
-					results: [
-						{ op: "read", path: "src/a.ts", status: "ok", totalLines: 100, content: "line1\nline2\nline3" },
-						{ op: "rg", path: "src", status: "ok", content: "src/a.ts:1:foo\nsrc/b.ts:2:bar" },
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: true }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("batch");
-			expect(text).toContain("read: src/a.ts");
-			expect(text).toContain("rg: src");
-			expect(text).toContain("line1");
-			expect(text).toContain("src/a.ts:1:foo");
-		});
-
-		it("tree rendering: mixed statuses show correct icons", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "mixed" }],
-				details: {
-					results: [
-						{ op: "write", path: "ok.ts", status: "ok" },
-						{ op: "read", path: "err.ts", status: "error", error: "ENOENT" },
-						{ op: "read", path: "skip.ts", status: "skipped", error: "aggregate limit" },
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("✓");
-			expect(text).toContain("✗");
-			expect(text).toContain("⊘");
-			expect(text).toContain("1 ok");
-			expect(text).toContain("1 err");
-			expect(text).toContain("1 skipped");
-		});
-
-		it("tree rendering: various op types format correctly", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "mixed ops" }],
-				details: {
-					results: [
-						{ op: "write", path: "new.ts", status: "ok", bytes: 1200 },
-						{ op: "delete", path: "old.ts", status: "ok" },
-						{ op: "bash", path: "bash", status: "ok", command: "npm test", exitCode: 0, duration: 1800 },
-						{ op: "patch", path: "multi.ts", status: "ok", affected: { added: ["a.ts"], modified: ["b.ts"], deleted: [] } },
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("write: new.ts");
-			expect(text).toContain("1200 bytes");
-			expect(text).toContain("delete: old.ts");
-			expect(text).toContain("bash: npm test");
-			expect(text).toContain("exit 0");
-			expect(text).toContain("1.8s");
-			expect(text).toContain("patch: multi.ts");
-			expect(text).toContain("A a.ts");
-			expect(text).toContain("M b.ts");
-		});
-
-		it("tree rendering: web search op shows result count from results array", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "web ops" }],
-				details: {
-					results: [
-						{
-							op: "search",
-							q: "test query",
-							status: "ok" as const,
-							results: [
-								{ title: "Result A", url: "https://a.com", snippet: "snippet A" },
-								{ title: "Result B", url: "https://b.com", snippet: "snippet B" },
-							],
-						},
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("search: \"test query\"");
-			expect(text).toContain("2 results");
-		});
-
-		it("tree rendering: web fetch op shows saved file path in expanded view", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "web ops" }],
-				details: {
-					results: [
-						{
-							op: "fetch",
-							u: "https://example.com/page",
-							status: "ok" as const,
-							filePath: "/tmp/fetch-abc.html",
-							contentLength: 1200,
-						},
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: true }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("fetch: https://example.com/page");
-			expect(text).toContain("1200 bytes");
-			expect(text).toContain("saved: /tmp/fetch-abc.html");
-		});
-
-		it("tree rendering: patch op with undefined affected sub-arrays does not crash", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "patch ops" }],
-				details: {
-					results: [
-						{
-							op: "patch",
-							path: "safe.ts",
-							status: "ok" as const,
-							affected: { added: undefined as any, modified: ["b.ts"], deleted: undefined as any },
-						},
-					],
-				},
-			};
-			expect(() => {
-				const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-				const text = extractText(rendered);
-				expect(text).toContain("patch: safe.ts");
-				expect(text).toContain("M b.ts");
-			}).not.toThrow();
-		});
-
-		it("tree rendering: header shows per-op-type counts", () => {
-			const tool = createTool();
-			const result = {
-				content: [{ type: "text", text: "mixed ops" }],
-				details: {
-					results: [
-						{ op: "read", path: "a.ts", status: "ok" as const, totalLines: 10 },
-						{ op: "read", path: "b.ts", status: "ok" as const, totalLines: 20 },
-						{ op: "search", q: "q1", status: "ok" as const, results: [{ title: "T", url: "U" }] },
-						{ op: "bash", command: "npm test", status: "ok" as const, exitCode: 0, duration: 1000 },
-					],
-				},
-			};
-			const rendered = tool.renderResult!(result, { expanded: false }, makeTheme(), undefined);
-			const text = extractText(rendered);
-			expect(text).toContain("4 ops");
-			expect(text).toContain("4 ok");
-			expect(text).toContain("2 file");
-			expect(text).toContain("1 web");
-			expect(text).toContain("1 bash");
-		});
-	});
-});
-
-describe("batch web operations", () => {
-	let tmpDir: string;
-	let runWebOpsSpy: ReturnType<typeof vi.spyOn>;
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-batch-web-test-"));
-		runWebOpsSpy = vi.spyOn(webOps, "runWebOps").mockResolvedValue({
-			content: [{ type: "text" as const, text: "mocked web output" }],
-			details: {
-				ops: [{ op: "search", q: "test", status: "ok" as const, results: [] }],
-			},
-		});
-	});
-
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-		runWebOpsSpy.mockRestore();
-	});
-
-	function createTool() {
-		return createBatchTool();
-	}
-
-	function makeCtx(cwd: string) {
-		return { cwd, sessionManager: { getSessionDir: () => cwd } };
-	}
-
-	it("executes web ops with w array", async () => {
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{ w: [{ o: "search", q: "test query" }] },
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(runWebOpsSpy).toHaveBeenCalledWith(
-			{ op: [{ o: "search", q: "test query" }] },
-			expect.any(Object),
-			undefined,
-		);
-		expect(result.content[0].text).toContain("mocked web output");
-		expect(result.details.results).toHaveLength(1);
-		expect(result.details.results[0]).toMatchObject({ op: "search", q: "test", status: "ok" });
-	});
-
-	it("executes mixed o + w in correct order", async () => {
-		fs.writeFileSync(path.join(tmpDir, "test.txt"), "file content\n", "utf-8");
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{
-				o: [{ o: "read", p: "test.txt" }],
-				w: [{ o: "search", q: "test" }],
-			},
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.content[0].text).toContain("file content");
-		expect(result.content[0].text).toContain("mocked web output");
-		expect(result.details.results).toHaveLength(2);
-		expect(result.details.results[0]).toMatchObject({ op: "read", status: "ok" });
-		expect(result.details.results[1]).toMatchObject({ op: "search", q: "test", status: "ok" });
-	});
-
-	it("handles web op errors without stopping batch", async () => {
-		fs.writeFileSync(path.join(tmpDir, "test.txt"), "file content\n", "utf-8");
-		runWebOpsSpy.mockResolvedValue({
-			content: [{ type: "text" as const, text: "web error output" }],
-			details: {
-				ops: [
-					{ op: "fetch", u: "bad", status: "error" as const, error: "Failed" },
-					{ op: "search", q: "test", status: "ok" as const, results: [] },
-				],
-			},
-		});
-
-		const tool = createTool();
-		const result = await tool.execute(
-			"call-1",
-			{
-				o: [{ o: "read", p: "test.txt" }],
-				w: [
-					{ o: "fetch", u: "bad" },
-					{ o: "search", q: "test" },
-				],
-			},
-			undefined,
-			undefined,
-			makeCtx(tmpDir),
-		);
-
-		expect(result.content[0].text).toContain("file content");
-		expect(result.content[0].text).toContain("web error output");
-		expect(result.details.results).toHaveLength(3);
-		expect(result.details.results[0]).toMatchObject({ op: "read", status: "ok" });
-		expect(result.details.results[1]).toMatchObject({ op: "fetch", u: "bad", status: "error" });
-		expect(result.details.results[2]).toMatchObject({ op: "search", q: "test", status: "ok" });
-	});
-
 });

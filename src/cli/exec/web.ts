@@ -1,0 +1,66 @@
+import { runWebSearch, runWebFetch } from "../../tools/web-ops.js";
+import type { OpResult } from "../../batch/constants.js";
+import { CliError } from "../parse.js";
+
+export async function runWebSubcommand(
+  parsed: { flags: Record<string, unknown>; positionals: string[] },
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<{ output: string; results: OpResult[]; error?: string; failed: boolean }> {
+  if (parsed.positionals.length === 0) {
+    throw new CliError("web requires a subcommand: search or fetch.", "Usage: batch web search -q <query> or batch web fetch -u <url>");
+  }
+
+  const subcommand = parsed.positionals[0];
+  const remainingPositionals = parsed.positionals.slice(1);
+
+  if (subcommand === "search") {
+    const query = typeof parsed.flags.query === "string" ? parsed.flags.query : undefined;
+    if (!query) {
+      throw new CliError("web search requires -q <query>.", "Usage: batch web search -q <query>");
+    }
+
+    const result = await runWebSearch({ query }, signal);
+    const output = result.content[0].text;
+    const results: OpResult[] = [{
+      op: "search",
+      status: "ok",
+      query,
+      content: output,
+    }];
+    return { output, results, failed: false };
+  }
+
+  if (subcommand === "fetch") {
+    const url = typeof parsed.flags.url === "string" ? parsed.flags.url : undefined;
+    if (!url) {
+      throw new CliError("web fetch requires -u <url>.", "Usage: batch web fetch -u <url> [-f <format>]");
+    }
+    const format = typeof parsed.flags.format === "string" ? parsed.flags.format : undefined;
+
+    // Need a sessionManager for temp file storage; if not available, use a minimal mock
+    const sessionDir = (global as any).__pi_session_dir ?? cwd;
+    const ctx = {
+      sessionManager: {
+        getSessionDir: () => sessionDir,
+      },
+    };
+
+    const result = await runWebFetch({ url, format }, ctx, signal);
+    const output = result.content[0].text;
+    const results: OpResult[] = [{
+      op: "fetch",
+      status: "ok",
+      url,
+      content: output,
+      filePath: result.details.filePath,
+      contentLength: result.details.contentLength,
+    }];
+    return { output, results, failed: false };
+  }
+
+  throw new CliError(
+    `Unknown web subcommand: ${subcommand}`,
+    `Did you mean: search, fetch?`,
+  );
+}

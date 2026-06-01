@@ -23,13 +23,12 @@ import type {
 	PiAgentFlowAPI,
 } from "./types/flow.js";
 
+import { createBatchCliTool, createBatchReadCliTool } from "./cli/register.js";
 import {
-	createBatchTool,
 	BashProcessTracker,
 	createBatchBashPollTool,
 	runBashWithLimits,
-} from "./batch/index.js";
-import { createBatchReadCliTool } from "./cli/register.js";
+} from "./batch/batch-bash.js";
 import { createAskUserTool } from "./tools/ask-user.js";
 import {
 	stripSteeringHintText,
@@ -411,7 +410,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		if (resolved.toolOptimize && currentDepth > 0) {
 			bashTracker = new BashProcessTracker();
-			pi.registerTool(createBatchTool(bashTracker, resolved.toolOptimize));
+			pi.registerTool(createBatchCliTool(bashTracker, resolved.toolOptimize));
 			pi.registerTool(createBatchBashPollTool(bashTracker));
 		}
 

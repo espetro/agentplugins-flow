@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { prepareFlowDispatchArguments } from "../src/flow/flow-dispatch-prep.js";
 import { prepareTraceDispatchArguments } from "../src/tools/trace-dispatch-prep.js";
-import { createBatchTool } from "../src/batch/index.js";
+import { prepareBatchArguments } from "../src/batch/index.js";
 
-const batchTool = createBatchTool(undefined, false);
-const prepareBatchArguments = batchTool.prepareArguments as (input: unknown) => unknown;
+const prepareBatchArgumentsTyped = prepareBatchArguments as (input: unknown) => unknown;
 
 describe("array-coerce integration", () => {
   it("prepareFlowDispatchArguments drops non-object flow elements and adds _flowNotes", () => {
@@ -48,7 +47,7 @@ describe("array-coerce integration", () => {
   });
 
   it("prepareArguments drops non-object batch ops", () => {
-    const result = prepareBatchArguments({
+    const result = prepareBatchArgumentsTyped({
       o: [{ o: "read", p: "src/index.ts" }, "\n"],
     }) as Record<string, unknown>;
     const ops = result.o as unknown[];
@@ -87,7 +86,7 @@ describe("array-coerce integration", () => {
   });
 
   it("prepareArguments sanitizes web ops and keeps valid ones", () => {
-    const result = prepareBatchArguments({
+    const result = prepareBatchArgumentsTyped({
       o: [{ o: "read", p: "x" }],
       w: [{ o: "search", q: "x" }, "\n"],
     }) as Record<string, unknown>;
@@ -97,7 +96,7 @@ describe("array-coerce integration", () => {
   });
 
   it("prepareArguments sets empty w array when all web ops are dropped", () => {
-    const result = prepareBatchArguments({
+    const result = prepareBatchArgumentsTyped({
       o: [{ o: "read", p: "x" }],
       w: ["\n", null],
     }) as Record<string, unknown>;
@@ -106,7 +105,7 @@ describe("array-coerce integration", () => {
   });
 
   it("prepareArguments leaves w undefined when not provided", () => {
-    const result = prepareBatchArguments({
+    const result = prepareBatchArgumentsTyped({
       o: [{ o: "read", p: "x" }],
     }) as Record<string, unknown>;
     expect(result.w).toBeUndefined();

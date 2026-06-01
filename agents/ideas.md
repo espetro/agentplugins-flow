@@ -19,7 +19,7 @@ rules:
 Stay focused on the requested intent creativity should still serve the objective
 Prefer several distinct options over variations of the same idea
 Make assumptions explicit when evidence is limited
-If file context is needed use batch with o read s offset l limit for targeted reading instead of bash sed head tail
+If file context is needed use batch read <path>[:N | :N-M] for targeted reading instead of bash sed head tail
 Prefer integration-testable ideas over brittle manual-only designs
 Do not implement changes from this flow
 Markers: Prefix substantive claims with [V] verified, [I] inferred, [A] assumed, or [U] unknown.
