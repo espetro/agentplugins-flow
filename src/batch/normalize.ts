@@ -1,4 +1,5 @@
 import { logWarn } from "../config/log.js";
+import { resolveAlias } from "../flow/op-aliases.js";
 
 export function generateBashId(): string {
 	return Math.random().toString(36).slice(2, 10);
@@ -6,9 +7,13 @@ export function generateBashId(): string {
 
 export function normalizeBatchOp(raw: Record<string, unknown>): Record<string, unknown> {
 	const op: Record<string, unknown> = {};
+	const ctx = { tool: "batch" };
 
 	// Map operation type
-	op.o = raw.o ?? raw.op ?? (raw.c != null || raw.content != null ? "write" : (raw.e != null || raw.edits != null ? "edit" : "read"));
+	const o = resolveAlias("o", raw, ctx);
+	const c = resolveAlias("c", raw, ctx);
+	const e = resolveAlias("e", raw, ctx);
+	op.o = o ?? (c != null ? "write" : (e != null ? "edit" : "read"));
 
 	// Bash ops use a separate normalizer
 	if (op.o === "bash") {
@@ -16,53 +21,62 @@ export function normalizeBatchOp(raw: Record<string, unknown>): Record<string, u
 	}
 
 	// Map path
-	op.p = raw.p ?? raw.path;
+	op.p = resolveAlias("p", raw, ctx);
 
 	// Map content
-	if (raw.c !== undefined) op.c = raw.c;
+	const content = resolveAlias("c", raw, ctx);
+	if (content !== undefined) op.c = content;
 	else if (raw.patch !== undefined) op.c = raw.patch;
-	else if (raw.content !== undefined) op.c = raw.content;
 
 	// Map edits
-	let editsRaw = raw.e ?? raw.edits;
+	let editsRaw = resolveAlias("e", raw, ctx);
 	if (typeof editsRaw === "string") {
 		try { editsRaw = JSON.parse(editsRaw); } catch (e) { logWarn(`[pi-agent-flow] Failed to parse batch edits JSON: ${e}`); }
 	}
 	if (Array.isArray(editsRaw)) {
-		op.e = editsRaw.map((e: unknown) => {
-			if (!e || typeof e !== "object") return e;
-			const edit = e as Record<string, unknown>;
-			return { f: edit.f ?? edit.oldText, r: edit.r ?? edit.newText };
+		op.e = editsRaw.map((edit: unknown) => {
+			if (!edit || typeof edit !== "object") return edit;
+			const editObj = edit as Record<string, unknown>;
+			return {
+				f: resolveAlias("f", editObj, ctx) ?? editObj.oldText,
+				r: resolveAlias("r", editObj, ctx) ?? editObj.newText,
+			};
 		});
 	}
 
 	// Map offset / limit
-	if (raw.s !== undefined) op.s = raw.s;
-	else if (raw.offset !== undefined) op.s = raw.offset;
-	if (raw.l !== undefined) op.l = raw.l;
-	else if (raw.limit !== undefined) op.l = raw.limit;
+	const s = resolveAlias("s", raw, ctx);
+	if (s !== undefined) op.s = s;
+	const l = resolveAlias("l", raw, ctx);
+	if (l !== undefined) op.l = l;
 
 	// Map timeout / type filter
-	if (raw.t !== undefined) op.t = raw.t;
+	const t = resolveAlias("t", raw, ctx);
+	if (t !== undefined) op.t = t;
 
-	// Map id / ignore-case
-	if (raw.i !== undefined) op.i = raw.i;
+	// Map ignore-case
+	const i = resolveAlias("i", raw, ctx);
+	if (i !== undefined) op.i = i;
 
 	// Map rg-specific fields
-	if (raw.q !== undefined) op.q = raw.q;
-	if (raw.n !== undefined) op.n = raw.n;
-	if (raw.u !== undefined) op.u = raw.u;
+	const q = resolveAlias("q", raw, ctx);
+	if (q !== undefined) op.q = q;
+	const n = resolveAlias("n", raw, ctx);
+	if (n !== undefined) op.n = n;
+	const u = resolveAlias("u", raw, ctx);
+	if (u !== undefined) op.u = u;
 
 	return op;
 }
 
 export function normalizeBashOp(raw: Record<string, unknown>): Record<string, unknown> {
+	const ctx = { tool: "bash" };
 	return {
 		o: "bash",
-		c: raw.c ?? raw.command,
-		i: raw.i ?? raw.id ?? generateBashId(),
-		t: raw.t ?? raw.timeout,
-		h: raw.h ?? raw.cwdPath ?? raw.cwd,
-		p: raw.p ?? raw.h ?? ".",
+		c: resolveAlias("c", raw, ctx) ?? raw.command,
+		i: resolveAlias("i", raw, ctx) ?? generateBashId(),
+		t: resolveAlias("t", raw, ctx),
+		h: resolveAlias("h", raw, ctx) ?? raw.cwdPath ?? raw.cwd,
+		p: resolveAlias("p", raw, ctx) ?? raw.h ?? ".",
 	};
 }

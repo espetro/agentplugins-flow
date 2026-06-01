@@ -90,8 +90,8 @@ export function prepareFlowArguments(input: unknown): unknown {
 		}
 	}
 
-	if (!changed) return input;
-
 	// Delegate inner-ops normalization to the dispatch-level prep.
-	return prepareFlowDispatchArguments(normalizedArgs);
+	// Always call it so alias resolution and inference run even when the flow
+	// shape itself is already canonical.
+	return prepareFlowDispatchArguments(changed ? normalizedArgs : input);
 }

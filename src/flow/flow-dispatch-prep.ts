@@ -11,7 +11,7 @@ export function prepareFlowDispatchArguments(input: unknown): unknown {
 	const rawFlow = args.flow;
 	if (!Array.isArray(rawFlow)) return input;
 
-	let hasNotes = false;
+	let hasChanges = false;
 	const normalizedFlow = rawFlow.map((item: unknown) => {
 		if (!item || typeof item !== "object") return item;
 		const flowItem = item as Record<string, unknown>;
@@ -19,13 +19,13 @@ export function prepareFlowDispatchArguments(input: unknown): unknown {
 		if (!rawDispatch) return flowItem;
 
 		const dispatchResult = prepareTraceDispatchArguments({ dispatch: rawDispatch });
-		if (dispatchResult.notes.length > 0) {
-			hasNotes = true;
+		if (dispatchResult.changed || dispatchResult.notes.length > 0) {
+			hasChanges = true;
 			return { ...flowItem, dispatch: dispatchResult.dispatch, _dispatchNotes: dispatchResult.notes };
 		}
 		return flowItem;
 	});
 
-	if (!hasNotes) return input;
+	if (!hasChanges) return input;
 	return { ...args, flow: normalizedFlow };
 }

@@ -1,40 +1,53 @@
+import { applyOpAliases, applyDispatchWrapperAliases } from "../flow/op-aliases.js";
+
 export type DispatchPrepResult = {
 	dispatch: Array<{ tool: "batch" | "bash" | "web"; ops: unknown[] }>;
 	notes: string[];
+	changed: boolean;
 };
 
 export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResult {
 	if (!input || typeof input !== "object") {
-		return { dispatch: [], notes: [] };
+		return { dispatch: [], notes: [], changed: false };
 	}
 
 	const args = input as Record<string, unknown>;
 	const rawDispatch = args.dispatch;
 
 	if (!rawDispatch) {
-		return { dispatch: [], notes: [] };
+		return { dispatch: [], notes: [], changed: false };
 	}
 
 	if (typeof rawDispatch === "string") {
 		return {
 			dispatch: [{ tool: "bash", ops: [{ c: rawDispatch }] }],
 			notes: ["string → bash[1]"],
+			changed: true,
 		};
 	}
 
 	if (!Array.isArray(rawDispatch)) {
-		return { dispatch: [], notes: [] };
+		return { dispatch: [], notes: [], changed: true };
 	}
 
 	const notes: string[] = [];
 	const dispatch: Array<{ tool: "batch" | "bash" | "web"; ops: unknown[] }> = [];
+	let changed = false;
 
 	for (const group of rawDispatch) {
-		if (!group || typeof group !== "object") continue;
-		const g = group as Record<string, unknown>;
+		if (!group || typeof group !== "object") {
+			changed = true;
+			continue;
+		}
+		const rawG = group as Record<string, unknown>;
+		const wrapperResult = applyDispatchWrapperAliases(rawG);
+		if (wrapperResult.aliased) notes.push("aliased dispatch wrapper");
+		if (wrapperResult.changed) changed = true;
+		const g = wrapperResult.result;
 
 		const tool = g.tool;
 		if (tool !== "batch" && tool !== "bash" && tool !== "web") {
+			changed = true;
 			continue;
 		}
 
@@ -44,6 +57,7 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 		if (typeof ops === "string") {
 			ops = [{ c: ops }];
 			notes.push("string → bash[1]");
+			changed = true;
 		}
 
 		// Handle single object ops (wrap in array) or nested dispatcher
@@ -57,13 +71,18 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 					ops = [opsObj.item];
 				}
 				notes.push("flattened nested dispatcher");
+				changed = true;
 			} else {
 				ops = [ops];
 				notes.push("single obj → array[1]");
+				changed = true;
 			}
 		}
 
 		const opsArray = Array.isArray(ops) ? ops : [];
+		if (opsArray !== ops) {
+			changed = true;
+		}
 
 		const normalizedOps: unknown[] = [];
 
@@ -71,10 +90,12 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 			if (typeof op === "string") {
 				normalizedOps.push({ c: op });
 				notes.push("string → bash[1]");
+				changed = true;
 				continue;
 			}
 
 			if (!op || typeof op !== "object") {
+				changed = true;
 				continue;
 			}
 
@@ -87,32 +108,58 @@ export function prepareTraceDispatchArguments(input: unknown): DispatchPrepResul
 					if (Array.isArray(innerOps.item)) {
 						for (const innerItem of innerOps.item) {
 							const flatOp = { ...(innerItem as Record<string, unknown>) };
-							applyInference(flatOp, tool as string, notes, normalizedOps);
+							const aliased = applyOpAliases(flatOp, tool as "batch" | "bash" | "web");
+							if (aliased.aliased) notes.push("aliased op");
+							if (aliased.changed) changed = true;
+							const inferred = applyInference(aliased.result, tool as string, notes, normalizedOps);
+							if (inferred) changed = true;
 						}
 					} else {
 						const flatOp = { ...innerOps.item } as Record<string, unknown>;
-						applyInference(flatOp, tool as string, notes, normalizedOps);
+						const aliased = applyOpAliases(flatOp, tool as "batch" | "bash" | "web");
+						if (aliased.aliased) notes.push("aliased op");
+						if (aliased.changed) changed = true;
+						const inferred = applyInference(aliased.result, tool as string, notes, normalizedOps);
+						if (inferred) changed = true;
 					}
 					notes.push("flattened nested dispatcher");
+					changed = true;
 					continue;
 				}
 			}
 
+			const aliasedOp = applyOpAliases(opObj, tool as "batch" | "bash" | "web");
+			if (aliasedOp.aliased) notes.push("aliased op");
+			if (aliasedOp.changed) changed = true;
+
 			// Strip stray 'tool' key from bash ops
-			if (tool === "bash" && opObj.tool !== undefined) {
-				const { tool: _, ...rest } = opObj;
+			if (tool === "bash" && aliasedOp.result.tool !== undefined) {
+				const { tool: _, ...rest } = aliasedOp.result;
 				normalizedOps.push(rest);
 				notes.push("stripped stray tool");
+				changed = true;
 				continue;
 			}
 
-			applyInference(opObj, tool as string, notes, normalizedOps);
+			const inferred = applyInference(aliasedOp.result, tool as string, notes, normalizedOps);
+			if (inferred) changed = true;
 		}
 
-		dispatch.push({ tool: tool as "batch" | "bash" | "web", ops: normalizedOps });
+		// Preserve unknown wrapper keys for forward compatibility
+		dispatch.push({ tool: tool as "batch" | "bash" | "web", ...g, ops: normalizedOps });
 	}
 
-	return { dispatch, notes };
+	// If no structural changes were made, return the original array to preserve
+	// reference equality so upstream callers can detect whether normalization occurred.
+	if (notes.length === 0 && !changed) {
+		return {
+			dispatch: rawDispatch as Array<{ tool: "batch" | "bash" | "web"; ops: unknown[] }>,
+			notes: [],
+			changed: false,
+		};
+	}
+
+	return { dispatch, notes, changed: true };
 }
 
 function applyInference(
@@ -120,25 +167,25 @@ function applyInference(
 	tool: string,
 	notes: string[],
 	normalizedOps: unknown[],
-): void {
+): boolean {
 	if (tool === "batch") {
 		if (opObj.o === undefined) {
 			if (opObj.c !== undefined && opObj.p === undefined) {
 				normalizedOps.push({ ...opObj, o: "bash", p: opObj.c });
 				notes.push("inferred o=bash");
-				return;
+				return true;
 			} else if (opObj.e !== undefined) {
 				normalizedOps.push({ ...opObj, o: "edit" });
 				notes.push("inferred o=edit");
-				return;
+				return true;
 			} else if (opObj.c !== undefined) {
 				normalizedOps.push({ ...opObj, o: "write" });
 				notes.push("inferred o=write");
-				return;
+				return true;
 			} else if (opObj.p !== undefined) {
 				normalizedOps.push({ ...opObj, o: "read" });
 				notes.push("inferred o=read");
-				return;
+				return true;
 			}
 		}
 	}
@@ -148,14 +195,15 @@ function applyInference(
 			if (opObj.q !== undefined) {
 				normalizedOps.push({ ...opObj, o: "search" });
 				notes.push("inferred o=search");
-				return;
+				return true;
 			} else if (opObj.u !== undefined) {
 				normalizedOps.push({ ...opObj, o: "fetch" });
 				notes.push("inferred o=fetch");
-				return;
+				return true;
 			}
 		}
 	}
 
 	normalizedOps.push(opObj);
+	return false;
 }

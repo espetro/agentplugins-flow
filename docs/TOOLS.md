@@ -142,6 +142,61 @@ Input → normalized output pairs:
 
 When any normalization occurs, the resulting prompt is annotated with a `normalized:` section listing the applied fixes so the agent knows what happened.
 
+### Field aliases
+
+The dispatch surface accepts **one canonical field name per key** plus a single alias. If both are present, the canonical value wins and the alias is silently discarded.
+
+**Wrapper aliases** (apply to the dispatch group object):
+
+| Alias | Canonical | Meaning |
+|-------|-----------|---------|
+| `t` | `tool` | Tool type (`batch`, `bash`, `web`) |
+| `o` | `ops` | Operations array |
+
+**Universal op aliases** (apply in every tool context):
+
+| Alias | Canonical | Meaning |
+|-------|-----------|---------|
+| `op` | `o` | Operation type (`read`, `write`, `edit`, `bash`, `rg`, `search`, `fetch`) |
+| `path` | `p` | File path or search path |
+| `edits` | `e` | Edit array (for `o: "edit"`) |
+| `offset` | `s` | Start line (for reads) |
+| `limit` | `l` | Line limit (for reads) or files-with-matches flag (for `rg`) |
+| `cwd` | `h` | Working directory override |
+| `query` | `q` | Search query (for `rg` or `web`) |
+| `maxCount` | `n` | Max matches per file (for `rg`) |
+| `find` | `f` | Old text to find (inside edit objects) |
+| `replace` | `r` | New text to replace (inside edit objects) |
+
+**Context-split op aliases** (resolve differently depending on the wrapper `tool`):
+
+| Alias | `batch` | `bash` | `web` |
+|-------|---------|--------|-------|
+| `content` | `c` | — | — |
+| `cmd` | — | `c` | — |
+| `command` | — | `c` (legacy fallback) | — |
+| `timeout` | — | `t` | — |
+| `ignoreCase` | `i` | — | `i` |
+| `id` | — | `i` | — |
+| `url` | — | — | `u` |
+
+> **Context-split rationale:** the same short alias (`c`, `t`, `i`, `u`) means different things in different tools. By scoping the alias to the wrapper's `tool` value, the normalizer can safely resolve `cmd` to `c` in a `bash` op without accidentally overwriting `content` in a `batch` write op.
+
+### Silent drops (no note added)
+
+Some malformed inputs are **silently dropped** by the normalizer — the canonical form is applied but no `normalized:` note is added because the original input was structurally invalid rather than merely unnormalized. The strict schema is never exposed to the malformed shape.
+
+| Input | Result | Why |
+|---|---|---|
+| Group with no valid `tool` (e.g. `{}`, `{tool: "unknown"}`) | group dropped from dispatch | no branch of the `anyOf` matches |
+| `ops` field missing entirely | `ops` becomes `[]` | `Type.Array(...)` accepts empty array |
+| `ops` is a non-string non-object (e.g. `42`, `true`, `null`) | `ops` becomes `[]` | only string and object branches are handled |
+| Per-op `null` / `undefined` / `false` / `0` | op dropped from `ops` array | `!op || typeof op !== "object"` skips |
+
+**Prefer the canonical form** to avoid silent drops and to make your intent explicit. Silent drops still produce the right behavior, but the resulting dispatch is shorter than the input you provided, which can be surprising when debugging.
+
+> **Implementation note:** `prepareArguments` in the trace tool always returns the normalized dispatch form, not the original input, because `notes.length === 0` is not a reliable signal that no transformation was made (see the table above). The same pattern applies to the flow tool's `prepareFlowArguments`.
+
 ## `batch` / `batch_read` — unified file operations
 
 When **tool optimization** is enabled (default), the separate `read` / `write` / `edit` tools are replaced by:
