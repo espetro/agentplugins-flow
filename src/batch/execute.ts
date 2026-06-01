@@ -337,6 +337,19 @@ export async function executeOperations(
 						throw new Error(`File not readable: ${op.p}`);
 					}
 
+					let stat;
+					try {
+						stat = await fs.lstat(resolvedPath);
+					} catch (err: any) {
+						if (err.code === "ENOENT") {
+							throw new Error(`File not found: ${op.p}`);
+						}
+						throw err;
+					}
+					if (stat.isDirectory()) {
+						throw new Error(`Cannot read directory: ${op.p}. Provide a file path instead, or use ls to list contents.`);
+					}
+
 					const rawContent = await fs.readFile(resolvedPath, "utf-8");
 					const { text } = stripBom(rawContent);
 					const allLines = text.split("\n");

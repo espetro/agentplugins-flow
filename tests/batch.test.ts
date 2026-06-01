@@ -608,6 +608,28 @@ describe("batch tool", () => {
 		expect(result.details.results[0].status).toBe("ok");
 		expect(result.details.results[0].enclosingSignatures).toBeUndefined();
 	});
+
+	it("rejects reading a directory with a friendly error", async () => {
+		fs.mkdirSync(path.join(tmpDir, "a-dir"));
+		fs.writeFileSync(path.join(tmpDir, "a-dir", "file.txt"), "hello\n", "utf-8");
+
+		const tool = createTool();
+		const result = await tool.execute(
+			"call-1",
+			{ o: [{ op: "read", path: "a-dir" }] },
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(result.details.results[0]).toMatchObject({
+			op: "read",
+			status: "error",
+			error: expect.stringContaining("Cannot read directory"),
+		});
+		expect(result.content[0].text).toContain("Cannot read directory");
+	});
+
 	describe("write operations", () => {
 		it("creates a new file", async () => {
 			const tool = createTool();
@@ -3295,6 +3317,26 @@ describe("batch_read tool", () => {
 				status: "ok",
 				path: "small.txt",
 			});
+		});
+		it("rejects reading a directory with a friendly error", async () => {
+			fs.mkdirSync(path.join(tmpDir, "a-dir"));
+			fs.writeFileSync(path.join(tmpDir, "a-dir", "file.txt"), "hello\n", "utf-8");
+
+			const tool = createTool();
+			const result = await tool.execute(
+				"call-1",
+				{ o: [{ o: "read", p: "a-dir" }] },
+				undefined,
+				undefined,
+				makeCtx(tmpDir),
+			);
+
+			expect(result.details.results[0]).toMatchObject({
+				op: "read",
+				status: "error",
+				error: expect.stringContaining("Cannot read directory"),
+			});
+			expect(result.content[0].text).toContain("Cannot read directory");
 		});
 	});
 

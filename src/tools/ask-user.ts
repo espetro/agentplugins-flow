@@ -52,12 +52,10 @@ type AskOptionInput = QuestionOption | string;
 
 interface AskParams {
 	question: string;
-	options?: AskOptionInput[];
+	options: AskOptionInput[];
 }
 
-type AskResponse =
-	| { kind: "selection"; selections: string[] }
-	| { kind: "freeform"; text: string };
+type AskResponse = { kind: "selection"; selections: string[] };
 
 interface AskToolDetails {
 	question: string;
@@ -93,11 +91,6 @@ function formatOptionsForMessage(options: QuestionOption[]): string {
 		.join("\n");
 }
 
-function createFreeformResponse(text: string | null | undefined): AskResponse | null {
-	const trimmed = text?.trim();
-	return trimmed ? { kind: "freeform", text: trimmed } : null;
-}
-
 function createSelectionResponse(selections: string[]): AskResponse | null {
 	const normalizedSelections = selections.map((selection) => selection.trim()).filter(Boolean);
 	if (normalizedSelections.length === 0) return null;
@@ -105,16 +98,11 @@ function createSelectionResponse(selections: string[]): AskResponse | null {
 }
 
 function formatResponseSummary(response: AskResponse): string {
-	if (response.kind === "freeform") return response.text;
 	return response.selections.join(", ");
 }
 
 function isCancelledInput(value: unknown): value is null | undefined {
 	return value === null || value === undefined;
-}
-
-function isSelectionResponse(response: AskResponse): response is Extract<AskResponse, { kind: "selection" }> {
-	return response.kind === "selection";
 }
 
 function createSelectListTheme(theme: Theme) {
@@ -698,12 +686,6 @@ async function askViaDialogs(
 ): Promise<AskUIResult | null> {
 	if (signal?.aborted) return null;
 
-	if (options.length === 0) {
-		const answer = await ui.input(question, "Type your answer...", { signal }) as string | undefined;
-		if (isCancelledInput(answer)) return null;
-		return createFreeformResponse(answer);
-	}
-
 	const selectOptions = options.map((o) => o.title);
 	const selected = await ui.select(question, selectOptions, { signal }) as string | undefined;
 	if (isCancelledInput(selected)) return null;
@@ -718,9 +700,9 @@ export function createAskUserTool() {
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a focused question with optional multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with [preferred] and place it first.",
+			"Ask the user a focused question with multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with [preferred] and place it first.",
 		promptSnippet:
-			"Ask the user one focused question with optional multiple-choice answers to gather information interactively",
+			"Ask the user one focused question with multiple-choice answers to gather information interactively",
 		promptGuidelines: [
 			"Use `ask_user` when the user's intent is ambiguous, when a decision requires explicit user input, or when multiple valid options exist.",
 			"Ask exactly one focused question per `ask_user` call.",
@@ -728,14 +710,12 @@ export function createAskUserTool() {
 		],
 		parameters: Type.Object({
 			question: Type.String({ description: "The question to ask the user" }),
-			options: Type.Optional(
-				Type.Array(
-					Type.Object({
-						title: Type.String({ description: "Short title for this option" }),
-						description: Type.String({ description: "Longer description explaining this option" }),
-					}),
-					{ description: "List of options for the user to choose from" },
-				),
+			options: Type.Array(
+				Type.Object({
+					title: Type.String({ description: "Short title for this option" }),
+					description: Type.String({ description: "Longer description explaining this option" }),
+				}),
+				{ minItems: 1, description: "Non-empty list of options for the user to choose from" },
 			),
 		}),
 
@@ -758,19 +738,9 @@ export function createAskUserTool() {
 			}
 
 			if (options.length === 0) {
-				const answer = await ctx.ui.input(question, "Type your answer...");
-				const response = createFreeformResponse(answer);
-
-				if (!response) {
-					return {
-						content: [{ type: "text", text: "User cancelled the question" }],
-						details: { question, options, response: null, cancelled: true } as AskToolDetails,
-					};
-				}
-
 				return {
-					content: [{ type: "text", text: `User answered: ${formatResponseSummary(response)}` }],
-					details: { question, options, response, cancelled: false } as AskToolDetails,
+					content: [{ type: "text", text: "Error: options must be a non-empty array" }],
+					details: { question, options, response: null, cancelled: false, error: "options must be a non-empty array" } as AskToolDetails,
 				};
 			}
 
@@ -899,15 +869,12 @@ export function createAskUserTool() {
 
 			const response = details.response;
 			let text = theme.fg("success", "✔ ");
-			if (response.kind === "freeform") {
-				text += theme.fg("muted", "(wrote) ");
-			}
 			text += theme.fg("accent", formatResponseSummary(response));
 
 			if (options.expanded) {
 				text += "\n" + theme.fg("dim", `Q: ${details.question}`);
 
-				if (isSelectionResponse(response) && details.options.length > 0) {
+				if (details.options.length > 0) {
 					const selectedTitles = new Set(response.selections);
 					text += "\n" + theme.fg("dim", "Options:");
 					for (const opt of details.options) {

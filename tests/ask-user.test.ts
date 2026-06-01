@@ -19,12 +19,12 @@ describe("createAskUserTool", () => {
     expect(tool.label).toBe("Ask User");
   });
 
-  it("has parameter schema with question and optional options", () => {
+  it("has parameter schema with question and required options", () => {
     const params = tool.parameters as any;
     expect(params.kind).toBe("object");
     expect(params.properties.question.kind).toBe("string");
-    expect(params.properties.options.kind).toBe("optional");
-    expect(params.properties.options.schema.kind).toBe("array");
+    expect(params.properties.options.kind).toBe("array");
+    expect(params.properties.options.minItems).toBe(1);
   });
 
   it("renderCall shows question and option count", () => {
@@ -41,7 +41,7 @@ describe("createAskUserTool", () => {
     expect(text).toContain("2 option(s)");
   });
 
-  it("renderCall handles missing options", () => {
+  it("renderCall handles missing options gracefully", () => {
     const theme = {
       fg: vi.fn((key: string, text: string) => text),
       bold: vi.fn((text: string) => text),
@@ -64,22 +64,6 @@ describe("createAskUserTool", () => {
       {},
     );
     expect(result.toString()).toContain("Cancelled");
-  });
-
-  it("renderResult shows freeform response", () => {
-    const theme = {
-      fg: vi.fn((key: string, text: string) => text),
-      bold: vi.fn((text: string) => text),
-    };
-    const result = tool.renderResult(
-      { details: { cancelled: false, question: "Q", options: [], response: { kind: "freeform", text: "My answer" } } },
-      {},
-      theme,
-      {},
-    );
-    const text = result.toString();
-    expect(text).toContain("My answer");
-    expect(text).toContain("(wrote)");
   });
 
   it("renderResult shows selection response", () => {
@@ -165,25 +149,25 @@ describe("createAskUserTool", () => {
     expect(result.details.cancelled).toBe(true);
   });
 
-  it("execute handles freeform input via dialog", async () => {
+  it("execute rejects empty options", async () => {
     const result = await tool.execute(
       "tc1",
-      { question: "Name?" },
+      { question: "Name?", options: [] },
       undefined,
       undefined,
       {
         hasUI: true,
         ui: {
-          input: vi.fn(async () => "Alice"),
+          select: vi.fn(async () => "A"),
           custom: vi.fn(async () => undefined),
         },
       } as any,
     );
-    expect(result.content[0].text).toContain("User answered: Alice");
-    expect(result.details.response).toEqual({ kind: "freeform", text: "Alice" });
+    expect(result.content[0].text).toBe("Error: options must be a non-empty array");
+    expect(result.details.error).toBe("options must be a non-empty array");
   });
 
-  it("execute handles freeform cancellation", async () => {
+  it("execute rejects missing options", async () => {
     const result = await tool.execute(
       "tc1",
       { question: "Name?" },
@@ -192,12 +176,13 @@ describe("createAskUserTool", () => {
       {
         hasUI: true,
         ui: {
-          input: vi.fn(async () => undefined),
+          select: vi.fn(async () => "A"),
+          custom: vi.fn(async () => undefined),
         },
       } as any,
     );
-    expect(result.content[0].text).toBe("User cancelled the question");
-    expect(result.details.cancelled).toBe(true);
+    expect(result.content[0].text).toBe("Error: options must be a non-empty array");
+    expect(result.details.error).toBe("options must be a non-empty array");
   });
 
   it("execute handles selection via dialog", async () => {
@@ -266,8 +251,8 @@ describe("ask-user helpers", () => {
   it("StringEnum produces correct schema", () => {
     const tool = createAskUserTool();
     const params = tool.parameters as any;
-    // The options property is Optional(Array(Object))
-    const optionsSchema = params.properties.options.schema;
+    // The options property is a required Array(Object) with minItems: 1
+    const optionsSchema = params.properties.options;
     expect(optionsSchema.kind).toBe("array");
     expect(optionsSchema.items.kind).toBe("object");
     expect(optionsSchema.items.properties.title.kind).toBe("string");
