@@ -346,15 +346,7 @@ Prompt`,
 		const tool = pi.getTool("trace");
 		const result = await tool.execute(
 			"call-trace-1",
-			{
-				intent: "Read index",
-				dispatch: [
-					{
-						tool: "batch",
-						ops: [{ o: "read", p: "package.json" }],
-					},
-				],
-			},
+			{ cmd: "--intent 'Read index' -- batch read package.json" },
 			new AbortController().signal,
 			vi.fn(),
 			makeMockCtx(tmpDir)

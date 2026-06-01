@@ -1,10 +1,7 @@
 /**
  * Trace tool — standalone quick verbatim reads and checks.
  *
- * Split from the `flow` tool to eliminate the confusion where the agent
- * nested dispatch ops as siblings in the `flow[]` array instead of inside
- * a task object. Trace is self-defining (agents/trace.md already
- * contains the full mission), so it needs zero required fields.
+ * Bash-style CLI: single `cmd` field with optional flags and pre-flight dispatch.
  */
 
 import { Type, type Static } from "@sinclair/typebox";
@@ -26,181 +23,119 @@ import { getFlowLiveState } from "../tui/flow-live-state.js";
 import { emptyFlowUsage } from "../types/flow.js";
 import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
 import { getFlowOutput, type SingleResult, type FlowDetails } from "../types/flow.js";
-import { executeOperations } from "../batch/execute.js";
-import { runBashWithLimits } from "../batch/batch-bash.js";
 import { logWarn } from "../config/log.js";
-import { runWebOps } from "./web-ops.js";
-import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "../batch/constants.js";
-import type { WebOpInput } from "./web-ops.js";
 import { extractTraceStructuredOutput, resolveToolEvidence } from "../snapshot/trace-output.js";
-import { prepareTraceDispatchArguments } from "./trace-dispatch-prep.js";
+import { runBatchCli } from "../cli/batch.js";
+import { splitOnDoubleDash } from "../cli/chain.js";
+import { tokenize } from "../cli/tokenize.js";
+import { parseCommand, CliError } from "../cli/parse.js";
 
 // ---------------------------------------------------------------------------
-// Dispatch schemas — mirror of the flow-tool dispatch (kept here to avoid
-// circular imports with src/index.ts).
+// Help text
 // ---------------------------------------------------------------------------
 
-const BatchDispatchOp = Type.Object({
-	tool: Type.Literal("batch"),
-	ops: Type.Array(Type.Object({
-		o: Type.String(),
-		p: Type.Optional(Type.String()),
-		s: Type.Optional(Type.Number()),
-		l: Type.Optional(Type.Number()),
-		i: Type.Optional(Type.Union([Type.String(), Type.Boolean()])),
-		t: Type.Optional(Type.Union([Type.Number(), Type.String()])),
-		c: Type.Optional(Type.String()),
-		e: Type.Optional(Type.Array(Type.Object({ f: Type.String(), r: Type.String() }))),
-		h: Type.Optional(Type.String()),
-		q: Type.Optional(Type.String()),
-		n: Type.Optional(Type.Number()),
-		u: Type.Optional(Type.Number()),
-	}), { description: "File/batch operations matching the batch tool schema." }),
-});
+const TRACE_HELP = `trace — read-first investigation tool
 
-const BashDispatchOp = Type.Object({
-	tool: Type.Literal("bash"),
-	ops: Type.Array(Type.Object({
-		c: Type.String({ description: "Shell command. Alias: cmd." }),
-		h: Type.Optional(Type.String({ description: "Working directory override. Alias: cwd." })),
-		t: Type.Optional(Type.Number({ description: "Timeout in ms. Alias: timeout." })),
-	}), { description: "Bash command objects." }),
-});
+USAGE:
+  trace [flags] [-- <batch-dispatch>]
 
-const WebDispatchOp = Type.Object({
-	tool: Type.Literal("web"),
-	ops: Type.Array(Type.Object({
-		o: Type.Union([Type.Literal("search"), Type.Literal("fetch")]),
-		q: Type.Optional(Type.String()),
-		u: Type.Optional(Type.String()),
-		f: Type.Optional(Type.String()),
-	}), { description: "Web operations matching the web tool schema." }),
-});
+FLAGS:
+  --intent <text>        Mission override. Default: trace agent's built-in description.
+  --cwd <path>           Working directory override. Default: session cwd.
+  --complexity <level>   snap | simple | moderate | complex | intricate. Default: simple.
+  --help, -h             Show this help text.
 
-const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
-	description: "Pre-dispatch tool call with discriminated tool type and typed ops array.",
-});
+DISPATCH:
+  Everything after the first top-level \`--\` is a batch-style command.
+  Examples:
+    trace -- batch read src/index.ts
+    trace --intent "verify auth" -- batch read src/auth.ts; batch rg -q "password" src/
 
-async function executeDispatchOps(
-	dispatch: Array<
-		| { tool: "batch"; ops: FileOpInput[] }
-		| { tool: "bash"; ops: Array<{ c: string; h?: string; t?: number }> }
-		| { tool: "web"; ops: WebOpInput[] }
-	>,
-	cwd: string,
-	ctx: ExtensionContext,
-	signal?: AbortSignal,
-): Promise<{ promptString: string; messages: Message[] }> {
-	const parts: string[] = [];
-	const messages: Message[] = [];
-	let toolCallIndex = 0;
+EXAMPLES:
+  trace                           # default mission, no dispatch
+  trace --intent "verify auth"    # override mission
+  trace --cwd /tmp                # override cwd
+  trace --complexity moderate     # override budget
+  trace -- batch read foo.txt     # pre-flight read
+  trace help                      # show this help
+`;
 
-	for (const group of dispatch) {
-		if (signal?.aborted) break;
-		const toolCallId = `pre_dispatch_${group.tool}_${toolCallIndex++}`;
+// ---------------------------------------------------------------------------
+// Flag spec
+// ---------------------------------------------------------------------------
 
-		let resultString = "";
-		try {
-			if (group.tool === "batch") {
-				const fileOps = group.ops.filter((op) => op.o !== "bash");
-				const bashOps = group.ops.filter((op) => op.o === "bash");
+const TRACE_FLAG_SPEC = {
+	intent: { short: "i", type: "string" as const, description: "Mission override" },
+	cwd: { type: "string" as const, description: "Working directory override" },
+	complexity: { short: "c", type: "string" as const, description: "Budget level: snap, simple, moderate, complex, intricate" },
+	help: { short: "h", type: "boolean" as const, description: "Show help" },
+};
 
-				const subParts: string[] = [];
-				if (fileOps.length > 0) {
-					const fileOutput = await executeOperations(fileOps as FileOpInput[], cwd, signal, { includeLimitWarnings: true });
-					subParts.push(fileOutput.contentText);
-				}
+const VALID_COMPLEXITY = ["snap", "simple", "moderate", "complex", "intricate"];
 
-				if (bashOps.length > 0) {
-					for (const op of bashOps) {
-						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
-						subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
-					}
-				}
-				resultString = subParts.join("\n\n");
-				parts.push(`### batch (file ops)\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
-			} else if (group.tool === "bash") {
-				const subParts: string[] = [];
-				for (const cmd of group.ops) {
-					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
-					subParts.push(`stdout:\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}${exitCode !== 0 ? `\nexitCode: ${exitCode}` : ""}`);
-				}
-				resultString = subParts.join("\n\n");
-				parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
-			} else if (group.tool === "web") {
-				const webOutput = await runWebOps({ op: group.ops }, ctx, signal);
-				resultString = webOutput.content[0].text;
-				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
-			}
-		} catch (err) {
-			resultString = `Error: ${err instanceof Error ? err.message : String(err)}`;
-			parts.push(`### ${group.tool}\n\ntool_call_id: ${toolCallId}\n\n${resultString}`);
-		}
+// ---------------------------------------------------------------------------
+// Command parser
+// ---------------------------------------------------------------------------
 
-		// Add mock messages
-		messages.push({
-			role: "assistant",
-			content: [
-				{
-					type: "toolCall",
-					toolCallId,
-					name: group.tool,
-					arguments: group.tool === "batch"
-						? { o: group.ops }
-						: group.tool === "bash"
-							? { ops: group.ops }
-							: { op: group.ops },
-				}
-			]
-		} as unknown as Message);
-		messages.push({
-			role: "tool",
-			toolCallId,
-			content: [
-				{
-					type: "text",
-					text: resultString,
-				}
-			]
-		} as unknown as Message);
+export function parseTraceCmd(cmd: string): { flags: { intent?: string; cwd?: string; complexity?: string }; dispatch: string; help: boolean } {
+	const trimmed = cmd.trim();
+	if (trimmed.length === 0 || trimmed === "help" || trimmed === "--help" || trimmed === "-h") {
+		return { flags: {}, dispatch: "", help: true };
 	}
 
-	return {
-		promptString: parts.join("\n\n"),
-		messages,
-	};
+	const { pre, post } = splitOnDoubleDash(trimmed);
+	let tokens = tokenize(pre);
+
+	if (tokens[0] === "trace") {
+		tokens.shift();
+	}
+
+	if (tokens.length > 0 && (tokens[0] === "help" || tokens[0] === "--help" || tokens[0] === "-h")) {
+		return { flags: {}, dispatch: "", help: true };
+	}
+
+	if (tokens.length === 0) {
+		return { flags: {}, dispatch: post.trim(), help: false };
+	}
+
+	// Prepend dummy subcommand so parseCommand can parse flags
+	tokens.unshift("trace");
+	const parsed = parseCommand(tokens, TRACE_FLAG_SPEC);
+
+	if (parsed.flags.help) {
+		return { flags: {}, dispatch: "", help: true };
+	}
+
+	const flags: { intent?: string; cwd?: string; complexity?: string } = {};
+
+	if (parsed.flags.intent) {
+		flags.intent = String(parsed.flags.intent);
+	}
+	if (parsed.flags.cwd) {
+		flags.cwd = String(parsed.flags.cwd);
+	}
+	if (parsed.flags.complexity) {
+		flags.complexity = String(parsed.flags.complexity);
+	}
+
+	if (flags.complexity && !VALID_COMPLEXITY.includes(flags.complexity)) {
+		throw new CliError(
+			`Invalid complexity: ${flags.complexity}`,
+			`Valid levels: ${VALID_COMPLEXITY.join(", ")}`,
+		);
+	}
+
+	return { flags, dispatch: post.trim(), help: false };
 }
 
 // ---------------------------------------------------------------------------
-// Override tool params — zero required fields
+// Schema
 // ---------------------------------------------------------------------------
 
-export const TraceParams = Type.Object({
-	intent: Type.Optional(Type.String({
-		description: "Optional mission override. Defaults to the trace agent's built-in description.",
-	})),
-	dispatch: Type.Optional(Type.Array(DispatchOpSchema, {
-		description: "Tools to run before the trace starts (results injected into prompt).",
-	})),
-	cwd: Type.Optional(Type.String({ description: "Working directory override." })),
-	complexity: Type.Optional(Type.Union([
-		Type.Literal("snap"),
-		Type.Literal("simple"),
-		Type.Literal("moderate"),
-		Type.Literal("complex"),
-		Type.Literal("intricate"),
-	], { description: "Budget level. Default: simple." })),
-}, {
-	title: "TraceToolParams",
-	description: "Activate trace mode — read files verbatim, run checks, explore codebase. All fields optional.",
-	examples: [
-		{},
-		{ dispatch: [{ tool: "batch", ops: [{ o: "read", p: "src/main.ts" }] }] },
-		{ dispatch: [{ tool: "bash", ops: ["git status"] }] },
-		{ dispatch: [{ tool: "batch", ops: [{ p: "src/index.ts" }] }] },
-		{ dispatch: [{ tool: "bash", ops: [{ tool: "bash", ops: { item: { c: "ls" } } }] }] },
-		{ dispatch: [{ t: "bash", o: [{ cmd: "ls -la" }] }] },
-	],
+export const TraceCliParams = Type.Object({
+	cmd: Type.String({
+		description: "Trace command. Optional flags (--intent, --cwd, --complexity) followed by optional pre-flight dispatch after `--`. Run with `cmd: 'help'` for the man page.",
+	}),
 });
 
 export interface TraceToolOptions {
@@ -210,6 +145,10 @@ export interface TraceToolOptions {
 	tierOverrideResolver?: (tier: "lite" | "flash" | "full") => string | undefined;
 	fallbackModel?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Runtime resolution
+// ---------------------------------------------------------------------------
 
 function resolveTraceRuntime(
 	opts: TraceToolOptions,
@@ -237,20 +176,6 @@ function resolveTraceRuntime(
 	});
 	const resolvedModel = candidates[0];
 	const maxContextTokens = resolveModelContextWindow(resolvedModel);
-	// INTENTIONALLY OMIT: `tier` and `compressionProfile`.
-	//
-	// Trace is a leaf tool that must see the main agent's FULL context.
-	// Passing `tier: lite` would cap messages to 30 (lite default), causing
-	// 0 user messages to appear in the shared context display.
-	// Passing `compressionProfile: files-first` would filter/drop messages
-	// based on profile scoring, again hiding the main agent's conversation.
-	//
-	// The `tier: lite` in agents/trace.md only affects MODEL SELECTION
-	// (cheaper model), NOT snapshot compression.
-	//
-	// Bug history (2026-06): these WERE previously passed, causing the
-	// shared context to show 0 user messages. Fixed by removing them.
-	// DO NOT re-add tier or compressionProfile here.
 	const { snapshot: forkSessionSnapshotJsonl, stats: compressionStats } = buildSnapshotWithCompression(
 		ctx.sessionManager,
 		{
@@ -273,9 +198,14 @@ function resolveTraceRuntime(
 	};
 }
 
+// ---------------------------------------------------------------------------
+// Tool factory
+// ---------------------------------------------------------------------------
+
 export function createTraceTool(opts: TraceToolOptions = {}) {
 	let lastResolvedModel: string | undefined;
 	let lastResolvedMaxCtx: number | undefined;
+	let lastResolvedIntent: string | undefined;
 
 	return {
 		name: "trace",
@@ -283,25 +213,14 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 		promptSnippet: "Quick verbatim reads, checks, and exploration. All fields optional.",
 		promptGuidelines: [
 			"All fields optional — the trace agent infers its mission from context.",
-			"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the trace starts.",
+			"Optional pre-flight dispatch runs batch-style commands before the trace starts.",
 		],
-		description: "Read-first investigation with optional pre-flight tools. Reads files verbatim and runs pre-flight checks via [batch] [bash] [web] dispatch before the trace starts. All fields optional; defaults to a [simple] budget. Use for code investigation, exploration, and verification.",
-		parameters: TraceParams,
-		prepareArguments: (input: unknown) => {
-			const result = prepareTraceDispatchArguments(input);
-			// Return the normalized form whenever the normalizer actually
-			// transformed the input. The `changed` flag covers both explicit
-			// transformations (with notes) AND silent-drop cases (without notes
-			// but with structural changes — e.g., a group with no valid `tool`,
-			// or a non-array `ops` replaced with []). Without this, strict
-			// schema validation would see the un-normalized malformed shape.
-			if (!result.changed && result.notes.length === 0) return input;
-			return { ...(input as object), dispatch: result.dispatch, _dispatchNotes: result.notes };
-		},
+		description: "Read-first investigation with optional pre-flight tools. Reads files verbatim and runs pre-flight checks via [cmd] batch CLI before the trace starts. All fields optional; defaults to a simple budget. Use for code investigation, exploration, and verification.",
+		parameters: TraceCliParams,
 
 		async execute(
 			toolCallId: string,
-			params: Static<typeof TraceParams>,
+			params: Static<typeof TraceCliParams>,
 			signal: AbortSignal | undefined,
 			onUpdate: any,
 			ctx: ExtensionContext,
@@ -313,7 +232,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			const depthConfig = opts.getDepthConfig?.();
 			const parentDepth = depthConfig?.currentDepth ?? 0;
 			const parentFlowStack = depthConfig?.ancestorFlowStack ?? [];
-			const maxDepth = 0; // trace is a leaf — never transitions further
+			const maxDepth = 0;
 			const preventCycles = depthConfig?.preventCycles ?? true;
 
 			const discovery = discoverFlows(ctx.cwd, "all");
@@ -323,7 +242,34 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				throw new Error("Trace agent not found. Expected agents/trace.md to be present.");
 			}
 
-			const intent = params.intent ?? traceFlow.description;
+			// Parse the trace command
+			let parsed: ReturnType<typeof parseTraceCmd>;
+			try {
+				parsed = parseTraceCmd(params.cmd ?? "");
+			} catch (err) {
+				if (err instanceof CliError) {
+					const text = err.hint ? `${err.message} (hint: ${err.hint})` : err.message;
+					return {
+						content: [{ type: "text", text }],
+						details: undefined,
+						failed: true,
+						_toolCallId: toolCallId,
+					};
+				}
+				throw err;
+			}
+
+			// Help response
+			if (parsed.help) {
+				return {
+					content: [{ type: "text", text: TRACE_HELP }],
+					details: undefined,
+					failed: false,
+					_toolCallId: toolCallId,
+				};
+			}
+
+			const intent = parsed.flags.intent ?? traceFlow.description;
 			const runtime = resolveTraceRuntime(opts, traceFlow, ctx, toolCallId, intent);
 			const {
 				resolvedModel,
@@ -343,16 +289,46 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 
 			lastResolvedModel = resolvedModel;
 			lastResolvedMaxCtx = maxContextTokens;
+			lastResolvedIntent = intent;
 
-			const preDispatch = params.dispatch?.length
-				? await executeDispatchOps(params.dispatch, params.cwd ?? ctx.cwd, ctx, signal)
-				: undefined;
-			let preDispatchResults = preDispatch?.promptString;
-			const dispatchNotes = (params as unknown as Record<string, unknown>)._dispatchNotes as string[] | undefined;
-			if (dispatchNotes && dispatchNotes.length > 0) {
-				preDispatchResults = `normalized:\n${dispatchNotes.map((n) => `- ${n}`).join("\n")}\n\n${preDispatchResults ?? ""}`;
+			// Pre-flight dispatch via batch CLI
+			let preDispatchResults: string | undefined;
+			const preDispatchMessages: Message[] = [];
+			const resolvedCwd = parsed.flags.cwd ?? ctx.cwd;
+
+			if (parsed.dispatch.length > 0) {
+				const dispatchResult = await runBatchCli(
+					parsed.dispatch,
+					resolvedCwd,
+					undefined,
+					ctx.sessionManager,
+					signal,
+				);
+				preDispatchResults = dispatchResult.text;
+
+				const preDispatchToolCallId = "pre_dispatch_batch_0";
+				preDispatchMessages.push({
+					role: "assistant",
+					content: [
+						{
+							type: "toolCall",
+							toolCallId: preDispatchToolCallId,
+							name: "batch",
+							arguments: { cmd: parsed.dispatch },
+						} as any,
+					],
+				} as unknown as Message);
+				preDispatchMessages.push({
+					role: "tool",
+					toolCallId: preDispatchToolCallId,
+					content: [
+						{
+							type: "text",
+							text: dispatchResult.text,
+						} as any,
+					],
+				} as unknown as Message);
 			}
-			const preDispatchMessages = preDispatch?.messages ?? [];
 
 			const result = await runFlowWithLiveSession(
 				toolCallId,
@@ -369,7 +345,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 					flowName: "trace",
 					intent,
 					aim: "",
-					taskCwd: params.cwd,
+					taskCwd: parsed.flags.cwd,
 					forkSessionSnapshotJsonl,
 					parentDepth,
 					parentFlowStack,
@@ -377,7 +353,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 					preventCycles,
 					toolOptimize: opts.getSettings?.()?.toolOptimize,
 					structuredOutput: opts.getSettings?.()?.structuredOutput,
-					complexity: params.complexity ?? "simple",
+					complexity: (parsed.flags.complexity ?? "simple") as "snap" | "simple" | "moderate" | "complex" | "intricate",
 					model: resolvedModel,
 					maxContextTokens,
 					compressionStats,
@@ -401,13 +377,12 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				outputText += "\n\n" + evidence;
 			}
 
-			// Inject enriched evidence into messages so renderer shows it after completion.
-		result.messages.push({
-			role: "assistant",
-			content: [{ type: "text", text: outputText }],
-		});
+			result.messages.push({
+				role: "assistant",
+				content: [{ type: "text", text: outputText }],
+			});
 
-		const success = result.exitCode === 0;
+			const success = result.exitCode === 0;
 
 			return {
 				content: [{ type: "text" as const, text: outputText }],
@@ -428,17 +403,17 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 				...(args?.flow?.[0]
 					? args
 					: {
-							...(args || {}),
-							flow: [
-								{
-									type: "trace",
-									intent: args?.intent || "Trace mode",
-									aim: "",
-									model: live?.model ?? lastResolvedModel,
-									maxContextTokens: live?.maxContextTokens ?? lastResolvedMaxCtx,
-								},
-							],
-						}),
+						...(args || {}),
+						flow: [
+							{
+								type: "trace",
+								intent: lastResolvedIntent || "Trace mode",
+								aim: "",
+								model: live?.model ?? lastResolvedModel,
+								maxContextTokens: live?.maxContextTokens ?? lastResolvedMaxCtx,
+							},
+						],
+					}),
 				sharedContext: details?.sharedContext ?? live?.sharedContext,
 			};
 			return renderFlowResult(result, expanded, theme, enrichedArgs, { ...DEFAULT_FLOW_COLORS, bodyVerbosity: opts.getSettings?.()?.bodyVerbosity ?? "lite" });

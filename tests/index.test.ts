@@ -676,7 +676,7 @@ describe("flow tool execute", () => {
 
 			await tool.execute(
 				"call-1",
-				{ intent: "Read package.json" },
+				{ cmd: "--intent 'Read package.json'" },
 				new AbortController().signal,
 				vi.fn(),
 				makeMockCtx(tmpDir),

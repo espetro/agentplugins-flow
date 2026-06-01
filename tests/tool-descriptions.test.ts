@@ -3,7 +3,7 @@ import { createBatchCliTool } from "../src/cli/register.js";
 import { BatchCliParams } from "../src/cli/batch.js";
 import { createBatchReadCliTool } from "../src/cli/register.js";
 import { BatchReadCliParams } from "../src/cli/batch-read.js";
-import { createTraceTool, TraceParams } from "../src/tools/trace.js";
+import { createTraceTool, TraceCliParams } from "../src/tools/trace.js";
 import { FLOW_TOOL_DESCRIPTION, FlowParams } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ function extractBracketTokens(text: string): string[] {
 const tools = [
 	{ name: "batch_read", description: createBatchReadCliTool().description, schema: BatchReadCliParams },
 	{ name: "batch", description: createBatchCliTool().description, schema: BatchCliParams },
-	{ name: "trace", description: createTraceTool().description, schema: TraceParams },
+	{ name: "trace", description: createTraceTool().description, schema: TraceCliParams },
 	{ name: "flow", description: FLOW_TOOL_DESCRIPTION, schema: FlowParams },
 ];
 
