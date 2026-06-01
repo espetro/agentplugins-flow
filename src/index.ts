@@ -8,7 +8,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
-import { discoverFlows, getFlowTier, type FlowConfig, type FlowTier } from "./flow/agents.js";
+import { discoverFlows, getFlowTier, BUNDLED_FLOW_TYPES, type FlowConfig, type FlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
 import { beginFlowLiveSession, endFlowLiveSession } from "./tui/flow-live-state.js";
@@ -119,9 +119,10 @@ const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatc
 });
 
 const FlowItem = Type.Object({
-	type: Type.String({
-		description: "Flow type: scout, debug, build, craft, audit, or ideas.",
-	}),
+	type: Type.Union(
+		BUNDLED_FLOW_TYPES.map((t) => Type.Literal(t)) as any,
+		{ description: "Flow type: one of the bundled flow types." },
+	),
 	intent: Type.String({
 		description: "Detailed mission for this flow.",
 	}),
@@ -157,7 +158,7 @@ const FlowItem = Type.Object({
 	description: "A single flow task object.",
 });
 
-const FlowParams = Type.Object({
+export const FlowParams = Type.Object({
 	flow: Type.Array(FlowItem, {
 		description: "Specialized flow tasks to dive into.",
 		minItems: 1,
@@ -190,6 +191,22 @@ const FlowParams = Type.Object({
 		],
 	}],
 });
+
+// Exported for static description-hygiene tests. Keep in sync with the
+// `pi.registerTool({ description, promptSnippet, promptGuidelines, ... })` call
+// inside the default export below.
+export const FLOW_TOOL_DESCRIPTION =
+	"Spawns specialized agent flows. Each task needs [type] [intent] [aim] [concern] [complexity]; the [flow] array must contain only complete task objects. Routes work to [scout] [build] [audit] [debug] [craft] [ideas] agents. Complexity: [snap] [simple] [moderate] [complex] [intricate].";
+
+export const FLOW_TOOL_PROMPT_SNIPPET =
+	"Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.";
+
+export const FLOW_TOOL_PROMPT_GUIDELINES: readonly string[] = [
+	"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
+	"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
+	"For quick file reads/checks, use `trace` instead.",
+	"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
+];
 
 const inheritedCliArgs = getInheritedCliArgs();
 
@@ -606,7 +623,7 @@ export default function (pi: ExtensionAPI) {
 		fallbackModel: inheritedCliArgs.fallbackModel,
 	}));
 
-	// Register the flow tool
+// Register the flow tool
 	if (canTransition) {
 		pi.registerTool({
 			name: "flow",
@@ -618,7 +635,7 @@ export default function (pi: ExtensionAPI) {
 				"For quick file reads/checks, use `trace` instead.",
 				"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
 			],
-			description: "Dives into specialized flow states. Requires a `flow` array of complete task objects with specific `complexity` (snap, simple, moderate, complex, intricate).",
+			description: FLOW_TOOL_DESCRIPTION,
 			parameters: FlowParams,
 			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
 			prepareArguments: prepareFlowDispatchArguments,

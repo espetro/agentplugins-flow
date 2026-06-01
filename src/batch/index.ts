@@ -322,7 +322,7 @@ export function createBatchReadTool() {
 	return {
 		name: "batch_read",
 		label: "batch_read",
-		description: "Read multiple files or file sections in one call. Read-only — does not support edit/write/delete/bash/patch; use the full `batch` tool for those.",
+		description: "Read-only. Files and ripgrep only. Returns verbatim file contents (by section) or ripgrep matches (by pattern). Does not execute shell commands, write to files, or fetch URLs. Supported ops: [read] [rg].",
 		promptSnippet: "Read multiple files/sections in one call (read-only)",
 		promptGuidelines: [
 			"Combine multiple read/rg ops into one call.",
@@ -390,7 +390,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 	return {
 		name: "batch",
 		label: "batch",
-		description: "File ops (read/write/edit/delete/patch), shell commands, and web search/fetch in one call.",
+		description: "Multi-op executor. File ops, bash, and web in one call. File/shell ops ([read] [write] [edit] [delete] [patch] [bash] [rg]) execute first; web ([search] [fetch]) runs after via the [w] array.",
 		promptSnippet: "Batch: file ops + bash + web in one call",
 		promptGuidelines: [
 			"Combine all pending operations into a single `batch` call.",

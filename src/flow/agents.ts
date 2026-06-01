@@ -21,6 +21,9 @@ export type FlowScope = "user" | "project" | "both" | "bundled" | "all";
 
 export type FlowTier = "lite" | "flash" | "full";
 
+/** All bundled flow type names. Keep in sync with markdown files in agents/ directory. */
+export const BUNDLED_FLOW_TYPES = ["trace", "scout", "build", "craft", "audit", "debug", "ideas"] as const;
+
 export type ToolResultCategory =
 	| "error"
 	| "stackTrace"

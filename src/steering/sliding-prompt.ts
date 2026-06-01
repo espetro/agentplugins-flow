@@ -18,27 +18,16 @@ export const STEERING_HINT_OPEN_TAG = `<pi-flow-steering-hint id="${STEERING_HIN
 export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_HINT_UUID}">`;
 
 export const STEERING_HINT =
-	`${STEERING_HINT_OPEN_TAG}\n` +
-	`Available tools: batch, trace, flow, ask_user.\n` +
-	`Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l, cwd=h, timeout=t, id=i, query=q, maxCount=n, url=u, find=f, replace=r. Canonical wins.\n` +
-	`Be direct — zero preamble or filler. Answer directly when context is available.\n` +
-	`\n` +
-	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path.\n` +
-	`\n` +
-	`Tool selection:\n` +
-	`- Use \`batch_read\` for file reads and codebase search.\n` +
-	`- Only use \`trace\` for validation and short Q&A that requires bash or cli.\n` +
-	`- Use \`flow\` for multi-file changes, architectural research, implementation, or verification.\n` +
-	`- Transition to \`flow\` for complex tasks instead of chaining trace/batch_read calls.\n` +
-	`- Start with \`flow-scout\` for deep context when the task is broad or unfamiliar.\n` +
-	`\n` +
-	`Backward: When quality or correctness is at risk — flow-audit (quality checks), flow-trace (verify/regression), flow-debug (root cause + fix), flow-build (corrections/refactor).\n` +
-	`\n` +
-	`Completeness: No placeholders, no TODOs, no half-finished work.\n` +
-	`\n` +
-	`When the sign of regression is detected - backtrack IMMEDIATELY to trace/audit/build flow.\n` +
-	`\n` +
-	`Use \`ask_user\` for: ambiguous goals, or conflicting requirements, question must have bite, and impact to the final outcomes.\n` +
+	`${STEERING_HINT_OPEN_TAG}` +
+	`Available tools: batch, trace, flow, ask_user. ` +
+	`Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l, cwd=h, timeout=t, id=i, query=q, maxCount=n, url=u, find=f, replace=r. Canonical wins. ` +
+	`Be direct — zero preamble or filler. Answer directly when context is available. ` +
+	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path. ` +
+	`Tool selection: Default [flow] for real work. [trace] only for [verify] between flows. [scout] maps, [build] ships. Never chain [trace] alone. ` +
+	`Backward: When quality or correctness is at risk — flow-audit (quality checks), flow-debug (root cause + fix), flow-build (corrections/refactor). Verify mid-loop via the [trace] sandwich slot. ` +
+	`Completeness: No placeholders, no TODOs, no half-finished work. ` +
+	`When the sign of regression is detected - backtrack IMMEDIATELY to trace/audit/build flow. ` +
+	`Use \`ask_user\` for: ambiguous goals, or conflicting requirements, question must have bite, and impact to the final outcomes.` +
 	`${STEERING_HINT_CLOSE_TAG}`;
 
 const STEERING_HINT_RE = new RegExp(

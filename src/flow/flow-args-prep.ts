@@ -1,3 +1,4 @@
+import { BUNDLED_FLOW_TYPES } from "./agents.js";
 import { prepareFlowDispatchArguments } from "./flow-dispatch-prep.js";
 
 export type FlowArgsPrepResult = {
@@ -5,7 +6,7 @@ export type FlowArgsPrepResult = {
 	notes: string[];
 };
 
-const FLOW_TYPE_NAMES = new Set(["trace", "scout", "build", "craft", "audit", "debug", "ideas"]);
+const FLOW_TYPE_NAMES: Set<string> = new Set(BUNDLED_FLOW_TYPES);
 
 /**
  * Lenient argument normalizer for the `flow` tool.
