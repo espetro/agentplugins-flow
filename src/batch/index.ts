@@ -1,7 +1,7 @@
 /**
  * batch — tool definition factory.
  *
- * Creates the `batch` and `batch_read` tool instances with schema, argument
+ * Creates the `batch` tool instance with schema, argument
  * preparation, execution, and rendering wired up.
  */
 
@@ -13,9 +13,7 @@ import { executeOperations, suggestSimilarFiles } from "./execute.js";
 import { expandTilde, isWithinDirectory } from "./fuzzy-edit.js";
 import {
 	renderBatchCall,
-	renderBatchReadCall,
 	renderBatchResult,
-	renderBatchReadResult,
 } from "./render.js";
 import {
 	type BashProcessTracker,
@@ -161,68 +159,6 @@ export const WeavePatchParams = Type.Object({
 		),
 });
 
-const BatchReadOp = Type.Union([
-	Type.Object({
-		o: Type.Literal("read"),
-		p: Type.String({ description: "Path to the file (relative or absolute)" }),
-		s: Type.Optional(
-			Type.Number({
-				minimum: 1,
-				description:
-					"1-indexed line number to start reading from (offset). Used with o: 'read'.",
-			}),
-		),
-		l: Type.Optional(
-			Type.Number({
-				minimum: 1,
-				description:
-					"Maximum number of lines to read (limit). Used with o: 'read'.",
-			}),
-		),
-	}),
-	Type.Object({
-		o: Type.Literal("rg"),
-		p: Type.String({ description: "Path to search (relative or absolute). Use '.' for cwd." }),
-		q: Type.String({ description: "Search pattern for o: 'rg'." }),
-		l: Type.Optional(
-			Type.Boolean({
-				description:
-					"Files-with-matches flag for o: 'rg'. Default true.",
-			}),
-		),
-		i: Type.Optional(
-			Type.Boolean({
-				description: "Ignore-case flag for o: 'rg'.",
-			}),
-		),
-		t: Type.Optional(
-			Type.String({
-				description: "Type filter for o: 'rg' (e.g., 'ts', 'js').",
-			}),
-		),
-		n: Type.Optional(
-			Type.Number({
-				minimum: 1,
-				description: "Max-count for o: 'rg' (matches per file). Broad searches on '.' auto-default to 50 when omitted.",
-			}),
-		),
-		u: Type.Optional(
-			Type.Number({
-				minimum: 0,
-				maximum: 3,
-				description: "Ignore level for o: 'rg' (0-3). Maps to -u (0), -uu (1), -uuu (2-3).",
-			}),
-		),
-	}),
-]);
-
-export const BatchReadParams = Type.Object({
-	o: Type.Array(BatchReadOp, {
-		description:
-			"Ordered list of read operations. Executed sequentially. Each operation executes independently; failures are reported per-operation without stopping remaining ops.",
-	}),
-});
-
 // ---------------------------------------------------------------------------
 // Argument preparation
 // ---------------------------------------------------------------------------
@@ -289,95 +225,9 @@ function prepareArguments(input: unknown): { o: unknown[]; w?: unknown[] } | unk
 	return result;
 }
 
-function prepareBatchReadArguments(input: unknown): { o: FileOpInput[] } | unknown {
-	const prepared = prepareArguments(input);
-	const ops = Array.isArray(prepared) ? prepared : (prepared as { o: unknown[] }).o;
-	if (!Array.isArray(ops)) return { o: [] };
-
-	// batch_read is local-only — reject web ops
-	const webOpsInRead = (prepared as { w?: unknown[] }).w;
-	if (webOpsInRead && webOpsInRead.length > 0) {
-		throw new Error("batch_read does not support web operations. Use the full `batch` tool with w: [...] for web ops.");
-	}
-
-	const normalizedOps: unknown[] = [];
-	const allowedBatchReadOps = new Set(["read", "rg"]);
-	for (const op of ops) {
-		if (!op || typeof op !== "object") continue;
-		const normalized = normalizeBatchOp(op as Record<string, unknown>);
-		const opType = String(normalized.o ?? "").toLowerCase();
-		if (opType && !allowedBatchReadOps.has(opType)) {
-			throw new Error(`batch_read only supports read operations. Received: ${opType}`);
-		}
-		normalizedOps.push(normalized);
-	}
-	return { o: normalizedOps };
-}
-
 // ---------------------------------------------------------------------------
 // Tool factories
 // ---------------------------------------------------------------------------
-
-export function createBatchReadTool() {
-	return {
-		name: "batch_read",
-		label: "batch_read",
-		description: "Read-only. Files and ripgrep only. Returns verbatim file contents (by section) or ripgrep matches (by pattern). Does not execute shell commands, write to files, or fetch URLs. Supported ops: [read] [rg].",
-		promptSnippet: "Read multiple files/sections in one call (read-only)",
-		promptGuidelines: [
-			"Combine multiple read/rg ops into one call.",
-			"Use `s` (start line) and `l` (line count) to target specific sections of large files.",
-		],
-		parameters: BatchReadParams,
-		prepareArguments: prepareBatchReadArguments,
-
-		async execute(
-			_toolCallId: string,
-			input: unknown,
-			signal: AbortSignal | undefined,
-			onUpdate: BatchOnUpdate | undefined,
-			ctx: ExtensionContext,
-		) {
-			const loopWarning = checkLoopGuard("batch_read", input);
-			const prepared = prepareBatchReadArguments(input);
-
-			const ops = Array.isArray(prepared)
-				? (prepared as FileOpInput[])
-				: (prepared as { o: FileOpInput[] }).o;
-
-			if (!Array.isArray(ops) || ops.length === 0) {
-				throw new Error("Error: o array is required and must not be empty.");
-			}
-
-			// Defensive validation: reject any non-read/rg operations
-			const allowedBatchReadOps = new Set(["read", "rg"]);
-			for (const op of ops) {
-				if (!allowedBatchReadOps.has(op.o)) {
-					throw new Error(`Error: batch_read only supports read operations. Received ${op.o} for ${op.p}.`);
-				}
-			}
-
-			if (signal?.aborted) {
-				throw new Error("Operation aborted.");
-			}
-
-			const { contentText, results } = await executeOperations(ops, ctx.cwd, signal, {
-				readOptions: { truncate: false, toolName: "batch_read" },
-				includeLimitWarnings: false,
-			}, onUpdate);
-
-			const readResult = {
-				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
-				details: { results },
-			};
-			return readResult;
-		},
-
-		renderCall: (args: Record<string, unknown>, theme: BatchTheme) => renderBatchReadCall(args, theme),
-		renderResult: (result: any, { expanded, isPartial }: { expanded: boolean; isPartial?: boolean }, theme: BatchTheme, args?: Record<string, unknown>) =>
-			renderBatchReadResult(result, { expanded, isPartial: isPartial ?? false }, theme, args),
-	};
-}
 
 /**
  * Create the batch tool.

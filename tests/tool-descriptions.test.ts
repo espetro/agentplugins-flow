@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-	createBatchReadTool,
 	createBatchTool,
-	BatchReadParams,
 	WeavePatchParams,
 } from "../src/batch/index.js";
+import { createBatchReadCliTool } from "../src/cli/register.js";
+import { BatchReadCliParams } from "../src/cli/batch-read.js";
 import { createTraceTool, TraceParams } from "../src/tools/trace.js";
 import { FLOW_TOOL_DESCRIPTION, FlowParams } from "../src/index.js";
 
@@ -65,7 +65,7 @@ function extractBracketTokens(text: string): string[] {
 // ---------------------------------------------------------------------------
 
 const tools = [
-	{ name: "batch_read", description: createBatchReadTool().description, schema: BatchReadParams },
+	{ name: "batch_read", description: createBatchReadCliTool().description, schema: BatchReadCliParams },
 	{ name: "batch", description: createBatchTool().description, schema: WeavePatchParams },
 	{ name: "trace", description: createTraceTool().description, schema: TraceParams },
 	{ name: "flow", description: FLOW_TOOL_DESCRIPTION, schema: FlowParams },

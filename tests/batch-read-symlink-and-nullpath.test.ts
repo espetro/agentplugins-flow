@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createBatchReadTool } from "../src/batch/index.js";
+import { createBatchReadCliTool } from "../src/cli/register.js";
 import { expandTilde, validatePath } from "../src/batch/fuzzy-edit.js";
 
 describe("batch_read edge cases: symlinks, null p, empty p", () => {
@@ -65,10 +65,10 @@ describe("batch_read edge cases: symlinks, null p, empty p", () => {
 				return;
 			}
 
-			const tool = createBatchReadTool();
+			const tool = createBatchReadCliTool();
 			const result = await tool.execute(
 				"call-1",
-				{ o: [{ o: "read", p: "link-to-dir" }] },
+				{ cmd: "read link-to-dir" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
@@ -85,41 +85,38 @@ describe("batch_read edge cases: symlinks, null p, empty p", () => {
 		});
 
 		it("returns a clean error for missing p (NOT raw TypeError)", async () => {
-			const tool = createBatchReadTool();
+			const tool = createBatchReadCliTool();
 			const result = await tool.execute(
 				"call-2",
-				{ o: [{ o: "read" }] },
+				{ cmd: "read" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
-			const r = result.details.results[0];
-			expect(r.status).toBe("error");
-			expect(r.error).not.toMatch(/Cannot read properties/);
-			expect(r.error).toMatch(/path|p|required/);
+			expect(result.isError).toBe(true);
+			expect(result.content[0].text).toMatch(/path|required/);
 		});
 
 		it("returns a clean error for empty string p (NOT raw EISDIR)", async () => {
-			const tool = createBatchReadTool();
+			const tool = createBatchReadCliTool();
 			const result = await tool.execute(
 				"call-3",
-				{ o: [{ o: "read", p: "" }] },
+				{ cmd: "read ''" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			);
-			const r = result.details.results[0];
-			expect(r.status).toBe("error");
-			expect(r.error).not.toMatch(/^EISDIR:/);
+			expect(result.isError).toBe(true);
+			expect(result.content[0].text).not.toMatch(/^EISDIR:/);
 		});
 
 		it("still reads a regular file correctly (regression)", async () => {
 			const filePath = path.join(tmpDir, "test.txt");
 			fs.writeFileSync(filePath, "hello world\n", "utf-8");
-			const tool = createBatchReadTool();
+			const tool = createBatchReadCliTool();
 			const result = await tool.execute(
 				"call-4",
-				{ o: [{ o: "read", p: "test.txt" }] },
+				{ cmd: "read test.txt" },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),

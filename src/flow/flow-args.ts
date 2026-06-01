@@ -133,7 +133,7 @@ export function buildFlowArgs(
 		`You are a [${flow.name}] agent operating at depth ${currentDepth}.\n` +
 		`${flowListSection}` +
 		`Do not attempt to use any tool outside the available set — it will fail.\n` +
-		`Field aliases: t=tool, o=ops, cmd/command=c, content=c, path=p, cwd=h, timeout=t. Canonical wins.\n` +
+		`Tools use a bash-style CLI: pass cmd: "batch_read <sub> [flags] <args>". Run \`batch_read --help\` (or pass cmd: "help") for the man page.\n` +
 		`</activation>`;
 
 	let directiveBody = flow.systemPrompt.trim();

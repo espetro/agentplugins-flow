@@ -25,11 +25,11 @@ import type {
 
 import {
 	createBatchTool,
-	createBatchReadTool,
 	BashProcessTracker,
 	createBatchBashPollTool,
 	runBashWithLimits,
 } from "./batch/index.js";
+import { createBatchReadCliTool } from "./cli/register.js";
 import { createAskUserTool } from "./tools/ask-user.js";
 import {
 	stripSteeringHintText,
@@ -407,7 +407,7 @@ export default function (pi: ExtensionAPI) {
 		// The bashProcessTracker is shared between the batch tool (launches bash ops)
 		// and the batch_bash_poll tool (checks on pending bash ops).
 		if (resolved.batchReadEnabled) {
-			pi.registerTool(createBatchReadTool());
+			pi.registerTool(createBatchReadCliTool());
 		}
 		if (resolved.toolOptimize && currentDepth > 0) {
 			bashTracker = new BashProcessTracker();
