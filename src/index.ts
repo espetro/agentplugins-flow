@@ -95,14 +95,14 @@ const BatchDispatchOp = Type.Object({
 		q: Type.Optional(Type.String()),
 		n: Type.Optional(Type.Number()),
 		u: Type.Optional(Type.Number()),
-	}), { description: "File/batch operations matching the batch tool schema." }),
+	}), { description: "File/batch operations matching the batch tool schema. Aliases accepted: path=p, content=c, edits=e, offset=s, limit=l, ignoreCase=i, query=q, maxCount=n. Canonical wins." }),
 });
 const BashDispatchOp = Type.Object({
 	tool: Type.Literal("bash"),
 	ops: Type.Array(Type.Object({
-		c: Type.String({ description: "Shell command" }),
-		h: Type.Optional(Type.String({ description: "Working directory override" })),
-		t: Type.Optional(Type.Number({ description: "Timeout in ms" })),
+		c: Type.String({ description: "Shell command. Alias: cmd." }),
+		h: Type.Optional(Type.String({ description: "Working directory override. Alias: cwd." })),
+		t: Type.Optional(Type.Number({ description: "Timeout in ms. Alias: timeout." })),
 	}), { description: "Bash command objects." }),
 });
 const WebDispatchOp = Type.Object({
@@ -115,7 +115,7 @@ const WebDispatchOp = Type.Object({
 	}), { description: "Web operations matching the web tool schema." }),
 });
 const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
-	description: "Pre-dispatch tool call with discriminated tool type and typed ops array.",
+	description: "Pre-dispatch tool call with discriminated tool type and typed ops array. Wrapper aliases: t=tool, o=ops. Canonical wins.",
 });
 
 const FlowItem = Type.Object({
@@ -148,7 +148,7 @@ const FlowItem = Type.Object({
 	}),
 	dispatch: Type.Optional(
 		Type.Array(DispatchOpSchema, {
-			description: "Tools to run before the flow starts (results are injected into the prompt).",
+			description: "Tools to run before the flow starts (results are injected into the prompt). Accepts field aliases (t/o/cmd/path/etc) — canonical wins.",
 		}),
 	),
 
@@ -181,6 +181,8 @@ const FlowParams = Type.Object({
 	description: "The root object MUST contain a 'flow' array. Never flatten fields to the root.",
 	examples: [{
 		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }],
+	}, {
+		flow: [{ type: "scout", intent: "Map auth files", aim: "Map auth", complexity: "simple", concern: "verify", dispatch: [{ t: "bash", o: [{ cmd: "ls src/auth" }] }] }]
 	}],
 });
 

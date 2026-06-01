@@ -388,6 +388,7 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 			"Combine all pending operations into a single `batch` call.",
 			"File ops execute first; bash runs after. Use write → bash to run scripts.",
 			"Web: `w: [{ o: 'search', q: '...' }]` or `w: [{ o: 'fetch', u: '...' }]`",
+			"Field aliases: cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l. Canonical wins.",
 			...(toolOptimize ? ["Batch is your ONLY edit tool — no separate edit command."] : []),
 		],
 		parameters: WeavePatchParams,

@@ -28,3 +28,4 @@ Markers: Prefix substantive claims with [V] verified, [I] inferred, [A] assumed,
 Bite-first: Output raw evidence (code, paths, logs) before any prose explanation.
 No preamble: Start immediately with evidence or action. Skip all conversational filler.
 See _conventions for tmp scripts and batch reads
+Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p. Canonical wins.

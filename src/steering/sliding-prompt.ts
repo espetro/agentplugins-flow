@@ -20,6 +20,7 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}\n` +
 	`Available tools: batch, trace, flow, ask_user.\n` +
+	`Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l, cwd=h, timeout=t, id=i, query=q, maxCount=n, url=u, find=f, replace=r. Canonical wins.\n` +
 	`Be direct — zero preamble or filler. Answer directly when context is available.\n` +
 	`\n` +
 	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path.\n` +

@@ -61,9 +61,9 @@ const BatchDispatchOp = Type.Object({
 const BashDispatchOp = Type.Object({
 	tool: Type.Literal("bash"),
 	ops: Type.Array(Type.Object({
-		c: Type.String({ description: "Shell command" }),
-		h: Type.Optional(Type.String({ description: "Working directory override" })),
-		t: Type.Optional(Type.Number({ description: "Timeout in ms" })),
+		c: Type.String({ description: "Shell command. Alias: cmd." }),
+		h: Type.Optional(Type.String({ description: "Working directory override. Alias: cwd." })),
+		t: Type.Optional(Type.Number({ description: "Timeout in ms. Alias: timeout." })),
 	}), { description: "Bash command objects." }),
 });
 
@@ -199,6 +199,7 @@ export const TraceParams = Type.Object({
 		{ dispatch: [{ tool: "bash", ops: ["git status"] }] },
 		{ dispatch: [{ tool: "batch", ops: [{ p: "src/index.ts" }] }] },
 		{ dispatch: [{ tool: "bash", ops: [{ tool: "bash", ops: { item: { c: "ls" } } }] }] },
+		{ dispatch: [{ t: "bash", o: [{ cmd: "ls -la" }] }] },
 	],
 });
 
@@ -288,7 +289,13 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 		parameters: TraceParams,
 		prepareArguments: (input: unknown) => {
 			const result = prepareTraceDispatchArguments(input);
-			if (result.notes.length === 0) return input;
+			// Return the normalized form whenever the normalizer actually
+			// transformed the input. The `changed` flag covers both explicit
+			// transformations (with notes) AND silent-drop cases (without notes
+			// but with structural changes — e.g., a group with no valid `tool`,
+			// or a non-array `ops` replaced with []). Without this, strict
+			// schema validation would see the un-normalized malformed shape.
+			if (!result.changed && result.notes.length === 0) return input;
 			return { ...(input as object), dispatch: result.dispatch, _dispatchNotes: result.notes };
 		},
 
