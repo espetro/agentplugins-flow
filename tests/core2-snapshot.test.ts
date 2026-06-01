@@ -1287,4 +1287,132 @@ describe("buildCore2Snapshot — tier compression", () => {
 		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("scout result 2")) as any;
 		expect(secondResult).toBeDefined();
 	});
+
+	it("deduplicates repeated trace tool calls, keeping only the latest run's output", () => {
+		const entries = [
+			// Turn 1
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { intent: "audit auth" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "trace-1",
+					content: [{ type: "text", text: "first audit result" }]
+				}
+			},
+			// Turn 2
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { intent: "audit auth" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "trace-2",
+					content: [{ type: "text", text: "second audit result" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+
+		// First trace result should be replaced with placeholder
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text === "[Trace output omitted; superseded by later trace]") as any;
+		expect(firstResult).toBeDefined();
+
+		// Second trace result should be preserved verbatim
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("second audit result")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("does not collapse trace tool calls with distinct intents", () => {
+		const entries = [
+			// Turn 1
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { intent: "audit auth" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "trace-1",
+					content: [{ type: "text", text: "audit auth result" }]
+				}
+			},
+			// Turn 2
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { intent: "check routes" } }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "trace-2",
+					content: [{ type: "text", text: "check routes result" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+
+		// Both results should be preserved because intents differ
+		const firstResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("audit auth result")) as any;
+		expect(firstResult).toBeDefined();
+
+		const secondResult = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("check routes result")) as any;
+		expect(secondResult).toBeDefined();
+	});
+
+	it("keeps the first (and only) trace call verbatim when there is no later trace", () => {
+		const entries = [
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "trace-1", name: "trace", arguments: {} }
+					]
+				}
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "trace-1",
+					content: [{ type: "text", text: "only trace result" }]
+				}
+			}
+		];
+		const snapshot = buildCore2Snapshot(makeSource(entries));
+		const parsed = parseSnapshot(snapshot);
+
+		const result = parsed.find((e: any) => e.message?.content?.[0]?.text && e.message.content[0].text.includes("only trace result")) as any;
+		expect(result).toBeDefined();
+	});
 });

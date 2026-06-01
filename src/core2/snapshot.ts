@@ -615,6 +615,17 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 							toolCallMap.set(id, { toolName: "flow", keys, isReadWrite: false, op: "flow" });
 						}
 					}
+				} else if (name === "trace" && tc.arguments) {
+					// Trace is a leaf tool with disposable child transcripts.
+					// Key by intent so the latest trace of the same exploration
+					// supersedes earlier ones. Empty/missing intent falls back to
+					// a generic "trace" key (matches existing flow dedup semantics
+					// where the latest run always wins).
+					const intent = (tc.arguments.intent || "").trim();
+					const key = intent ? `trace:${intent.slice(0, 80)}` : "trace";
+					toolCallMap.set(id, { toolName: "trace", keys: [key], isReadWrite: false, op: "trace" });
+					const existing = lastExecution.get(key);
+					lastExecution.set(key, { toolCallId: id, count: (existing?.count ?? 0) + 1 });
 				}
 			}
 		}
@@ -641,6 +652,8 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 			if (info.toolName === "flow") {
 				const flowType = info.keys[0]?.split(":")[1] || "output";
 				newContent = `[Flow ${flowType} output omitted; superseded by later run]`;
+			} else if (info.toolName === "trace") {
+				newContent = `[Trace output omitted; superseded by later trace]`;
 			} else if (info.isReadWrite) {
 				const countEntry = lastExecution.get(info.keys[0]);
 				const count = countEntry?.count ?? 1;
