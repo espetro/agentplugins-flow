@@ -231,7 +231,7 @@ function isRetryable(error: string): boolean {
 // ---------------------------------------------------------------------------
 
 export async function executeOperations(
-	operations: FileOpInput[],
+	operations: Array<FileOpInput | RgOpInput>,
 	cwd: string,
 	signal?: AbortSignal,
 	options: ExecuteOptions = {},
@@ -276,7 +276,7 @@ export async function executeOperations(
 		if (signal?.aborted) {
 			for (let j = i; j < operations.length; j++) {
 				const r = operations[j];
-				results.push({ op: r.o, path: r.p, status: "skipped", error: "Operation aborted.", s: r.s, l: r.l, q: r.q });
+				results.push({ op: r.o, path: r.p, status: "skipped", error: "Operation aborted.", s: (r as FileOpInput).s, l: r.l, q: r.q });
 				counts.skipped++;
 			}
 			emitPartialUpdate();
@@ -592,7 +592,7 @@ export async function executeOperations(
 				}
 
 				case "rg": {
-					const rgOp = op as unknown as RgOpInput;
+					const rgOp = op as RgOpInput;
 					if (!rgOp.q) {
 						throw new Error("q (search pattern) is required for rg operations.");
 					}
@@ -708,7 +708,7 @@ export async function executeOperations(
 				hint,
 				retryable,
 				suggestedFix,
-				s: op.s,
+				s: (op as FileOpInput).s,
 				l: op.l,
 				q: op.q,
 			});

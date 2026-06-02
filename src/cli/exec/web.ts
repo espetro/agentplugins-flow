@@ -1,13 +1,14 @@
 import { runWebSearch, runWebFetch } from "../../tools/web-ops.js";
 import type { OpResult } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runWebSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   sessionManager?: { getSessionDir(): string },
   signal?: AbortSignal,
-): Promise<{ output: string; results: OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   if (parsed.positionals.length === 0) {
     throw new CliError("web requires a subcommand: search or fetch.", "Usage: batch web search -q <query> or batch web fetch -u <url>");
   }
@@ -29,7 +30,7 @@ export async function runWebSubcommand(
       query,
       content: output,
     }];
-    return { output, results, failed: false };
+    return finalizeExec(output, results);
   }
 
   if (subcommand === "fetch") {
@@ -56,7 +57,7 @@ export async function runWebSubcommand(
       filePath: result.details.filePath,
       contentLength: result.details.contentLength,
     }];
-    return { output, results, failed: false };
+    return finalizeExec(output, results);
   }
 
   throw new CliError(

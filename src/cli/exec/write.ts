@@ -1,12 +1,13 @@
 import { executeOperations } from "../../batch/execute.js";
 import type { FileOpInput } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runWriteSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   signal?: AbortSignal,
-): Promise<{ output: string; results: import("../../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   if (parsed.positionals.length === 0) {
     throw new CliError("write requires at least one path.", "Usage: batch write [flags] <path> ...");
   }
@@ -32,9 +33,5 @@ export async function runWriteSubcommand(
     },
   );
 
-  const failed = results.some((r) => r.status === "error");
-  const error = failed
-    ? (results.find((r) => r.status === "error")?.error ?? "operation failed")
-    : undefined;
-  return { output: contentText, results, error, failed };
+  return finalizeExec(contentText, results);
 }

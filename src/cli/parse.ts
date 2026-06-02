@@ -92,7 +92,7 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
         let parsedValue: string | number;
         if (cfg.type === "number") {
           if (value === "") {
-            parsedValue = "";
+            throw new CliError(`Flag --${name} requires a numeric value.`);
           } else {
             const num = Number(value);
             if (!Number.isFinite(num)) {
@@ -150,7 +150,7 @@ export function parseCommand(tokens: string[], spec: FlagSpec): ParsedCommand {
           let parsedValue: string | number;
           if (cfg.type === "number") {
             if (value === "") {
-              parsedValue = "";
+              throw new CliError(`Flag -${ch} (--${name}) requires a numeric value.`);
             } else {
               const num = Number(value);
               if (!Number.isFinite(num)) {

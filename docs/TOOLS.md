@@ -168,28 +168,36 @@ In the collapsed activity panel, web operations display as compact one-line summ
 
 ## `ask_user` — interactive prompts
 
-Ask the user a focused question with optional multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with `[preferred]` and place it first.
+Ask the user a focused question with multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with `[preferred]` and place it first.
 
-### Tool parameters
+### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `question` | `string` | The question to ask the user |
-| `options` | `array` | Optional list of choices. Each option is an object with `title` (short label) and `description` (longer explanation). |
+| `cmd` | `string` | ask_user command string with a quoted question and repeatable `-o` flags. Run `cmd: "help"` for the man page. |
 
-Example:
+### Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--option` | `-o` | A choice option. Format: `Title` or `Title: description`. Repeatable. |
+| `--help` | `-h` | Show help text. |
+
+### Examples
 
 ```json
-{
-  "question": "Which database should we use?",
-  "options": [
-    { "title": "PostgreSQL", "description": "Robust relational database with great TypeScript support" },
-    { "title": "SQLite", "description": "Simple file-based database, good for small projects" }
-  ]
-}
+{ "cmd": "ask_user \"Continue?\" -o Yes -o No" }
 ```
 
-> **Note:** The `ask_user` tool only accepts `question` and `options`. Timeout and UI behavior are controlled via flow settings (`/flow:settings ask-user timeout <seconds>` or `PI_ASK_USER_TIMEOUT`). If user input is needed inside a flow, the flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user; bundled flows do not have `ask_user`.
+```json
+{ "cmd": "ask_user \"Pick a database\" -o \"PostgreSQL:Robust relational\" -o \"SQLite:Simple file-based\"" }
+```
+
+```json
+{ "cmd": "ask_user \"Ship it?\" -o \"Yes: build & publish\" -o \"No: pause\" -o \"Cancel: abandon\"" }
+```
+
+> **Note:** Timeout and UI behavior are controlled via flow settings (`/flow:settings ask-user timeout <seconds>` or `PI_ASK_USER_TIMEOUT`). If user input is needed inside a flow, the flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user; bundled flows do not have `ask_user`.
 
 ## Migration from the old JSON mega-schema (v2.2.x → v2.3.0)
 
@@ -203,6 +211,7 @@ The four primary tools migrated from a nested JSON mega-schema to a single `cmd:
 | `batch` bash | `{ tool: "batch", ops: [{ o: "bash", c: "npm test", i: "id1" }] }` | `{ cmd: "bash 'npm test'" }` |
 | `flow` | `{ flow: [{ type: "scout", intent: "...", aim: "...", concern: "...", dispatch: [{ tool: "batch", ops: [...] }] }] }` | `{ cmd: "flow --type scout --intent '...' --aim '...' --concern '...' -- batch read ..." }` |
 | `trace` | `{ intent: "...", dispatch: [{ tool: "batch", ops: [...] }] }` | `{ cmd: "trace --intent '...' -- batch read ..." }` |
+| `ask_user` | `{ "question": "...", "options": [...] }` | `{ cmd: "ask_user \"...\" -o ..." }` |
 
 - **No more `tool` wrapper**: `batch`, `bash`, and `web` ops are now expressed as subcommands inside a single `cmd` string.
 - **No more `ops` array**: Operations are separated by `;` (sequential) or `&&` (conditional) within the `cmd` string.

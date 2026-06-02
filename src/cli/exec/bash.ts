@@ -1,13 +1,15 @@
 import { executeBatchBash, generateBashId } from "../../batch/batch-bash.js";
 import type { BashProcessTracker } from "../../batch/batch-bash.js";
+import type { OpResult } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runBashSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   bashTracker: BashProcessTracker | undefined,
   signal?: AbortSignal,
-): Promise<{ output: string; results: import("../../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   if (parsed.positionals.length === 0) {
     throw new CliError("bash requires a command string.", "Usage: batch bash [flags] <command>");
   }
@@ -48,7 +50,7 @@ export async function runBashSubcommand(
   );
 
   const bashLines: string[] = [];
-  const results: import("../../batch/constants.js").OpResult[] = bashOutput;
+  const results: OpResult[] = bashOutput;
   for (const r of bashOutput) {
     if (r.status === "ok") {
       bashLines.push(`\n--- bash [${r.id}] exit ${r.exitCode} ---`);
@@ -67,6 +69,5 @@ export async function runBashSubcommand(
   }
 
   const output = bashLines.join("\n");
-  const failed = bashOutput.some((r) => r.status === "error");
-  return { output, results, failed };
+  return finalizeExec(output, results);
 }

@@ -6,6 +6,7 @@ export async function runReadSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   signal?: AbortSignal,
+  toolName: "batch" | "batch_read" = "batch",
 ): Promise<{ output: string; results: import("../../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
   if (parsed.positionals.length === 0) {
     throw new CliError("read requires at least one path.", "Usage: batch read [flags] <path> ...");
@@ -44,7 +45,7 @@ export async function runReadSubcommand(
     cwd,
     signal,
     {
-      readOptions: { truncate: false, toolName: "batch" },
+      readOptions: { truncate: false, toolName },
       includeLimitWarnings: false,
     },
   );
@@ -56,7 +57,7 @@ export async function runReadSubcommand(
   return { output: contentText, results, error, failed };
 }
 
-function parsePathSpec(spec: string): { path: string; start?: number; end?: number } {
+export function parsePathSpec(spec: string): { path: string; start?: number; end?: number } {
   const match = spec.match(/^(.*):(\d+)(?:-(\d+))?$/);
   if (match) {
     const pathPart = match[1];

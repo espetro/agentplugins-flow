@@ -1,12 +1,13 @@
 import { executeOperations } from "../../batch/execute.js";
 import type { FileOpInput } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runPatchSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   signal?: AbortSignal,
-): Promise<{ output: string; results: import("../../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   const content = typeof parsed.flags.content === "string" ? parsed.flags.content : undefined;
   if (content === undefined) {
     throw new CliError("patch requires --content <patch text>.", "Usage: batch patch -c <patch_text>");
@@ -28,9 +29,5 @@ export async function runPatchSubcommand(
     },
   );
 
-  const failed = results.some((r) => r.status === "error");
-  const error = failed
-    ? (results.find((r) => r.status === "error")?.error ?? "operation failed")
-    : undefined;
-  return { output: contentText, results, error, failed };
+  return finalizeExec(contentText, results);
 }

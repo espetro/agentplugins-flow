@@ -23,13 +23,12 @@ import type {
 } from "./types/flow.js";
 import { emptyFlowUsage, isFlowSuccess } from "./types/flow.js";
 
-import { createBatchCliTool, createBatchReadCliTool } from "./cli/register.js";
+import { createBatchCliTool, createBatchReadCliTool, createAskUserCliTool } from "./cli/register.js";
 import { runBatchCli } from "./cli/batch.js";
 import {
 	BashProcessTracker,
 	createBatchBashPollTool,
 } from "./batch/batch-bash.js";
-import { createAskUserTool } from "./tools/ask-user.js";
 import {
 	stripSteeringHintText,
 	stripSteeringHintsFromMessages,
@@ -433,7 +432,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Register the ask_user tool
-	pi.registerTool(createAskUserTool());
+	pi.registerTool(createAskUserCliTool());
 
 	const getTierOverride = (tier: "lite" | "flash" | "full"): string | undefined => {
 		const flagName =

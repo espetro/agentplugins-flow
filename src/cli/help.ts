@@ -2,10 +2,24 @@
  * Man-page style help generator.
  */
 
+import { type FlagSpec } from "./parse.js";
+
 export interface SubcommandHelp {
   name: string;
   description: string;
   flags: Record<string, { short?: string; type: string; description: string }>;
+}
+
+export function flagSpecToHelp(flags: FlagSpec): SubcommandHelp["flags"] {
+  const result: SubcommandHelp["flags"] = {};
+  for (const [name, cfg] of Object.entries(flags)) {
+    result[name] = {
+      short: cfg.short,
+      type: cfg.type,
+      description: cfg.description ?? "",
+    };
+  }
+  return result;
 }
 
 export function renderHelp(

@@ -18,7 +18,7 @@ export function tokenize(input: string): string[] {
 
     if (escapeNext) {
       if (inDouble) {
-        // In double quotes, only \", \\, and backslash-newline are special;
+        // In double quotes, only \" and \\ are special;
         // everything else keeps the backslash literal.
         if (ch === '"' || ch === '\\') {
           current += ch;

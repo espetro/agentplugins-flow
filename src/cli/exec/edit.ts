@@ -1,12 +1,13 @@
 import { executeOperations } from "../../batch/execute.js";
 import type { FileOpInput, EditReplacement } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runEditSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   cwd: string,
   signal?: AbortSignal,
-): Promise<{ output: string; results: import("../../batch/constants.js").OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   if (parsed.positionals.length === 0) {
     throw new CliError("edit requires at least one path.", "Usage: batch edit [flags] <path> ...");
   }
@@ -42,10 +43,10 @@ export async function runEditSubcommand(
       e: edits,
     };
     if (append) {
-      (op as any).append = true;
+      op.append = true;
     }
     if (allOccurrences) {
-      (op as any).allOccurrences = true;
+      op.allOccurrences = true;
     }
     return op;
   });
@@ -60,9 +61,5 @@ export async function runEditSubcommand(
     },
   );
 
-  const failed = results.some((r) => r.status === "error");
-  const error = failed
-    ? (results.find((r) => r.status === "error")?.error ?? "operation failed")
-    : undefined;
-  return { output: contentText, results, error, failed };
+  return finalizeExec(contentText, results);
 }

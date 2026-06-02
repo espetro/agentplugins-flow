@@ -1,9 +1,11 @@
 /**
- * batch_read and batch CLI tool factories.
+ * batch_read, batch, and ask_user CLI tool factories.
  */
 
 import { Type } from "@sinclair/typebox";
+import { createAskUserCliTool } from "../tools/ask-user.js";
 import { CliError } from "./parse.js";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BatchTheme } from "../batch/constants.js";
 import { renderBatchReadResult, renderBatchReadCall } from "../batch/render.js";
 import type { BashProcessTracker } from "../batch/batch-bash.js";
@@ -22,11 +24,6 @@ import {
   BATCH_CLI_GUIDELINES,
 } from "./batch.js";
 
-interface CliToolContext {
-  cwd: string;
-  sessionManager?: { getSessionDir(): string };
-}
-
 interface CliToolConfig {
   name: string;
   label: string;
@@ -34,7 +31,7 @@ interface CliToolConfig {
   promptSnippet: string;
   promptGuidelines: string[];
   parameters: any;
-  runner: (cmd: string, cwd: string, signal: AbortSignal | undefined, ctx: CliToolContext) => Promise<{ text: string; results: any[]; hasError: boolean }>;
+  runner: (cmd: string, cwd: string, signal: AbortSignal | undefined, ctx: ExtensionContext) => Promise<{ text: string; results: any[]; hasError: boolean }>;
 }
 
 function createCliTool(config: CliToolConfig) {
@@ -51,7 +48,7 @@ function createCliTool(config: CliToolConfig) {
       input: unknown,
       signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      ctx: CliToolContext,
+      ctx: ExtensionContext,
     ) {
       let cmd: string;
       let cwd: string;
@@ -120,3 +117,5 @@ export function createBatchCliTool(bashTracker?: BashProcessTracker, toolOptimiz
     runner: (cmd, cwd, signal, ctx) => runBatchCli(cmd, cwd, bashTracker, ctx.sessionManager, signal),
   });
 }
+
+export { createAskUserCliTool };

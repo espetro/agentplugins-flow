@@ -106,9 +106,16 @@ describe("parseCommand", () => {
     expect(result.flags.name).toBe("");
   });
 
-  it("parses empty value for long number flag as empty string", () => {
-    const result = parseCommand(["cmd", "--count="], TEST_SPEC);
-    expect(result.flags.count).toBe("");
+  it("throws for empty value on long number flag", () => {
+    expect(() => parseCommand(["cmd", "--count="], TEST_SPEC)).toThrow(
+      new CliError("Flag --count requires a numeric value."),
+    );
+  });
+
+  it("throws for empty value on short number flag", () => {
+    expect(() => parseCommand(["cmd", "-c", ""], TEST_SPEC)).toThrow(
+      new CliError("Flag -c (--count) requires a numeric value."),
+    );
   });
 
   it("parses short flag with = separator", () => {

@@ -2,13 +2,14 @@ import { pollBatchBashResults } from "../../batch/batch-bash.js";
 import type { BashProcessTracker } from "../../batch/batch-bash.js";
 import type { OpResult } from "../../batch/constants.js";
 import { CliError } from "../parse.js";
+import { finalizeExec, type ExecResult } from "./util.js";
 
 export async function runPollSubcommand(
   parsed: { flags: Record<string, unknown>; positionals: string[] },
   _cwd: string,
   bashTracker: BashProcessTracker | undefined,
   _signal?: AbortSignal,
-): Promise<{ output: string; results: OpResult[]; error?: string; failed: boolean }> {
+): Promise<ExecResult> {
   const id = parsed.flags.id;
   const idArray = Array.isArray(id) ? id : id !== undefined ? [id] : [];
   const ids = idArray.map(String);
@@ -62,6 +63,5 @@ export async function runPollSubcommand(
   }
 
   const output = lines.join("\n");
-  const failed = false;
-  return { output, results, failed };
+  return finalizeExec(output, results);
 }

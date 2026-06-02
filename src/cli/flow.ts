@@ -54,6 +54,11 @@ const VALID_COMPLEXITIES = new Set([
 // Flag specs
 // ---------------------------------------------------------------------------
 
+const GLOBAL_FLAG_SPEC = {
+  confirm: { type: "string" as const, description: "Prompt before running project flows" },
+  audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
+};
+
 const ITEM_FLAG_SPEC = {
   type: { short: "t", type: "string" as const, description: "Flow type" },
   intent: { short: "i", type: "string" as const, description: "Mission" },
@@ -77,10 +82,7 @@ const subcommands: SubcommandHelp[] = [
   {
     name: "global",
     description: "Global flags (first chain link only)",
-    flags: {
-      confirm: { type: "string", description: "Prompt before running project flows (true/false). Default: true." },
-      audit: { type: "number", description: "Override audit cycles (0-3). Default: 0." },
-    },
+    flags: flagSpecToHelp(GLOBAL_FLAG_SPEC),
   },
 ];
 
@@ -167,8 +169,7 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
     if (linkIdx === 0) {
       // Parse first link with combined spec (global + item flags).
       const combinedSpec = {
-        confirm: { type: "string" as const, description: "Prompt before running project flows" },
-        audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
+        ...GLOBAL_FLAG_SPEC,
         ...ITEM_FLAG_SPEC,
       };
       const parsed = parseCommand(tokensForParse, combinedSpec);
