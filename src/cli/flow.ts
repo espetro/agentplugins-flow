@@ -9,7 +9,7 @@ import { Type } from "@sinclair/typebox";
 import { tokenize } from "./tokenize.js";
 import { splitChain, splitOnDoubleDash } from "./chain.js";
 import { parseCommand, CliError } from "./parse.js";
-import { renderHelp, type SubcommandHelp } from "./help.js";
+import { renderHelp, flagSpecToHelp, type SubcommandHelp } from "./help.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -72,26 +72,17 @@ const subcommands: SubcommandHelp[] = [
   {
     name: "flow",
     description: "Spawn a specialized agent flow.",
+    flags: flagSpecToHelp(ITEM_FLAG_SPEC),
+  },
+  {
+    name: "global",
+    description: "Global flags (first chain link only)",
     flags: {
-      type: { short: "t", type: "string", description: "Flow type (scout|build|debug|audit|craft|ideas|trace)" },
-      intent: { short: "i", type: "string", description: "Detailed mission" },
-      aim: { short: "a", type: "string", description: "Short headline (5-7 words)" },
-      concern: { short: "c", type: "string", description: "Known risks" },
-      acceptance: { type: "string", description: "Success criteria" },
-      cwd: { type: "string", description: "Working directory override" },
-      complexity: { type: "string", description: "Budget: snap|simple|moderate|complex|intricate" },
+      confirm: { type: "string", description: "Prompt before running project flows (true/false). Default: true." },
+      audit: { type: "number", description: "Override audit cycles (0-3). Default: 0." },
     },
   },
 ];
-
-const GLOBAL_HELP = {
-  name: "global",
-  description: "Global flags (first chain link only)",
-  flags: {
-    confirm: { type: "boolean", description: "Prompt before running project flows. Default: true." },
-    audit: { type: "number", description: "Override audit cycles (0-3). Default: 0." },
-  },
-};
 
 const FLOW_HELP = renderHelp("flow", "Spawns specialized agent flows.", subcommands);
 
