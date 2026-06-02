@@ -6,9 +6,8 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "@sinclair/typebox";
 import { setupNotify } from "./notify/notify.js";
-import { discoverFlows, getFlowTier, BUNDLED_FLOW_TYPES, type FlowConfig, type FlowTier } from "./flow/agents.js";
+import { discoverFlows, getFlowTier, type FlowConfig, type FlowTier } from "./flow/agents.js";
 import { getInheritedCliArgs } from "./snapshot/cli-args.js";
 import { renderFlowCall, renderFlowResult } from "./tui/render.js";
 import { beginFlowLiveSession, endFlowLiveSession } from "./tui/flow-live-state.js";
@@ -24,10 +23,10 @@ import type {
 } from "./types/flow.js";
 
 import { createBatchCliTool, createBatchReadCliTool } from "./cli/register.js";
+import { runBatchCli } from "./cli/batch.js";
 import {
 	BashProcessTracker,
 	createBatchBashPollTool,
-	runBashWithLimits,
 } from "./batch/batch-bash.js";
 import { createAskUserTool } from "./tools/ask-user.js";
 import {
@@ -42,11 +41,8 @@ import * as sessionRegistry from "./flow/session-registry.js";
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 
 import { createTraceTool } from "./tools/trace.js";
-import { prepareFlowDispatchArguments } from "./flow/flow-dispatch-prep.js";
-import { executeOperations } from "./batch/execute.js";
-import { runWebOps } from "./tools/web-ops.js";
-import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "./batch/constants.js";
-import type { WebOpInput } from "./tools/web-ops.js";
+import { FlowCliParams, FLOW_CLI_DESCRIPTION, FLOW_CLI_SNIPPET, FLOW_CLI_GUIDELINES, parseFlowCmd } from "./cli/flow.js";
+import type { ParsedFlowItem } from "./cli/flow.js";
 import {
 	resolveFlowDepthConfig,
 	type FlowDepthConfig,
@@ -79,133 +75,7 @@ import {
 // Tool parameter schema
 // ---------------------------------------------------------------------------
 
-const BatchDispatchOp = Type.Object({
-	tool: Type.Literal("batch"),
-	ops: Type.Array(Type.Object({
-		o: Type.String(),
-		p: Type.String(),
-		c: Type.Optional(Type.String()),
-		e: Type.Optional(Type.Array(Type.Object({ f: Type.String(), r: Type.String() }))),
-		s: Type.Optional(Type.Number()),
-		l: Type.Optional(Type.Union([Type.Number(), Type.Boolean()])),
-		i: Type.Optional(Type.Union([Type.String(), Type.Boolean()])),
-		t: Type.Optional(Type.Union([Type.Number(), Type.String()])),
-		h: Type.Optional(Type.String()),
-		q: Type.Optional(Type.String()),
-		n: Type.Optional(Type.Number()),
-		u: Type.Optional(Type.Number()),
-	}), { description: "File/batch operations matching the batch tool schema. Aliases accepted: path=p, content=c, edits=e, offset=s, limit=l, ignoreCase=i, query=q, maxCount=n. Canonical wins." }),
-});
-const BashDispatchOp = Type.Object({
-	tool: Type.Literal("bash"),
-	ops: Type.Array(Type.Object({
-		c: Type.String({ description: "Shell command. Alias: cmd." }),
-		h: Type.Optional(Type.String({ description: "Working directory override. Alias: cwd." })),
-		t: Type.Optional(Type.Number({ description: "Timeout in ms. Alias: timeout." })),
-	}), { description: "Bash command objects." }),
-});
-const WebDispatchOp = Type.Object({
-	tool: Type.Literal("web"),
-	ops: Type.Array(Type.Object({
-		o: Type.Union([Type.Literal("search"), Type.Literal("fetch")]),
-		q: Type.Optional(Type.String()),
-		u: Type.Optional(Type.String()),
-		f: Type.Optional(Type.String()),
-	}), { description: "Web operations matching the web tool schema." }),
-});
-const DispatchOpSchema = Type.Union([BatchDispatchOp, BashDispatchOp, WebDispatchOp], {
-	description: "Pre-dispatch tool call with discriminated tool type and typed ops array. Wrapper aliases: t=tool, o=ops. Canonical wins.",
-});
-
-const FlowItem = Type.Object({
-	type: Type.Union(
-		BUNDLED_FLOW_TYPES.map((t) => Type.Literal(t)) as any,
-		{ description: "Flow type: one of the bundled flow types." },
-	),
-	intent: Type.String({
-		description: "Detailed mission for this flow.",
-	}),
-	aim: Type.String({
-		description: "Short (5-7 words) headline summary.",
-	}),
-	acceptance: Type.Optional(
-		Type.String({ description: "Success criteria for the task." }),
-	),
-	concern: Type.String({
-		description: "Known risks, uncertainties, or areas requiring extra care. Be specific.",
-	}),
-	cwd: Type.Optional(
-		Type.String({ description: "Working directory override." }),
-	),
-	complexity: Type.Union([
-		Type.Literal("snap"),
-		Type.Literal("simple"),
-		Type.Literal("moderate"),
-		Type.Literal("complex"),
-		Type.Literal("intricate"),
-	], {
-		description: "Budget/Audit level: snap (120s), simple (300s), moderate (600s), complex (900s), intricate (1200s).",
-	}),
-	dispatch: Type.Optional(
-		Type.Array(DispatchOpSchema, {
-			description: "Tools to run before the flow starts (results are injected into the prompt). Accepts field aliases (t/o/cmd/path/etc) — canonical wins.",
-		}),
-	),
-
-}, {
-	title: "FlowTask",
-	description: "A single flow task object.",
-});
-
-export const FlowParams = Type.Object({
-	flow: Type.Array(FlowItem, {
-		description: "Specialized flow tasks to dive into.",
-		minItems: 1,
-	}),
-	confirmProjectFlows: Type.Optional(
-		Type.Boolean({
-			description: "Prompt before running local flows. Default: true.",
-			default: true,
-		}),
-	),
-	auditLoop: Type.Optional(
-		Type.Number({
-			description: "Override audit cycles (0-3).",
-			default: 0,
-			minimum: 0,
-			maximum: 3,
-		}),
-	),
-}, {
-	title: "FlowToolParams",
-	description: "The root object MUST contain a 'flow' array. Never flatten fields to the root.",
-	examples: [{
-		flow: [{ type: "scout", intent: "Map auth module files", aim: "Map auth module", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }],
-	}, {
-		flow: [{ type: "scout", intent: "Map auth files", aim: "Map auth", complexity: "simple", concern: "verify", dispatch: [{ t: "bash", o: [{ cmd: "ls src/auth" }] }] }]
-	}, {
-		flow: [
-			{ type: "scout", intent: "Map auth files", aim: "Map auth", complexity: "simple", concern: "verify" },
-			{ type: "build", intent: "Implement JWT middleware", aim: "Add JWT", complexity: "complex", concern: "stateless only" },
-		],
-	}],
-});
-
-// Exported for static description-hygiene tests. Keep in sync with the
-// `pi.registerTool({ description, promptSnippet, promptGuidelines, ... })` call
-// inside the default export below.
-export const FLOW_TOOL_DESCRIPTION =
-	"Spawns specialized agent flows. Each task needs [type] [intent] [aim] [concern] [complexity]; the [flow] array must contain only complete task objects. Routes work to [scout] [build] [audit] [debug] [craft] [ideas] agents. Complexity: [snap] [simple] [moderate] [complex] [intricate].";
-
-export const FLOW_TOOL_PROMPT_SNIPPET =
-	"Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.";
-
-export const FLOW_TOOL_PROMPT_GUIDELINES: readonly string[] = [
-	"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
-	"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
-	"For quick file reads/checks, use `trace` instead.",
-	"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
-];
+export { FlowCliParams, FLOW_CLI_DESCRIPTION } from "./cli/flow.js";
 
 const inheritedCliArgs = getInheritedCliArgs();
 
@@ -213,56 +83,19 @@ const inheritedCliArgs = getInheritedCliArgs();
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function executeDispatchOps(
-	dispatch: Array<
-		| { tool: "batch"; ops: FileOpInput[] }
-		| { tool: "bash"; ops: Array<{ c: string; h?: string; t?: number }> }
-		| { tool: "web"; ops: WebOpInput[] }
-	>,
+async function runFlowDispatch(
+	dispatch: string | undefined,
 	cwd: string,
-	ctx: ExtensionContext,
-	signal?: AbortSignal,
-): Promise<string> {
-	const parts: string[] = [];
-	let toolCallIndex = 0;
-
-	for (const group of dispatch) {
-		if (signal?.aborted) break;
-		const toolCallId = `pre_dispatch_${group.tool}_${toolCallIndex++}`;
-
-		try {
-			if (group.tool === "batch") {
-				// Separate file ops from bash ops
-				const fileOps = group.ops.filter((op) => op.o !== "bash");
-				const bashOps = group.ops.filter((op) => op.o === "bash");
-
-				if (fileOps.length > 0) {
-					const fileOutput = await executeOperations(fileOps as FileOpInput[], cwd, signal, { includeLimitWarnings: true });
-					parts.push(`### batch (file ops)\n\ntool_call_id: ${toolCallId}\n\n${fileOutput.contentText}`);
-				}
-
-				if (bashOps.length > 0) {
-					for (const op of bashOps) {
-						const { stdout, stderr, exitCode } = await runBashWithLimits(op.c ?? "", op.h ?? cwd, op.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
-						parts.push(`### bash [${op.i ?? "auto"}] exit ${exitCode}\n\ntool_call_id: ${toolCallId}\n\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
-					}
-				}
-			} else if (group.tool === "bash") {
-				for (const cmd of group.ops) {
-					const { stdout, stderr, exitCode } = await runBashWithLimits(cmd.c, cmd.h ?? cwd, cmd.t ?? BASH_DEFAULT_TIMEOUT_MS, signal);
-					parts.push(`### bash\n\ntool_call_id: ${toolCallId}\n\n--- bash exit ${exitCode} ---\n${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`);
-				}
-			} else if (group.tool === "web") {
-				const webOutput = await runWebOps({ op: group.ops }, ctx, signal);
-				parts.push(`### web\n\ntool_call_id: ${toolCallId}\n\n${webOutput.content[0].text}`);
-			}
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			parts.push(`### ${group.tool} (error)\n\ntool_call_id: ${toolCallId}\n\nPre-dispatch failed: ${message}`);
-		}
+	signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+	if (!dispatch || dispatch.trim().length === 0) return undefined;
+	try {
+		const result = await runBatchCli(dispatch, cwd, undefined, undefined, signal);
+		return result.text;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return `Pre-dispatch failed: ${message}`;
 	}
-
-	return parts.join("\n\n---\n\n");
 }
 
 function makeFlowDetailsFactory(projectFlowsDir: string | null, sharedContext?: SharedContext) {
@@ -622,41 +455,74 @@ export default function (pi: ExtensionAPI) {
 		fallbackModel: inheritedCliArgs.fallbackModel,
 	}));
 
-// Register the flow tool
+	// Register the flow tool
 	if (canTransition) {
 		pi.registerTool({
 			name: "flow",
 			label: "Flow",
-			promptSnippet: "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.",
-			promptGuidelines: [
-				"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
-				"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
-				"For quick file reads/checks, use `trace` instead.",
-				"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
-			],
-			description: FLOW_TOOL_DESCRIPTION,
-			parameters: FlowParams,
+			promptSnippet: FLOW_CLI_SNIPPET,
+			promptGuidelines: [...FLOW_CLI_GUIDELINES],
+			description: FLOW_CLI_DESCRIPTION,
+			parameters: FlowCliParams,
 			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
-			prepareArguments: prepareFlowDispatchArguments,
+			prepareArguments: (input: unknown) => {
+				if (!input || typeof input !== "object") return input;
+				const args = input as Record<string, unknown>;
+				const cmd = args.cmd;
+				if (typeof cmd !== "string") return input;
+				try {
+					const result = parseFlowCmd(cmd);
+					if (result.parsed) {
+						return {
+							...args,
+							flow: result.parsed.items.map((item) => ({
+								type: item.type,
+								intent: item.intent,
+								aim: item.aim,
+								concern: item.concern,
+								acceptance: item.acceptance,
+								cwd: item.cwd,
+								complexity: item.complexity,
+							})),
+							confirmProjectFlows: result.parsed.confirm,
+							auditLoop: result.parsed.audit,
+						};
+					}
+				} catch {
+					// If parsing fails, let the execute function handle the error
+				}
+				return input;
+			},
 
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				if (!resolved) {
 					throw new Error("Error: session not initialized");
 				}
 
+				const cmd = params.cmd;
+				if (typeof cmd !== "string") {
+					throw new Error("Missing cmd string");
+				}
+
+				const parsed = parseFlowCmd(cmd);
+				if (parsed.help) {
+					return { content: [{ type: "text", text: parsed.help }], failed: false };
+				}
+				if (!parsed.parsed) {
+					throw new Error("Failed to parse flow command");
+				}
+
+				const { items, confirm: confirmProjectFlows, audit } = parsed.parsed;
+
 				const discovery = discoverFlows(ctx.cwd, "all");
 				const { flows } = discovery;
 
-				// Build the fork session snapshot. Core-2 applies a 6-stage sanitization
-				// pipeline that strips metadata noise irrelevant to child flow orientation
-				// while preserving chronological conversation history.
-				function resolveSnapshotTier(flows: FlowConfig[], flowParams: Array<Static<typeof FlowItem>>): FlowTier | undefined {
+				function resolveSnapshotTier(flows: FlowConfig[], flowParams: ParsedFlowItem[]): FlowTier | undefined {
 					if (flowParams.length === 0) return undefined;
 					const tiers = flowParams.map((f) => {
 						const config = flows.find((flow) => flow.name === f.type.toLowerCase());
 						return config?.tier ?? getFlowTier(f.type);
 					});
-					// Most permissive: full > flash > lite
 					if (tiers.includes("full")) return "full";
 					if (tiers.includes("flash")) return "flash";
 					return tiers[0];
@@ -664,7 +530,7 @@ export default function (pi: ExtensionAPI) {
 
 				function resolveSnapshotMaxContextTokens(
 					flowConfigs: FlowConfig[],
-					flowParams: Array<Static<typeof FlowItem>>,
+					flowParams: ParsedFlowItem[],
 					strategy: import("./config/config.js").LoadedFlowModelConfigs["strategy"],
 					tierOverrideResolver: (tier: "lite" | "flash" | "full") => string | undefined,
 					fallbackModel?: string,
@@ -688,11 +554,11 @@ export default function (pi: ExtensionAPI) {
 					return minTokens;
 				}
 
-				const firstFlow = params.flow[0];
+				const firstFlow = items[0];
 				const firstFlowConfig = flows.find((f) => f.name === (firstFlow?.type ?? "").toLowerCase());
 				const maxContextTokens = resolveSnapshotMaxContextTokens(
 					flows,
-					params.flow,
+					items,
 					resolved.loadedFlowModelConfigs.strategy,
 					getTierOverride,
 					inheritedCliArgs.fallbackModel,
@@ -701,7 +567,7 @@ export default function (pi: ExtensionAPI) {
 					ctx.sessionManager,
 					{
 						activeToolCallId: toolCallId,
-						tier: resolveSnapshotTier(flows, params.flow),
+						tier: resolveSnapshotTier(flows, items),
 						compressionProfile: firstFlowConfig?.contextProfile,
 						compressionLevel: resolved?.contextCompression,
 					},
@@ -738,27 +604,11 @@ export default function (pi: ExtensionAPI) {
 				} : undefined;
 
 				const preDispatchResults = await Promise.all(
-					params.flow.map(async (f: Static<typeof FlowItem>) => {
-						if (!f.dispatch || f.dispatch.length === 0) return undefined;
-						const result = await executeDispatchOps(f.dispatch, f.cwd ?? ctx.cwd, ctx, signal);
-						const notes = (f as unknown as Record<string, unknown>)._dispatchNotes as string[] | undefined;
-						if (notes && notes.length > 0) {
-							return `normalized:\n${notes.map((n) => `- ${n}`).join("\n")}\n\n${result}`;
-						}
-						return result;
+					items.map(async (f) => {
+						if (!f.dispatch) return undefined;
+						return runFlowDispatch(f.dispatch, f.cwd ?? ctx.cwd, signal);
 					})
 				);
-
-				// Surface flow-level normalization notes
-				const flowNotes = (params as unknown as Record<string, unknown>)._flowNotes as string[] | undefined;
-				if (flowNotes && flowNotes.length > 0) {
-					const noteText = `flow normalized:\n${flowNotes.map((n) => `- ${n}`).join("\n")}`;
-					if (preDispatchResults[0] === undefined) {
-						(preDispatchResults as (string | undefined)[])[0] = noteText;
-					} else {
-						(preDispatchResults as string[])[0] = `${noteText}\n\n${preDispatchResults[0]}`;
-					}
-				}
 
 				let result: Awaited<ReturnType<typeof executeFlows>>;
 				try {
@@ -789,7 +639,7 @@ export default function (pi: ExtensionAPI) {
 							hasUI: ctx.hasUI,
 							uiConfirm: (title, body) => ctx.ui.confirm(title, body),
 							onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
-							confirmProjectFlows: params.confirmProjectFlows,
+							confirmProjectFlows,
 							goalContext,
 							goalContinuationCallback: async (results) => {
 								const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
@@ -800,18 +650,18 @@ export default function (pi: ExtensionAPI) {
 								}
 							},
 						},
-						params.flow.map((f: Static<typeof FlowItem>, i: number) => ({
+						items.map((f, i) => ({
 							type: f.type,
 							intent: f.intent,
 							aim: f.aim,
 							acceptance: f.acceptance,
 							concern: f.concern,
 							cwd: f.cwd,
-							complexity: f.complexity,
+							complexity: (f.complexity ?? resolved!.defaultComplexity) as import("./flow/complexity.js").Complexity,
 							preDispatchResults: preDispatchResults[i],
 						})),
 						toolCallId,
-						params.auditLoop ?? 0,
+						audit,
 					);
 				} finally {
 					endFlowLiveSession(toolCallId);

@@ -4,7 +4,7 @@ import { BatchCliParams } from "../src/cli/batch.js";
 import { createBatchReadCliTool } from "../src/cli/register.js";
 import { BatchReadCliParams } from "../src/cli/batch-read.js";
 import { createTraceTool, TraceCliParams } from "../src/tools/trace.js";
-import { FLOW_TOOL_DESCRIPTION, FlowParams } from "../src/index.js";
+import { FLOW_CLI_DESCRIPTION, FlowCliParams } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // TypeBox schema walker
@@ -66,7 +66,7 @@ const tools = [
 	{ name: "batch_read", description: createBatchReadCliTool().description, schema: BatchReadCliParams },
 	{ name: "batch", description: createBatchCliTool().description, schema: BatchCliParams },
 	{ name: "trace", description: createTraceTool().description, schema: TraceCliParams },
-	{ name: "flow", description: FLOW_TOOL_DESCRIPTION, schema: FlowParams },
+	{ name: "flow", description: FLOW_CLI_DESCRIPTION, schema: FlowCliParams },
 ];
 
 describe("tool description hint hygiene", () => {

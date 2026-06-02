@@ -162,7 +162,7 @@ describe("flow tool execute", () => {
 			},
 			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "bash", toolCallId: "bash-call-1", arguments: { command: "echo normal" } }], timestamp: 3 } },
 			{ type: "message", message: { role: "toolResult", toolCallId: "bash-call-1", name: "bash", content: [{ type: "text", text: "normal bash output" }], timestamp: 4 } },
-			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: { flow: [{ type: "scout", intent: "Prior flow", complexity: "moderate" }] } }], timestamp: 5 } },
+			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "flow", toolCallId: "flow-call-1", arguments: { cmd: "--type scout --intent 'Prior flow' --complexity moderate --aim 'Prior flow' --concern 'verify' --confirm false" } }], timestamp: 5 } },
 			{ type: "message", message: { role: "toolResult", toolCallId: "flow-call-1", name: "flow", content: [{ type: "text", text: "prior flow result should be inherited" }], timestamp: 6 } },
 			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Implementation summary after transition — [build] flow completed with files modified" }], timestamp: 7 } },
 			{ type: "message", message: { role: "user", content: "Current request should be inherited from /src/config.ts and applied consistently", timestamp: 8 } },
@@ -171,7 +171,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "ideas", intent: "Explore things", complexity: "moderate", aim: "Explore codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type ideas --intent 'Explore things' --complexity moderate --aim 'Explore codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -243,7 +243,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix things", complexity: "moderate", aim: "Fix codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -309,7 +309,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -360,7 +360,7 @@ describe("flow tool execute", () => {
 					role: "assistant",
 					content: [
 						{ type: "text", text: "Text before transition." },
-						{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: { flow: [{ type: "debug", intent: "Prior debug", complexity: "moderate" }] } },
+						{ type: "toolCall", name: "flow", toolCallId: "flow-call-2", arguments: { cmd: "--type debug --intent 'Prior debug' --complexity moderate --aim 'Prior debug' --concern 'verify' --confirm false" } },
 						{ type: "text", text: "Text after transition — [debug] completed." },
 					],
 					timestamp: 2,
@@ -373,7 +373,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix things", complexity: "moderate", aim: "Fix codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -427,7 +427,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "SCOUT", intent: "Discover things", complexity: "moderate" }], confirmProjectFlows: false },
+			{ cmd: "--type SCOUT --intent 'Discover things' --complexity moderate --aim 'Discover things' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -453,7 +453,7 @@ describe("flow tool execute", () => {
 		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
 
 		const tool = pi.getTool("flow");
-		expect(tool.parameters.properties.flow.items.properties.complexity).toBeDefined();
+		expect(tool.parameters.properties.cmd).toBeDefined();
 
 		vi.mocked(runFlow).mockResolvedValue({
 			type: "build",
@@ -468,7 +468,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Run full checks", aim: "Run checks", complexity: "complex" }], confirmProjectFlows: false },
+			{ cmd: "--type build --intent 'Run full checks' --aim 'Run checks' --complexity complex --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -490,11 +490,7 @@ describe("flow tool execute", () => {
 		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
 
 		const tool = pi.getTool("flow");
-		const concernProp = tool.parameters.properties.flow.items.properties.concern;
-		expect(concernProp).toBeDefined();
-		expect(concernProp.kind).toBe("string");
-		const acceptanceProp = tool.parameters.properties.flow.items.properties.acceptance;
-		expect(acceptanceProp.kind).toBe("optional");
+		expect(tool.parameters.properties.cmd).toBeDefined();
 	});
 
 	it("forwards concern to runFlow via flowItems", async () => {
@@ -523,7 +519,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase", complexity: "moderate", concern: "The auth module was recently refactored — verify assumptions" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --complexity moderate --concern 'The auth module was recently refactored — verify assumptions' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -560,7 +556,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -589,7 +585,7 @@ describe("flow tool execute", () => {
 		await expect(
 			tool.execute(
 				"call-1",
-				{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+				{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 				new AbortController().signal,
 				undefined,
 				makeMockCtx(tmpDir),
@@ -625,7 +621,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			vi.fn(),
 			makeMockCtx(tmpDir),
@@ -851,7 +847,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			onUpdate,
 			makeMockCtx(tmpDir),
@@ -912,7 +908,7 @@ describe("flow tool execute", () => {
 		const onUpdateCalls: any[] = [];
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			(update: any) => onUpdateCalls.push(update),
 			makeMockCtx(tmpDir),
@@ -1002,7 +998,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -1056,7 +1052,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -1112,7 +1108,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1155,7 +1151,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "scout", intent: "Discover things", complexity: "moderate", aim: "Discover codebase" }], confirmProjectFlows: false },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1228,7 +1224,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
+			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1288,7 +1284,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
+			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1344,7 +1340,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ flow: [{ type: "build", intent: "Fix bug", complexity: "simple", aim: "Fix bug" }], confirmProjectFlows: false, auditLoop: 0 },
+			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),

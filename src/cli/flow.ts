@@ -1,0 +1,382 @@
+/**
+ * flow — bash-style CLI tool.
+ *
+ * Replaces the legacy flow mega-schema with a simple cmd string
+ * that uses flags and chaining.
+ */
+
+import { Type } from "@sinclair/typebox";
+import { tokenize } from "./tokenize.js";
+import { splitChain, splitOnDoubleDash } from "./chain.js";
+import { parseCommand, CliError } from "./parse.js";
+import { renderHelp, type SubcommandHelp } from "./help.js";
+
+// ---------------------------------------------------------------------------
+// Schema
+// ---------------------------------------------------------------------------
+
+export const FlowCliParams = Type.Object({
+  cmd: Type.String({
+    description: "Flow command. Multiple items chained with `;` or `&&`. Each item: --type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]. Global: --confirm <bool>, --audit <n> (first item only). Run with `cmd: 'help'` for the man page.",
+  }),
+});
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+export const FLOW_CLI_DESCRIPTION =
+  "Spawns specialized agent flows (scout, debug, build, craft, audit, ideas, trace). Bash-style CLI: pass a single [cmd] string with flags. Supports chaining with ; and &&.";
+
+export const FLOW_CLI_SNIPPET =
+  "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via bash-style CLI.";
+
+export const FLOW_CLI_GUIDELINES = [
+  "Use `flow --type <name> --intent <text> --aim <text> --concern <text>` to spawn a flow.",
+  "Chain multiple flows with `;` (sequential) or `&&` (conditional).",
+  "Add `--acceptance <text>` for success criteria.",
+  "Add `--complexity <level>` for budget: snap, simple, moderate, complex, intricate.",
+  "Add `-- <batch-dispatch>` for pre-flight ops (e.g., `-- batch read src/auth.ts`).",
+  "For quick file reads/checks, use `trace` instead.",
+  "Pass `cmd: \"help\"` or `--help` for the man page.",
+];
+
+const VALID_TYPES = new Set([
+  "scout", "build", "debug", "audit", "craft", "ideas", "trace",
+]);
+
+const VALID_COMPLEXITIES = new Set([
+  "snap", "simple", "moderate", "complex", "intricate",
+]);
+
+// ---------------------------------------------------------------------------
+// Flag specs
+// ---------------------------------------------------------------------------
+
+const GLOBAL_FLAG_SPEC = {
+  confirm: { type: "boolean" as const, description: "Prompt before running project flows" },
+  audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
+};
+
+const ITEM_FLAG_SPEC = {
+  type: { short: "t", type: "string" as const, description: "Flow type" },
+  intent: { short: "i", type: "string" as const, description: "Mission" },
+  aim: { short: "a", type: "string" as const, description: "Headline" },
+  concern: { short: "c", type: "string" as const, description: "Risks" },
+  acceptance: { type: "string" as const, description: "Acceptance criteria" },
+  cwd: { type: "string" as const, description: "Working dir" },
+  complexity: { type: "string" as const, description: "Budget level" },
+};
+
+// ---------------------------------------------------------------------------
+// Help text
+// ---------------------------------------------------------------------------
+
+const subcommands: SubcommandHelp[] = [
+  {
+    name: "flow",
+    description: "Spawn a specialized agent flow.",
+    flags: {
+      type: { short: "t", type: "string", description: "Flow type (scout|build|debug|audit|craft|ideas|trace)" },
+      intent: { short: "i", type: "string", description: "Detailed mission" },
+      aim: { short: "a", type: "string", description: "Short headline (5-7 words)" },
+      concern: { short: "c", type: "string", description: "Known risks" },
+      acceptance: { type: "string", description: "Success criteria" },
+      cwd: { type: "string", description: "Working directory override" },
+      complexity: { type: "string", description: "Budget: snap|simple|moderate|complex|intricate" },
+    },
+  },
+];
+
+const GLOBAL_HELP = {
+  name: "global",
+  description: "Global flags (first chain link only)",
+  flags: {
+    confirm: { type: "boolean", description: "Prompt before running project flows. Default: true." },
+    audit: { type: "number", description: "Override audit cycles (0-3). Default: 0." },
+  },
+};
+
+const FLOW_HELP = renderHelp("flow", "Spawns specialized agent flows.", subcommands);
+
+export { FLOW_HELP };
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ParsedFlowItem {
+  type: string;
+  intent: string;
+  aim: string;
+  concern: string;
+  acceptance?: string;
+  cwd?: string;
+  complexity?: string;
+  dispatch?: string;
+}
+
+export interface ParsedFlowCmd {
+  confirm: boolean;
+  audit: number;
+  items: ParsedFlowItem[];
+}
+
+// ---------------------------------------------------------------------------
+// Parser
+// ---------------------------------------------------------------------------
+
+function splitChainAwareOfDoubleDash(input: string): Array<{ kind: "run" | "and"; pre: string; post: string }> {
+  // First, split the input into segments separated by standalone `--`.
+  // Each segment (except the last) is the pre part of a link; the post part
+  // (dispatch) starts right after the `--` and continues until the next chain
+  // separator (`;` or `&&`) at the top level (not inside quotes).
+  const links: Array<{ kind: "run" | "and"; pre: string; post: string }> = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escapeNext = false;
+  let nextKind: "run" | "and" = "run";
+  let foundDash = false;
+  let post = "";
+
+  function flush() {
+    const preTrim = current.trim();
+    const postTrim = post.trim();
+    if (preTrim.length > 0 || postTrim.length > 0) {
+      links.push({ kind: nextKind, pre: preTrim, post: postTrim });
+    }
+    current = "";
+    post = "";
+  }
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (escapeNext) {
+      if (foundDash) post += ch;
+      else current += ch;
+      escapeNext = false;
+      continue;
+    }
+
+    if (ch === '\\' && !inSingle && !inDouble) {
+      escapeNext = true;
+      if (foundDash) post += ch;
+      else current += ch;
+      continue;
+    }
+
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      if (foundDash) post += ch;
+      else current += ch;
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === '"') inDouble = false;
+      if (foundDash) post += ch;
+      else current += ch;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      if (foundDash) post += ch;
+      else current += ch;
+      continue;
+    }
+
+    if (ch === '"') {
+      inDouble = true;
+      if (foundDash) post += ch;
+      else current += ch;
+      continue;
+    }
+
+    // Detect standalone `--`
+    if (ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
+      const prev = i > 0 ? input[i - 1] : ' ';
+      const nextIdx = i + 2;
+      const isWhitespace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+      if (isWhitespace(prev) && (nextIdx >= input.length || isWhitespace(input[nextIdx]))) {
+        foundDash = true;
+        i++; // skip second dash
+        continue;
+      }
+    }
+
+    // Detect chain separators only when not in dispatch (foundDash=false)
+    if (!foundDash && !inSingle && !inDouble) {
+      if (ch === ';') {
+        flush();
+        nextKind = "run";
+        continue;
+      }
+      if (ch === '&' && i + 1 < input.length && input[i + 1] === '&') {
+        flush();
+        nextKind = "and";
+        i++; // skip second &
+        continue;
+      }
+    }
+
+    if (foundDash) post += ch;
+    else current += ch;
+  }
+
+  flush();
+  return links;
+}
+
+export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowCmd } {
+  const trimmed = cmd.trim();
+
+  if (trimmed.length === 0 || trimmed === "help" || trimmed === "--help" || trimmed === "-h" || trimmed === "flow help" || trimmed === "flow --help" || trimmed === "flow -h") {
+    return { help: FLOW_HELP };
+  }
+
+  // Remove leading "flow" keyword if present (the model may include it)
+  let working = trimmed;
+  if (working.startsWith("flow ")) {
+    working = working.slice(5);
+  }
+
+  const chain = splitChainAwareOfDoubleDash(working);
+  if (chain.length === 0) {
+    return { help: FLOW_HELP };
+  }
+
+  let confirm = true;
+  let audit = 0;
+  const items: ParsedFlowItem[] = [];
+
+  for (let linkIdx = 0; linkIdx < chain.length; linkIdx++) {
+    const link = chain[linkIdx];
+    const pre = link.pre;
+    const post = link.post;
+    const tokens = tokenize(pre);
+
+    // Remove leading "flow" if present in this fragment
+    if (tokens[0] === "flow") {
+      tokens.shift();
+    }
+
+    if (tokens.length === 0) {
+      continue;
+    }
+
+    // For the first link, parse global flags before item flags.
+    if (linkIdx === 0) {
+      const remainingTokens: string[] = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "--confirm" || tok === "--audit") {
+          const name = tok.slice(2);
+          const cfg = (GLOBAL_FLAG_SPEC as Record<string, { type: string; description: string }>)[name];
+          if (cfg.type === "boolean") {
+            if (i + 1 < tokens.length && (tokens[i + 1] === "true" || tokens[i + 1] === "false")) {
+              confirm = tokens[i + 1] === "true";
+              i++;
+            } else {
+              confirm = true;
+            }
+          } else if (cfg.type === "number") {
+            if (i + 1 < tokens.length) {
+              const num = Number(tokens[i + 1]);
+              if (Number.isFinite(num)) {
+                audit = num;
+              }
+              i++;
+            }
+          }
+          continue;
+        }
+        // Handle --flag=value syntax
+        if (tok.startsWith("--confirm=") || tok.startsWith("--audit=")) {
+          const eqIdx = tok.indexOf("=");
+          const name = tok.slice(2, eqIdx);
+          const value = tok.slice(eqIdx + 1);
+          if (name === "confirm") {
+            confirm = value === "true";
+          } else if (name === "audit") {
+            const num = Number(value);
+            if (Number.isFinite(num)) audit = num;
+          }
+          continue;
+        }
+        remainingTokens.push(tok);
+      }
+      // Parse the rest with item flag spec
+      // Prepend a dummy subcommand if the first token is a flag so parseCommand
+      // doesn't consume the real flag as the subcommand.
+      const tokensForParse = remainingTokens.length > 0 && remainingTokens[0].startsWith("-")
+        ? ["flow", ...remainingTokens]
+        : remainingTokens.length > 0 ? remainingTokens : ["flow"];
+      const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
+      items.push(extractItem(parsed, post));
+    } else {
+      // Prepend a dummy subcommand if the first token is a flag
+      const tokensForParse = tokens.length > 0 && tokens[0].startsWith("-")
+        ? ["flow", ...tokens]
+        : tokens.length > 0 ? tokens : ["flow"];
+      const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
+      items.push(extractItem(parsed, post));
+    }
+  }
+
+  if (items.length === 0) {
+    throw new CliError("No flow items found. At least one --type is required.", "Run with --help for usage.");
+  }
+
+  return { parsed: { confirm, audit, items } };
+}
+
+function extractItem(parsed: ReturnType<typeof parseCommand>, dispatch: string): ParsedFlowItem {
+  const type = parsed.flags.type as string | undefined;
+  const intent = parsed.flags.intent as string | undefined;
+  const aim = parsed.flags.aim as string | undefined;
+  const concern = parsed.flags.concern as string | undefined;
+  const acceptance = parsed.flags.acceptance as string | undefined;
+  const cwd = parsed.flags.cwd as string | undefined;
+  const complexity = parsed.flags.complexity as string | undefined;
+
+  if (!type) {
+    throw new CliError("Missing required flag: --type", `Valid types: ${Array.from(VALID_TYPES).join(", ")}`);
+  }
+  if (!VALID_TYPES.has(type.toLowerCase())) {
+    throw new CliError(
+      `Invalid flow type: ${type}`,
+      `Valid types: ${Array.from(VALID_TYPES).join(", ")}`,
+    );
+  }
+  if (!intent) {
+    throw new CliError("Missing required flag: --intent");
+  }
+  if (!aim) {
+    throw new CliError("Missing required flag: --aim");
+  }
+  if (!concern) {
+    throw new CliError("Missing required flag: --concern");
+  }
+  if (complexity && !VALID_COMPLEXITIES.has(complexity.toLowerCase())) {
+    throw new CliError(
+      `Invalid complexity: ${complexity}`,
+      `Valid complexities: ${Array.from(VALID_COMPLEXITIES).join(", ")}`,
+    );
+  }
+
+  const item: ParsedFlowItem = {
+    type: type.toLowerCase(),
+    intent,
+    aim,
+    concern,
+  };
+  if (acceptance) item.acceptance = acceptance;
+  if (cwd) item.cwd = cwd;
+  if (complexity) item.complexity = complexity.toLowerCase();
+  if (dispatch) item.dispatch = dispatch;
+
+  return item;
+}
