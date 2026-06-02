@@ -44,7 +44,7 @@ export const BATCH_READ_CLI_GUIDELINES = [
   "Use `batch_read read <paths>` for files. Add `:N` or `:N-M` for line ranges.",
   "Use `batch_read rg -q <pattern> <path>` for ripgrep.",
   "Chain with `;` for sequential ops and `&&` for conditional ops.",
-  "Pass `cmd: \"help\"` or `--help` for the man page.",
+  "Pass `cmd: \"help\"`, `--help`, or `-h` for the man page.",
 ];
 
 // ---------------------------------------------------------------------------

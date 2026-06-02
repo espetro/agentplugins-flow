@@ -118,8 +118,8 @@ describe("parseTraceCmd", () => {
 		expect(result.flags.complexity).toBe("moderate");
 	});
 
-	it("parses -c as complexity short flag", () => {
-		const result = parseTraceCmd("trace -c moderate");
+	it("parses -x as complexity short flag", () => {
+		const result = parseTraceCmd("trace -x moderate");
 		expect(result.flags.complexity).toBe("moderate");
 	});
 

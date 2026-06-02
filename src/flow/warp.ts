@@ -159,16 +159,22 @@ async function waitForWarpTurn(
 	warpRequest: string,
 	timeoutMs = WARP_TIMEOUT_MS,
 ): Promise<WarpTurn | null> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const branch = ctx.sessionManager.getBranch() as SessionEntry[];
-		const warpUserIndex = findUserMessageIndex(branch, startIndex, warpRequest);
-		if (warpUserIndex !== -1 && hasAssistantAfterIndex(branch, warpUserIndex) && ctx.isIdle()) {
-			return { branch, warpUserIndex };
-		}
-		await new Promise<void>((resolve) => setTimeout(resolve, WARP_POLL_INTERVAL_MS));
-	}
-	return null;
+	return new Promise((resolve) => {
+		const deadline = Date.now() + timeoutMs;
+		const interval = setInterval(() => {
+			const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+			const warpUserIndex = findUserMessageIndex(branch, startIndex, warpRequest);
+			if (warpUserIndex !== -1 && hasAssistantAfterIndex(branch, warpUserIndex) && ctx.isIdle()) {
+				clearInterval(interval);
+				resolve({ branch, warpUserIndex });
+				return;
+			}
+			if (Date.now() >= deadline) {
+				clearInterval(interval);
+				resolve(null);
+			}
+		}, WARP_POLL_INTERVAL_MS);
+	});
 }
 
 function getAssistantText(entries: SessionEntry[], fromIndex: number): string | null {

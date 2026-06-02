@@ -451,7 +451,7 @@ describe("batch CLI bash integration", () => {
 		const tool = createBatchCliTool(tracker);
 		const result = await tool.execute(
 			"call-1",
-			{ cmd: `bash -i cwd1 -h ${realTmp} pwd` },
+			{ cmd: `bash -i cwd1 -w ${realTmp} pwd` },
 			undefined,
 			undefined,
 			makeCtx(tmpDir),

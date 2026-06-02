@@ -7,4 +7,5 @@ export const RG_FLAGS: FlagSpec = {
   type: { short: "t", type: "string", description: "Type filter for rg (e.g., ts, js)" },
   "max-count": { short: "n", type: "number", description: "Max matches per file for rg" },
   "ignore-level": { short: "u", type: "number", description: "Ignore level for rg (0-3)" },
+  help: { short: "h", type: "boolean", description: "Show help text" },
 };

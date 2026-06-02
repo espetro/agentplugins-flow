@@ -18,6 +18,7 @@ import { BASH_FLAGS } from "./flags/bash.js";
 import { RG_FLAGS } from "./flags/rg.js";
 import { WEB_FLAGS } from "./flags/web.js";
 import { POLL_FLAGS } from "./flags/poll.js";
+import { DELETE_FLAGS } from "./flags/delete.js";
 import { runReadSubcommand } from "./exec/read.js";
 import { runWriteSubcommand } from "./exec/write.js";
 import { runEditSubcommand } from "./exec/edit.js";
@@ -64,7 +65,7 @@ export const BATCH_CLI_GUIDELINES = [
   "Use `batch rg -q <pattern> <path>` for ripgrep.",
   "Use `batch web search -q <query>` or `batch web fetch -u <url>` for web ops.",
   "Use `batch poll -i <id>` to check pending bash commands.",
-  "Pass `cmd: \"help\"` or `--help` for the man page.",
+  "Pass `cmd: \"help\"`, `--help`, or `-h` for the man page.",
 ];
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ const subcommands: SubcommandHelp[] = [
   { name: "read", description: "Read file contents. Paths may include :N or :N-M line ranges.", flags: flagSpecToHelp(READ_FLAGS) },
   { name: "write", description: "Write content to file(s).", flags: flagSpecToHelp(WRITE_FLAGS) },
   { name: "edit", description: "Targeted file edit using --find/--replace pairs.", flags: flagSpecToHelp(EDIT_FLAGS) },
-  { name: "delete", description: "Delete file(s).", flags: {} },
+  { name: "delete", description: "Delete file(s).", flags: flagSpecToHelp(DELETE_FLAGS) },
   { name: "patch", description: "Apply a patch.", flags: flagSpecToHelp(PATCH_FLAGS) },
   { name: "bash", description: "Execute a shell command.", flags: flagSpecToHelp(BASH_FLAGS) },
   { name: "rg", description: "Search with ripgrep.", flags: flagSpecToHelp(RG_FLAGS) },
@@ -100,7 +101,7 @@ function getFlagSpec(subcommand: string) {
     case "read": return READ_FLAGS;
     case "write": return WRITE_FLAGS;
     case "edit": return EDIT_FLAGS;
-    case "delete": return {};
+    case "delete": return DELETE_FLAGS;
     case "patch": return PATCH_FLAGS;
     case "bash": return BASH_FLAGS;
     case "rg": return RG_FLAGS;

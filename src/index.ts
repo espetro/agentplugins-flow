@@ -476,7 +476,7 @@ export default function (pi: ExtensionAPI) {
 					throw new Error("Missing cmd string");
 				}
 
-				const parsed = parseFlowCmd(cmd);
+				const parsed = await parseFlowCmd(cmd);
 				if (parsed.help) {
 					return { content: [{ type: "text", text: parsed.help }], failed: false };
 				}

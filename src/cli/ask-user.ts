@@ -69,7 +69,15 @@ EXAMPLES:
 // Parser
 // ---------------------------------------------------------------------------
 
-export function parseAskUserCmd(cmd: string): { help?: string; parsed?: { question: string; options: QuestionOption[] } } {
+export async function parseAskUserCmd(cmd: string): Promise<{ help?: string; parsed?: { question: string; options: QuestionOption[] } }> {
+  return parseAskUserCmdSync(cmd);
+}
+
+// ---------------------------------------------------------------------------
+// Synchronous parser for render and execute use
+// ---------------------------------------------------------------------------
+
+export function parseAskUserCmdSync(cmd: string): { help?: string; parsed?: { question: string; options: QuestionOption[] } } {
   const trimmed = cmd.trim();
 
   if (trimmed.length === 0) {

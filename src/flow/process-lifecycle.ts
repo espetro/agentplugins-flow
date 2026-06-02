@@ -11,6 +11,9 @@ import { logWarn } from "../config/log.js";
 export const isWindows = process.platform === "win32";
 export const SIGKILL_TIMEOUT_MS = 5000;
 
+let _globalSigkillTimer: NodeJS.Timeout | undefined;
+let _shuttingDown = false;
+
 // ---------------------------------------------------------------------------
 // Global child process group tracking for signal propagation
 // ---------------------------------------------------------------------------
@@ -35,7 +38,8 @@ export function unregisterChildGroup(pid: number): void {
  * Called on parent exit, SIGINT, SIGTERM, or pi-agent-flow:shutdown.
  */
 export function terminateAllChildGroups(): void {
-	if (runningChildGroups.size === 0) return;
+	if (_shuttingDown || runningChildGroups.size === 0) return;
+	_shuttingDown = true;
 	const pids = Array.from(runningChildGroups.keys());
 	for (const pid of pids) {
 		try {
@@ -45,7 +49,11 @@ export function terminateAllChildGroups(): void {
 			try { process.kill(pid, "SIGTERM"); } catch (e2) { logWarn(`[pi-agent-flow] SIGTERM failed for child group ${pid}: ${e2}`); }
 		}
 	}
-	const sigkillTimer = setTimeout(() => {
+	if (_globalSigkillTimer) {
+		clearTimeout(_globalSigkillTimer);
+	}
+	_globalSigkillTimer = setTimeout(() => {
+		_globalSigkillTimer = undefined;
 		for (const pid of pids) {
 			try {
 				process.kill(-pid, "SIGKILL");
@@ -55,8 +63,9 @@ export function terminateAllChildGroups(): void {
 			}
 		}
 		runningChildGroups.clear();
+		_shuttingDown = false;
 	}, SIGKILL_TIMEOUT_MS);
-	sigkillTimer.unref();
+	_globalSigkillTimer.unref();
 }
 
 /**

@@ -8,7 +8,7 @@ Spawns specialized agent flows (`scout`, `build`, `debug`, `audit`, `craft`, `id
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cmd` | `string` | Flow command. Multiple items chained with `;` or `&&`. Each item: `--type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]`. Global: `--confirm <bool>`, `--audit <n>` (first item only). Run `cmd: "help"` for the man page. |
+| `cmd` | `string` | Flow command. Multiple items chained with `;` or `&&`. Each item: `--type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]`. Global: `--confirm`, `--audit <n>` (first item only). Run `cmd: "help"` for the man page. |
 | `cwd` | `string` | Optional working directory override. |
 
 ### Per-item flags
@@ -19,16 +19,16 @@ Spawns specialized agent flows (`scout`, `build`, `debug`, `audit`, `craft`, `id
 | `--intent` | `-i` | Mission description (required) |
 | `--aim` | `-a` | Short headline, 5–7 words (required) |
 | `--concern` | `-c` | Known risks, uncertainties, or areas requiring extra care (required) |
-| `--acceptance` | | One-sentence success criteria |
-| `--cwd` | | Working directory override for this flow |
-| `--complexity` | | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate` |
+| `--acceptance` | `-A` | One-sentence success criteria |
+| `--cwd` | `-w` | Working directory override for this flow |
+| `--complexity` | `-x` | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate` |
 
 ### Global flags (first item only)
 
-| Flag | Type | Description |
-|------|------|-------------|
-| `--confirm` | `boolean` | Prompt before running project flows (default: true) |
-| `--audit` | `number` | Override audit cycles 0–3 (default: 0) |
+| Flag | Short | Type | Description |
+|-------|-------|------|-------------|
+| `--confirm` | `-y` | `string` | Prompt before running project flows (default: true) |
+| `--audit` | `-u` | `number` | Override audit cycles 0–3 (default: 0) |
 
 ### Examples
 
@@ -67,7 +67,7 @@ A lightweight flow state with `maxDepth: 0` that runs verbatim checks, explorati
 |------|-------|-------------|
 | `--intent` | `-i` | Mission override. Default: trace agent's built-in description. |
 | `--cwd` | | Working directory override. |
-| `--complexity` | `-c` | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate`. Default: `simple`. |
+| `--complexity` | `-x` | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate`. Default: `simple`. |
 | `--help` | `-h` | Show help text. |
 
 ### Pre-flight dispatch
@@ -104,7 +104,7 @@ Both use a single `cmd: string` field with subcommands and flags.
 | `edit` | `-f`, `-r`, `-a`, `-A` | Targeted file edit using `--find`/`--replace` pairs. Repeat for multi-edit. |
 | `delete` | | Delete file(s). |
 | `patch` | `-c` | Apply a patch. |
-| `bash` | `-i`, `-t`, `-h` | Execute a shell command. `-i` = ID, `-t` = timeout, `-h` = cwd. |
+| `bash` | `-i`, `-t`, `-w`, `-h` | Execute a shell command. `-i` = ID, `-t` = timeout, `-w` = cwd, `-h` = help. |
 | `rg` | `-q`, `-i`, `-l`, `-t`, `-n`, `-u` | Search with ripgrep. `-q` = pattern (required), `-i` = ignore-case, `-l` = files-only, `-t` = type filter, `-n` = max-count, `-u` = ignore-level. |
 | `web search` | `-q` | Search the web. |
 | `web fetch` | `-u`, `-f` | Fetch a URL. `-u` = URL, `-f` = format (markdown, text, html). |

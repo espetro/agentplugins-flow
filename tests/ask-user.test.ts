@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAskUserCliTool } from "../src/tools/ask-user.js";
-import { parseAskUserCmd, ASK_USER_HELP } from "../src/cli/ask-user.js";
+import { parseAskUserCmd, parseAskUserCmdSync, ASK_USER_HELP } from "../src/cli/ask-user.js";
 import { CliError } from "../src/cli/parse.js";
 
 vi.mock("../config/config.js", () => ({
@@ -258,74 +258,120 @@ describe("createAskUserCliTool", () => {
 });
 
 describe("parseAskUserCmd", () => {
-  it("empty string returns help", () => {
-    const result = parseAskUserCmd("");
+  it("empty string returns help", async () => {
+    const result = await parseAskUserCmd("");
     expect(result.help).toBe(ASK_USER_HELP);
   });
 
-  it("help returns help", () => {
-    const result = parseAskUserCmd("help");
+  it("help returns help", async () => {
+    const result = await parseAskUserCmd("help");
     expect(result.help).toBe(ASK_USER_HELP);
   });
 
-  it("--help returns help", () => {
-    const result = parseAskUserCmd("--help");
+  it("--help returns help", async () => {
+    const result = await parseAskUserCmd("--help");
     expect(result.help).toBe(ASK_USER_HELP);
   });
 
-  it("-h returns help", () => {
-    const result = parseAskUserCmd("-h");
+  it("-h returns help", async () => {
+    const result = await parseAskUserCmd("-h");
     expect(result.help).toBe(ASK_USER_HELP);
   });
 
-  it("ask_user help returns help", () => {
-    const result = parseAskUserCmd("ask_user help");
+  it("ask_user help returns help", async () => {
+    const result = await parseAskUserCmd("ask_user help");
     expect(result.help).toBe(ASK_USER_HELP);
   });
 
-  it("missing question throws CliError", () => {
-    expect(() => parseAskUserCmd("-o A")).toThrow(CliError);
-    expect(() => parseAskUserCmd("-o A")).toThrow("Missing required argument");
+  it("missing question throws CliError", async () => {
+    await expect(parseAskUserCmd("-o A")).rejects.toThrow(CliError);
+    await expect(parseAskUserCmd("-o A")).rejects.toThrow("Missing required argument");
   });
 
-  it("no options throws CliError", () => {
-    expect(() => parseAskUserCmd('"Q?"')).toThrow(CliError);
-    expect(() => parseAskUserCmd('"Q?"')).toThrow("Missing required flag: -o");
+  it("no options throws CliError", async () => {
+    await expect(parseAskUserCmd('"Q?"')).rejects.toThrow(CliError);
+    await expect(parseAskUserCmd('"Q?"')).rejects.toThrow("Missing required flag: -o");
   });
 
-  it("empty option throws CliError", () => {
-    expect(() => parseAskUserCmd('"Q?" -o " "')).toThrow(CliError);
-    expect(() => parseAskUserCmd('"Q?" -o " "')).toThrow("Empty option value");
+  it("empty option throws CliError", async () => {
+    await expect(parseAskUserCmd('"Q?" -o " "')).rejects.toThrow(CliError);
+    await expect(parseAskUserCmd('"Q?" -o " "')).rejects.toThrow("Empty option value");
   });
 
-  it("single colon splits title and description", () => {
-    const result = parseAskUserCmd('"Q?" -o "A: desc"');
+  it("single colon splits title and description", async () => {
+    const result = await parseAskUserCmd('"Q?" -o "A: desc"');
     expect(result.parsed?.options[0]).toEqual({ title: "A", description: " desc" });
   });
 
-  it("multiple colons split on first only", () => {
-    const result = parseAskUserCmd('"Q?" -o "url:https://x"');
+  it("multiple colons split on first only", async () => {
+    const result = await parseAskUserCmd('"Q?" -o "url:https://x"');
     expect(result.parsed?.options[0]).toEqual({ title: "url", description: "https://x" });
   });
 
-  it("no colon means description equals title", () => {
-    const result = parseAskUserCmd('"Q?" -o A');
+  it("no colon means description equals title", async () => {
+    const result = await parseAskUserCmd('"Q?" -o A');
     expect(result.parsed?.options[0]).toEqual({ title: "A", description: "A" });
   });
 
-  it("extra positional after question throws CliError", () => {
-    expect(() => parseAskUserCmd('"Q?" extra -o A')).toThrow(CliError);
-    expect(() => parseAskUserCmd('"Q?" extra -o A')).toThrow("Unexpected extra arguments");
+  it("extra positional after question throws CliError", async () => {
+    await expect(parseAskUserCmd('"Q?" extra -o A')).rejects.toThrow(CliError);
+    await expect(parseAskUserCmd('"Q?" extra -o A')).rejects.toThrow("Unexpected extra arguments");
   });
 
-  it("ask_user prefix is stripped", () => {
-    const result = parseAskUserCmd('ask_user "Q?" -o A');
+  it("ask_user prefix is stripped", async () => {
+    const result = await parseAskUserCmd('ask_user "Q?" -o A');
     expect(result.parsed?.question).toBe("Q?");
     expect(result.parsed?.options).toEqual([{ title: "A", description: "A" }]);
   });
 
+  it("happy path with multiple options", async () => {
+    const result = await parseAskUserCmd('ask_user "Q?" -o A -o "B: d"');
+    expect(result.parsed?.question).toBe("Q?");
+    expect(result.parsed?.options).toEqual([
+      { title: "A", description: "A" },
+      { title: "B", description: " d" },
+    ]);
+  });
+});
+
+describe("parseAskUserCmdSync", () => {
+  it("empty string returns help", () => {
+    const result = parseAskUserCmdSync("");
+    expect(result.help).toBe(ASK_USER_HELP);
+  });
+
+  it("help returns help", () => {
+    const result = parseAskUserCmdSync("help");
+    expect(result.help).toBe(ASK_USER_HELP);
+  });
+
+  it("--help returns help", () => {
+    const result = parseAskUserCmdSync("--help");
+    expect(result.help).toBe(ASK_USER_HELP);
+  });
+
+  it("-h returns help", () => {
+    const result = parseAskUserCmdSync("-h");
+    expect(result.help).toBe(ASK_USER_HELP);
+  });
+
+  it("ask_user help returns help", () => {
+    const result = parseAskUserCmdSync("ask_user help");
+    expect(result.help).toBe(ASK_USER_HELP);
+  });
+
+  it("missing question throws CliError", () => {
+    expect(() => parseAskUserCmdSync("-o A")).toThrow(CliError);
+    expect(() => parseAskUserCmdSync("-o A")).toThrow("Missing required argument");
+  });
+
+  it("no options throws CliError", () => {
+    expect(() => parseAskUserCmdSync('"Q?"')).toThrow(CliError);
+    expect(() => parseAskUserCmdSync('"Q?"')).toThrow("Missing required flag: -o");
+  });
+
   it("happy path with multiple options", () => {
-    const result = parseAskUserCmd('ask_user "Q?" -o A -o "B: d"');
+    const result = parseAskUserCmdSync('ask_user "Q?" -o A -o "B: d"');
     expect(result.parsed?.question).toBe("Q?");
     expect(result.parsed?.options).toEqual([
       { title: "A", description: "A" },

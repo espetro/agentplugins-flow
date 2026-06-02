@@ -428,9 +428,13 @@ function fetchWithCurl(url: string, signal?: AbortSignal): Promise<string> {
 		);
 
 		if (signal) {
-			signal.addEventListener("abort", () => {
+			const onAbort = () => {
 				child.kill("SIGTERM");
 				reject(new Error("Aborted"));
+			};
+			signal.addEventListener("abort", onAbort, { once: true });
+			child.on("close", () => {
+				signal.removeEventListener("abort", onAbort);
 			});
 		}
 	});

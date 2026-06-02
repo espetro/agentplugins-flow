@@ -20,7 +20,6 @@ import {
 } from "../config/config.js";
 import { renderFlowCall, renderFlowResult } from "../tui/render.js";
 import { getFlowLiveState } from "../tui/flow-live-state.js";
-import { emptyFlowUsage } from "../types/flow.js";
 import { DEFAULT_FLOW_COLORS } from "../tui/flow-colors.js";
 import { getFlowOutput, type SingleResult, type FlowDetails } from "../types/flow.js";
 import { logWarn } from "../config/log.js";
@@ -67,7 +66,7 @@ EXAMPLES:
 const TRACE_FLAG_SPEC = {
 	intent: { short: "i", type: "string" as const, description: "Mission override" },
 	cwd: { type: "string" as const, description: "Working directory override" },
-	complexity: { short: "c", type: "string" as const, description: "Budget level: snap, simple, moderate, complex, intricate" },
+	complexity: { short: "x", type: "string" as const, description: "Budget level: snap, simple, moderate, complex, intricate" },
 	help: { short: "h", type: "boolean" as const, description: "Show help" },
 };
 

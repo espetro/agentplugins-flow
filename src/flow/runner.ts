@@ -66,6 +66,7 @@ const FLOW_FINAL_URGE_MS = getEnvInt("PI_FLOW_FINAL_URGE_MS", 135 * 1000);
 const REPORTING_GRACE_MS = getEnvInt("PI_FLOW_REPORTING_GRACE_MS", 90_000);
 const SNAP_THRESHOLD_MS = getEnvInt("PI_FLOW_SNAP_THRESHOLD_MS", 120_000);
 const FLOW_TOOL_SUMMARY_GRACE_MS = FLOW_FINAL_URGE_MS;
+const STDERR_MAX_BYTES = 51_200;
 import {
 	FLOW_DEPTH_ENV,
 	FLOW_MAX_DEPTH_ENV,
@@ -462,6 +463,10 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			let countdownTimer: NodeJS.Timeout | undefined;
 			let renderTimer: NodeJS.Timeout | undefined;
 			let finishKillTimer: NodeJS.Timeout | undefined;
+			let warnTimer: NodeJS.Timeout | undefined;
+			let urgeTimer: NodeJS.Timeout | undefined;
+			let timeoutTimer: NodeJS.Timeout | undefined;
+			let graceTimer: NodeJS.Timeout | undefined;
 
 			const clearSemanticCompletionTimer = () => {
 				if (semanticCompletionTimer) {
@@ -499,9 +504,17 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				}
 			};
 
+			const clearAllFlowTimers = () => {
+				if (warnTimer) { clearTimeout(warnTimer); warnTimer = undefined; }
+				if (urgeTimer) { clearTimeout(urgeTimer); urgeTimer = undefined; }
+				if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = undefined; }
+				if (graceTimer) { clearTimeout(graceTimer); graceTimer = undefined; }
+			};
+
 			const finish = (code: number) => {
 				if (settled) return;
 				settled = true;
+				clearAllFlowTimers();
 				endStdin();
 				clearSemanticCompletionTimer();
 				clearCountdownTimer();
@@ -553,7 +566,12 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			};
 
 			const onStderrData = (chunk: Buffer) => {
-				result.stderr += chunk.toString();
+				if (result.stderr.length < STDERR_MAX_BYTES) {
+					result.stderr += chunk.toString();
+					if (result.stderr.length >= STDERR_MAX_BYTES) {
+						result.stderr += "\n[...stderr truncated at 50KB...]";
+					}
+				}
 			};
 
 			proc.stdout.on("data", onStdoutData);
@@ -578,6 +596,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			proc.on("close", (code) => {
 				didClose = true;
 				clearFinishKillTimer();
+				proc.stdout.removeListener("data", onStdoutData);
+				proc.stderr.removeListener("data", onStderrData);
 				if (proc.pid !== undefined) {
 					unregisterChildGroup(proc.pid);
 				}
@@ -604,7 +624,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			if (effectiveTimeout > 0) {
 				const warningMs = effectiveTimeout - FLOW_TIME_BUDGET_WARNING_MS;
 				if (warningMs > 0) {
-					const warnTimer = setTimeout(() => {
+					warnTimer = setTimeout(() => {
 						if (didClose || settled) return;
 						const remainingSec = Math.round(FLOW_TIME_BUDGET_WARNING_MS / 1000);
 						const warnMsg = `\n[Flow warning] ${remainingSec}s remaining before hard timeout. The agent should wrap up now.`;
@@ -617,7 +637,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 
 				const urgeMs = effectiveTimeout - FLOW_FINAL_URGE_MS;
 				if (urgeMs > 0) {
-					const urgeTimer = setTimeout(() => {
+					urgeTimer = setTimeout(() => {
 						if (didClose || settled) return;
 						const remainingSec = Math.round(FLOW_FINAL_URGE_MS / 1000);
 						const urgeMsg = `\n[Flow warning] ${remainingSec}s remaining before hard timeout. Stop all work and output your structured findings.`;
@@ -628,13 +648,13 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 					urgeTimer.unref();
 				}
 
-				const timeoutTimer = setTimeout(() => {
+				timeoutTimer = setTimeout(() => {
 					if (didClose || settled) return;
 					timeoutFired = true;
 					result.stderr += `\nFlow timed out after ${Math.round(effectiveTimeout / 1000)}s.`;
 					emitUpdate();
 
-					const graceTimer = setTimeout(() => {
+					graceTimer = setTimeout(() => {
 						if (didClose || settled) return;
 						result.stopReason = "timeout";
 						result.errorMessage = `Flow timed out after ${Math.round(effectiveTimeout / 1000)}s.`;

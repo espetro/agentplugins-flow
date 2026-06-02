@@ -6,10 +6,10 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { tokenize } from "./tokenize.js";
-import { splitChain, splitOnDoubleDash } from "./chain.js";
+import { splitOnDoubleDash } from "./chain.js";
 import { parseCommand, CliError } from "./parse.js";
 import { renderHelp, flagSpecToHelp, type SubcommandHelp } from "./help.js";
+import { runChain } from "./runner.js";
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -17,7 +17,7 @@ import { renderHelp, flagSpecToHelp, type SubcommandHelp } from "./help.js";
 
 export const FlowCliParams = Type.Object({
   cmd: Type.String({
-    description: "Flow command. Multiple items chained with `;` or `&&`. Each item: --type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]. Global: --confirm <bool>, --audit <n> (first item only). Run with `cmd: 'help'` for the man page.",
+    description: "Flow command. Multiple items chained with `;` or `&&`. Each item: --type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]. Global: --confirm, --audit <n> (first item only). Run with `cmd: 'help'` for the man page.",
   }),
 });
 
@@ -55,8 +55,9 @@ const VALID_COMPLEXITIES = new Set([
 // ---------------------------------------------------------------------------
 
 const GLOBAL_FLAG_SPEC = {
-  confirm: { type: "string" as const, description: "Prompt before running project flows" },
-  audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
+  confirm: { short: "y", type: "string" as const, description: "Prompt before running project flows" },
+  audit: { short: "u", type: "number" as const, description: "Override audit cycles (0-3)" },
+  help: { short: "h", type: "boolean" as const, description: "Show help text" },
 };
 
 const ITEM_FLAG_SPEC = {
@@ -64,9 +65,10 @@ const ITEM_FLAG_SPEC = {
   intent: { short: "i", type: "string" as const, description: "Mission" },
   aim: { short: "a", type: "string" as const, description: "Headline" },
   concern: { short: "c", type: "string" as const, description: "Risks" },
-  acceptance: { type: "string" as const, description: "Acceptance criteria" },
-  cwd: { type: "string" as const, description: "Working dir" },
-  complexity: { type: "string" as const, description: "Budget level" },
+  acceptance: { short: "A", type: "string" as const, description: "Acceptance criteria" },
+  cwd: { short: "w", type: "string" as const, description: "Working dir" },
+  complexity: { short: "x", type: "string" as const, description: "Budget level" },
+  help: { short: "h", type: "boolean" as const, description: "Show help text" },
 };
 
 // ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ export interface ParsedFlowCmd {
 // Parser
 // ---------------------------------------------------------------------------
 
-export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowCmd } {
+export async function parseFlowCmd(cmd: string): Promise<{ help?: string; parsed?: ParsedFlowCmd }> {
   const trimmed = cmd.trim();
 
   if (trimmed.length === 0 || trimmed === "help" || trimmed === "--help" || trimmed === "-h" || trimmed === "flow help" || trimmed === "flow --help" || trimmed === "flow -h") {
@@ -129,76 +131,57 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
     working = working.slice(5);
   }
 
-  // Chain splitting: splitChain handles quotes/escapes and ;/&&,
-  // then splitOnDoubleDash separates pre (flags) from post (dispatch) per link.
-  const chain = splitChain(working);
-  const links = chain.map(link => {
-    const { pre, post } = splitOnDoubleDash(link.cmd);
-    return { kind: link.kind, pre, post };
-  });
-
-  if (links.length === 0) {
-    return { help: FLOW_HELP };
-  }
-
   let confirm = true;
   let audit = 0;
   const items: ParsedFlowItem[] = [];
+  let isFirstLink = true;
+  let helpTriggered = false;
 
-  for (let linkIdx = 0; linkIdx < links.length; linkIdx++) {
-    const link = links[linkIdx];
-    const pre = link.pre;
-    const post = link.post;
-    const tokens = tokenize(pre);
-
-    // Remove leading "flow" if present in this fragment
-    if (tokens[0] === "flow") {
-      tokens.shift();
-    }
-
-    if (tokens.length === 0) {
-      continue;
-    }
-
-    // Prepend a dummy subcommand if the first token is a flag so parseCommand
-    // doesn't consume the real flag as the subcommand.
-    const tokensForParse = tokens.length > 0 && tokens[0].startsWith("-")
-      ? ["flow", ...tokens]
-      : tokens.length > 0 ? tokens : ["flow"];
-
-    if (linkIdx === 0) {
-      // Parse first link with combined spec (global + item flags).
-      const combinedSpec = {
-        ...GLOBAL_FLAG_SPEC,
-        ...ITEM_FLAG_SPEC,
-      };
-      const parsed = parseCommand(tokensForParse, combinedSpec);
-      if (parsed.flags.confirm !== undefined) {
-        confirm = parsed.flags.confirm === "true";
+  const result = await runChain(working, "", undefined, {
+    toolPrefix: "flow",
+    recognizedSubs: new Set(["flow"]),
+    fixedSubcommand: "flow",
+    getFlagSpec: () => {
+      if (isFirstLink) {
+        return { ...GLOBAL_FLAG_SPEC, ...ITEM_FLAG_SPEC };
       }
-      if (parsed.flags.audit !== undefined) {
-        audit = parsed.flags.audit as number;
+      return ITEM_FLAG_SPEC;
+    },
+    dispatch: async (subcommand, parsed, cwd, signal, extra) => {
+      if (parsed.flags.help === true) {
+        helpTriggered = true;
+        return { output: FLOW_HELP, results: [], failed: false };
       }
-      items.push(extractItem(parsed, post, link.kind));
-    } else {
-      // Detect global flags on non-first links and throw a clear error
-      for (const tok of tokens) {
-        if (tok === "--confirm" || tok === "--audit") {
-          throw new CliError(
-            `Global flag ${tok} is not allowed on subsequent chain links.`,
-            "Put --confirm and --audit on the first flow item only."
-          );
+
+      if (isFirstLink) {
+        if (parsed.flags.confirm !== undefined) {
+          confirm = parsed.flags.confirm === "true" || parsed.flags.confirm === true;
         }
-        if (tok.startsWith("--confirm=") || tok.startsWith("--audit=")) {
-          throw new CliError(
-            `Global flag ${tok.split("=")[0]} is not allowed on subsequent chain links.`,
-            "Put --confirm and --audit on the first flow item only."
-          );
+        if (parsed.flags.audit !== undefined) {
+          audit = parsed.flags.audit as number;
         }
+        isFirstLink = false;
       }
-      const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
-      items.push(extractItem(parsed, post, link.kind));
-    }
+
+      const { dispatch, kind } = extra as { dispatch: string; kind: "run" | "and" };
+      items.push(extractItem(parsed, dispatch, kind));
+      return { output: "", results: [], failed: false };
+    },
+    helpText: FLOW_HELP,
+    validSubcommandsTip: "flow",
+    preprocessLink: (link) => {
+      const { pre, post } = splitOnDoubleDash(link.cmd);
+      return { cmd: pre, extra: { dispatch: post, kind: link.kind } };
+    },
+  });
+
+  if (helpTriggered || result.text === FLOW_HELP) {
+    return { help: FLOW_HELP };
+  }
+
+  if (result.errors.length > 0) {
+    const first = result.errors[0];
+    throw new CliError(first.message, first.hint);
   }
 
   if (items.length === 0) {

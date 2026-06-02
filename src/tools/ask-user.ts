@@ -13,6 +13,7 @@ import {
   ASK_USER_CLI_SNIPPET,
   ASK_USER_CLI_GUIDELINES,
   parseAskUserCmd,
+  parseAskUserCmdSync,
 } from "../cli/ask-user.js";
 
 import { setPendingDecision } from "../notify/notify-state.js";
@@ -683,7 +684,7 @@ export function createAskUserCliTool() {
 
 			let parsedResult;
 			try {
-				parsedResult = parseAskUserCmd(cmd);
+				parsedResult = await parseAskUserCmd(cmd);
 			} catch (err) {
 				if (err instanceof CliError) {
 					const hint = err.hint ? `\nHint: ${err.hint}` : "";
@@ -801,7 +802,7 @@ export function createAskUserCliTool() {
 			const cmd = typeof args?.cmd === "string" ? args.cmd : "";
 			let text = theme.fg("toolTitle", theme.bold("ask_user "));
 			try {
-				const result = parseAskUserCmd(cmd);
+				const result = parseAskUserCmdSync(cmd);
 				if (result.help) {
 					text += theme.fg("muted", "(help)");
 				} else if (result.parsed) {
