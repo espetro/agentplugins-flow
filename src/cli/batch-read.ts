@@ -34,12 +34,13 @@ export const BatchReadCliParams = Type.Object({
 // ---------------------------------------------------------------------------
 
 export const BATCH_READ_CLI_DESCRIPTION =
-  "Read-only file and ripgrep tool. Bash-style CLI: pass a single [cmd] string with subcommands and flags. Optional [cwd] override.";
+  "Read-only file & grep tool — NOT a shell. Supports ONLY two subcommands: `read` (file contents) and `rg` (ripgrep). Pass a single [cmd] string of the form `batch_read <subcommand> <flags> <args>`. There is no `ls`, no `cd`, no `git`. Examples: `batch_read read src/index.ts` • `batch_read rg -q \"TODO\" src/`. Pass [cmd]: \"help\" for the man page.";
 
 export const BATCH_READ_CLI_SNIPPET =
   "Read files or grep via bash-style CLI (read-only)";
 
 export const BATCH_READ_CLI_GUIDELINES = [
+  "**This is a structured command, NOT a shell.** There is no `ls`, `cd`, `git`, or arbitrary command. The only operations available are the documented subcommands (`read`, `rg`).",
   "Use `batch_read read <paths>` for files. Add `:N` or `:N-M` for line ranges.",
   "Use `batch_read rg -q <pattern> <path>` for ripgrep.",
   "Chain with `;` for sequential ops and `&&` for conditional ops.",
@@ -261,8 +262,26 @@ export async function runBatchReadCli(
         if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
           output = BATCH_READ_HELP;
         } else {
-          const flagSpec = subcommand === "rg" ? RG_FLAGS : READ_FLAGS;
-          const parsed = parseCommand(tokens, flagSpec);
+          let parsed;
+          const recognizedSubs = new Set(["read", "rg"]);
+          if (!recognizedSubs.has(subcommand)) {
+            // Defer to the default branch in the switch below, which produces a clear "Unknown subcommand" error.
+            parsed = { subcommand, flags: {}, positionals: tokens.slice(1) } as unknown as ReturnType<typeof parseCommand>;
+          } else {
+            const flagSpec = subcommand === "rg" ? RG_FLAGS : READ_FLAGS;
+            try {
+              parsed = parseCommand(tokens, flagSpec);
+            } catch (err) {
+              if (err instanceof CliError && err.message.startsWith("Unknown flag")) {
+                const validFlags = Object.keys(flagSpec).map((n) => `--${n}`).join(", ");
+                throw new CliError(
+                  err.message,
+                  `\`${subcommand}\` supports: ${validFlags}. Run [cmd]: \"help\" for the man page.`,
+                );
+              }
+              throw err;
+            }
+          }
 
           let result: { output: string; results: import("../batch/constants.js").OpResult[]; error?: string; failed: boolean };
           switch (parsed.subcommand) {
@@ -285,18 +304,18 @@ export async function runBatchReadCli(
           allResults.push(...result.results);
           if (result.failed) {
             failed = true;
-            error = result.error ?? "operation failed";
+            error = `${result.error ?? "operation failed"}\nTIP: This is not a shell. Valid subcommands: read, rg. Run [cmd]: \"help\" for the man page.`;
           }
         }
       }
     } catch (err) {
       failed = true;
       if (err instanceof CliError) {
-        error = err.hint ? `${err.message} (hint: ${err.hint})` : err.message;
+        const baseError = err.hint ? `${err.message} (hint: ${err.hint})` : err.message;
+        error = `${baseError}\nTIP: This is not a shell. Valid subcommands: read, rg. Run [cmd]: \"help\" for the man page.`;
       } else {
         error = `internal error: ${err instanceof Error ? err.message : String(err)}`;
       }
-      output = error;
     }
 
     ops.push({ cmd: link.cmd, output, error, failed, skipped: false });

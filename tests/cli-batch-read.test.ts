@@ -175,6 +175,31 @@ describe("batch_read CLI tool", () => {
       expect(result.content[0].text).toContain("ERROR");
     });
 
+    it("includes TIP on nonexistent file error", async () => {
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "read nonexistent.txt" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("TIP: This is not a shell");
+      expect(result.content[0].text).toContain("Valid subcommands: read, rg");
+    });
+
+    it("includes TIP on rg missing -q error", async () => {
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "rg foo.ts" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("requires -q");
+      expect(result.content[0].text).toContain("TIP: This is not a shell");
+    });
+
+    it("unknown subcommand returns original error without flag-list hint", async () => {
+      const tool = createTool();
+      const result = await tool.execute("call-1", { cmd: "unknown" }, undefined, undefined, makeCtx(tmpDir));
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Unknown subcommand");
+      expect(result.content[0].text).toContain("Did you mean");
+      expect(result.content[0].text).not.toContain("supports:");
+    });
+
     it("continues chain after read error with semicolon", async () => {
       fs.writeFileSync(path.join(tmpDir, "a.txt"), "A\n", "utf-8");
       const tool = createTool();

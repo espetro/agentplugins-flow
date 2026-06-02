@@ -215,7 +215,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			"All fields optional — the trace agent infers its mission from context.",
 			"Optional pre-flight dispatch runs batch-style commands before the trace starts.",
 		],
-		description: "Read-first investigation with optional pre-flight tools. Reads files verbatim and runs pre-flight checks via [cmd] batch CLI before the trace starts. All fields optional; defaults to a simple budget. Use for code investigation, exploration, and verification.",
+		description: "Spawn the `trace` agent for read-first investigation. Pass flags (`--intent`, `--cwd`, `--complexity`) and optional pre-flight ops after `--`. Examples: `trace` • `trace --intent \"verify auth\"` • `trace -- batch read src/auth.ts`. NOT a shell. Defaults to `simple` budget. Use for code investigation, exploration, and verification. Pass [cmd]: \"help\" for the man page.",
 		parameters: TraceCliParams,
 
 		async execute(

@@ -55,12 +55,13 @@ export const BatchCliParams = Type.Object({
 // ---------------------------------------------------------------------------
 
 export const BATCH_CLI_DESCRIPTION =
-  "Multi-op executor. Bash-style CLI: pass a single [cmd] string with subcommands and flags. File/shell ops execute first; web runs after. Supports chaining with ; and &&.";
+  "Multi-op executor — NOT a shell. Subcommands: `read` • `write` • `edit` • `delete` • `patch` • `bash` • `rg` • `web` • `poll`. Pass a single [cmd] string of the form `batch <subcommand> <flags> <args>`. There is no `ls`/`cd`/`git`; the `bash` subcommand is the ONLY way to run shell. File/shell ops run first; web after. Chain with `;` (sequential) or `&&` (conditional). For read-only work, prefer `batch_read` (lighter, no write tools). Pass [cmd]: \"help\" for the man page.";
 
 export const BATCH_CLI_SNIPPET =
   "Batch: file ops + bash + web in one call via CLI";
 
 export const BATCH_CLI_GUIDELINES = [
+  "**This is a structured command, NOT a shell.** There is no `ls`, `cd`, `git`, or arbitrary command. The only operations available are the documented subcommands (`read` • `write` • `edit` • `delete` • `patch` • `bash` • `rg` • `web` • `poll`). To run shell, use `batch bash <cmd>`.",
   "Use `batch read <paths>` for files. Add `:N` or `:N-M` for line ranges.",
   "Use `batch write -c <content> <path>` to write files.",
   "Use `batch edit -f <oldText> -r <newText> <path>` for targeted edits. Repeat -f/-r for multi-edit.",
@@ -260,33 +261,58 @@ export async function runBatchCli(
         if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
           output = BATCH_HELP;
         } else {
-          const flagSpec = getFlagSpec(subcommand);
-          const parsed = parseCommand(tokens, flagSpec);
-
-          const result = await dispatchSubcommand(
-            parsed.subcommand,
-            parsed,
-            cwd,
-            bashTracker,
-            sessionManager,
-            signal,
-          );
+          const RECOGNIZED_SUBS = new Set(["read", "write", "edit", "delete", "patch", "bash", "rg", "web", "poll"]);
+          let parsed;
+          let result;
+          if (!RECOGNIZED_SUBS.has(subcommand)) {
+            // Defer to dispatchSubcommand's default branch for a clear "Unknown subcommand" error.
+            result = await dispatchSubcommand(
+              subcommand,
+              { flags: {}, positionals: tokens.slice(1) },
+              cwd,
+              bashTracker,
+              sessionManager,
+              signal,
+            );
+          } else {
+            const flagSpec = getFlagSpec(subcommand);
+            try {
+              parsed = parseCommand(tokens, flagSpec);
+            } catch (err) {
+              if (err instanceof CliError && err.message.startsWith("Unknown flag")) {
+                const validFlags = Object.keys(flagSpec).map((n) => `--${n}`).join(", ");
+                throw new CliError(
+                  err.message,
+                  `\`${subcommand}\` supports: ${validFlags}. Run [cmd]: \"help\" for the man page.`,
+                );
+              }
+              throw err;
+            }
+            result = await dispatchSubcommand(
+              parsed.subcommand,
+              parsed,
+              cwd,
+              bashTracker,
+              sessionManager,
+              signal,
+            );
+          }
           output = result.output;
           allResults.push(...result.results);
           if (result.failed) {
             failed = true;
-            error = result.error ?? "operation failed";
+            error = `${result.error ?? "operation failed"}\nTIP: This is not a shell. Valid subcommands: read, write, edit, delete, patch, bash, rg, web, poll. Run [cmd]: \"help\" for the man page.`;
           }
         }
       }
     } catch (err) {
       failed = true;
       if (err instanceof CliError) {
-        error = err.hint ? `${err.message} (hint: ${err.hint})` : err.message;
+        const baseError = err.hint ? `${err.message} (hint: ${err.hint})` : err.message;
+        error = `${baseError}\nTIP: This is not a shell. Valid subcommands: read, write, edit, delete, patch, bash, rg, web, poll. Run [cmd]: \"help\" for the man page.`;
       } else {
         error = `internal error: ${err instanceof Error ? err.message : String(err)}`;
       }
-      output = error;
     }
 
     ops.push({ cmd: link.cmd, output, error, failed, skipped: false });

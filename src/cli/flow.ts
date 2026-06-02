@@ -26,12 +26,13 @@ export const FlowCliParams = Type.Object({
 // ---------------------------------------------------------------------------
 
 export const FLOW_CLI_DESCRIPTION =
-  "Spawns specialized agent flows (scout, debug, build, craft, audit, ideas, trace). Bash-style CLI: pass a single [cmd] string with flags. Supports chaining with ; and &&.";
+  "Spawns specialized agent flows — NOT a shell. Required per item: `--type` (one of: `scout` • `build` • `debug` • `audit` • `craft` • `ideas` • `trace`), `--intent`, `--aim`, `--concern`. Optional: `--acceptance`, `--cwd`, `--complexity` (`snap` • `simple` • `moderate` • `complex` • `intricate`). Chain multiple items with `;` or `&&`. For simple reads/checks, use `trace` instead. Pass [cmd]: \"help\" for the man page.";
 
 export const FLOW_CLI_SNIPPET =
   "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via bash-style CLI.";
 
 export const FLOW_CLI_GUIDELINES = [
+  "**This is a structured command, NOT a shell.** There is no `ls`, `cd`, `git`, or arbitrary command. Use only the documented flags.",
   "Use `flow --type <name> --intent <text> --aim <text> --concern <text>` to spawn a flow.",
   "Chain multiple flows with `;` (sequential) or `&&` (conditional).",
   "Add `--acceptance <text>` for success criteria.",
