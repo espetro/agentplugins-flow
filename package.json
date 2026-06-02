@@ -29,7 +29,7 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist/ && tsc",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:trace-ui": "vitest run tests/trace-first-invoke.test.ts tests/trace-render-state.test.ts tests/render-context-pipeline.test.ts tests/flow-live-state.test.ts tests/context-display.test.ts",

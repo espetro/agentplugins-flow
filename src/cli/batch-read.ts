@@ -37,7 +37,7 @@ export const BATCH_READ_CLI_DESCRIPTION =
   "Read-only file & grep tool — NOT a shell. Supports ONLY two subcommands: `read` (file contents) and `rg` (ripgrep). Pass a single [cmd] string of the form `batch_read <subcommand> <flags> <args>`. There is no `ls`, no `cd`, no `git`. Examples: `batch_read read src/index.ts` • `batch_read rg -q \"TODO\" src/`. Pass [cmd]: \"help\" for the man page.";
 
 export const BATCH_READ_CLI_SNIPPET =
-  "Read files or grep via bash-style CLI (read-only)";
+  "Read files or grep — NOT a shell (read-only)";
 
 export const BATCH_READ_CLI_GUIDELINES = [
   "**This is a structured command, NOT a shell.** There is no `ls`, `cd`, `git`, or arbitrary command. The only operations available are the documented subcommands (`read`, `rg`).",
