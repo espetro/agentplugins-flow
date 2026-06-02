@@ -166,4 +166,43 @@ describe("parseFlowCmd", () => {
     const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' --complexity COMPLEX");
     expect(result.parsed!.items[0].complexity).toBe("complex");
   });
+
+  it("preserves trailing -- in dispatch", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' -- batch bash echo --");
+    expect(result.parsed!.items[0].dispatch).toBe("batch bash echo --");
+  });
+
+  it("preserves -- in quoted dispatch", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' -- git diff --");
+    expect(result.parsed!.items[0].dispatch).toBe("git diff --");
+  });
+
+  it("preserves -- in rm dispatch", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' -- rm -- -file");
+    expect(result.parsed!.items[0].dispatch).toBe("rm -- -file");
+  });
+
+  it("tags items with kind after &&", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' && --type build --intent 'Build' --aim 'Build' --concern 'y'");
+    expect(result.parsed!.items[0].kind).toBe("run");
+    expect(result.parsed!.items[1].kind).toBe("and");
+  });
+
+  it("tags items with run after ;", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x'; --type build --intent 'Build' --aim 'Build' --concern 'y'");
+    expect(result.parsed!.items[0].kind).toBe("run");
+    expect(result.parsed!.items[1].kind).toBe("run");
+  });
+
+  it("throws on --confirm in second chain link", () => {
+    expect(() =>
+      parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x'; --confirm false --type build --intent 'Build' --aim 'Build' --concern 'y'")
+    ).toThrow(CliError);
+  });
+
+  it("throws on --audit in second chain link", () => {
+    expect(() =>
+      parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' && --audit 1 --type build --intent 'Build' --aim 'Build' --concern 'y'")
+    ).toThrow(CliError);
+  });
 });

@@ -171,7 +171,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type ideas --intent 'Explore things' --complexity moderate --aim 'Explore codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type ideas --intent 'Explore things' --complexity moderate --aim 'Explore codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -243,7 +243,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -309,7 +309,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -373,7 +373,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type build --intent 'Fix things' --complexity moderate --aim 'Fix codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			{
@@ -468,7 +468,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Run full checks' --aim 'Run checks' --complexity complex --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type build --intent 'Run full checks' --aim 'Run checks' --complexity complex --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -519,7 +519,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --complexity moderate --concern 'The auth module was recently refactored — verify assumptions' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --complexity moderate --concern 'The auth module was recently refactored — verify assumptions' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -556,7 +556,7 @@ describe("flow tool execute", () => {
 		const tool = pi.getTool("flow");
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -585,7 +585,7 @@ describe("flow tool execute", () => {
 		await expect(
 			tool.execute(
 				"call-1",
-				{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+				{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 				new AbortController().signal,
 				undefined,
 				makeMockCtx(tmpDir),
@@ -621,7 +621,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			vi.fn(),
 			makeMockCtx(tmpDir),
@@ -847,7 +847,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			onUpdate,
 			makeMockCtx(tmpDir),
@@ -908,7 +908,7 @@ describe("flow tool execute", () => {
 		const onUpdateCalls: any[] = [];
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			(update: any) => onUpdateCalls.push(update),
 			makeMockCtx(tmpDir),
@@ -998,7 +998,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -1052,7 +1052,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(projectCwd),
@@ -1108,7 +1108,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1151,7 +1151,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false --confirm false" },
+			{ cmd: "--type scout --intent 'Discover things' --complexity moderate --aim 'Discover codebase' --concern 'verify' --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1224,7 +1224,7 @@ describe("flow tool execute", () => {
 
 		const result = await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
+			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1284,7 +1284,7 @@ describe("flow tool execute", () => {
 
 		await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
+			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
@@ -1338,20 +1338,204 @@ describe("flow tool execute", () => {
 			usage: emptyFlowUsage(),
 		});
 
+		await expect(
+			tool.execute(
+				"call-1",
+				{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false" },
+				new AbortController().signal,
+				undefined,
+				makeMockCtx(tmpDir),
+			),
+		).rejects.toThrow("Model failover attempts");
+
+		expect(runFlow).toHaveBeenCalledTimes(2);
+	});
+
+	it("skips &&-chained flows when first group fails", async () => {
+		setupFlowsDir([
+			{
+				fileName: "scout.md",
+				content: `---\nname: scout\ndescription: Discovery\n---\nPrompt.`,
+			},
+			{
+				fileName: "build.md",
+				content: `---\nname: build\ndescription: Code\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		vi.mocked(runFlow).mockResolvedValue({
+			type: "scout",
+			agentSource: "project",
+			intent: "Test",
+			aim: "Test aim",
+			exitCode: 1,
+			messages: [],
+			stderr: "Error",
+			usage: emptyFlowUsage(),
+		});
+
+		const tool = pi.getTool("flow");
+		await expect(
+			tool.execute(
+				"call-1",
+				{ cmd: "--confirm false --type scout --intent 'Discover' --aim 'Discover' --concern 'x' && --type build --intent 'Fix' --aim 'Fix' --concern 'y' --complexity simple" },
+				new AbortController().signal,
+				undefined,
+				makeMockCtx(tmpDir),
+			),
+		).rejects.toThrow("Flow: 0/2 completed");
+
+		// Only scout should be called; build is skipped
+		expect(runFlow).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(runFlow).mock.calls[0][0].flowName).toBe("scout");
+	});
+
+	it("runs both &&-chained groups when first succeeds", async () => {
+		setupFlowsDir([
+			{
+				fileName: "scout.md",
+				content: `---\nname: scout\ndescription: Discovery\n---\nPrompt.`,
+			},
+			{
+				fileName: "build.md",
+				content: `---\nname: build\ndescription: Code\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		vi.mocked(runFlow)
+			.mockResolvedValueOnce({
+				type: "scout",
+				agentSource: "project",
+				intent: "Test",
+				aim: "Test aim",
+				exitCode: 0,
+				messages: [],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			})
+			.mockResolvedValueOnce({
+				type: "build",
+				agentSource: "project",
+				intent: "Test",
+				aim: "Test aim",
+				exitCode: 0,
+				messages: [],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			});
+
+		const tool = pi.getTool("flow");
 		const result = await tool.execute(
 			"call-1",
-			{ cmd: "--type build --intent 'Fix bug' --complexity simple --aim 'Fix bug' --concern 'verify' --audit 0 --confirm false --confirm false" },
+			{ cmd: "--confirm false --type scout --intent 'Discover' --aim 'Discover' --concern 'x' && --type build --intent 'Fix' --aim 'Fix' --concern 'y' --complexity simple" },
 			new AbortController().signal,
 			undefined,
 			makeMockCtx(tmpDir),
 		);
 
 		expect(runFlow).toHaveBeenCalledTimes(2);
-		// failed should be set on the result's details, not directly on the return
-		const lastResult = vi.mocked(runFlow).mock.results[0]?.value;
+		expect(vi.mocked(runFlow).mock.calls[0][0].flowName).toBe("scout");
+		expect(vi.mocked(runFlow).mock.calls[1][0].flowName).toBe("build");
+		expect(result.failed).toBeFalsy();
+	});
+
+	it("runs ;-chained items in a single group (parallel)", async () => {
+		setupFlowsDir([
+			{
+				fileName: "scout.md",
+				content: `---\nname: scout\ndescription: Discovery\n---\nPrompt.`,
+			},
+			{
+				fileName: "build.md",
+				content: `---\nname: build\ndescription: Code\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		vi.mocked(runFlow)
+			.mockResolvedValueOnce({
+				type: "scout",
+				agentSource: "project",
+				intent: "Test",
+				aim: "Test aim",
+				exitCode: 0,
+				messages: [],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			})
+			.mockResolvedValueOnce({
+				type: "build",
+				agentSource: "project",
+				intent: "Test",
+				aim: "Test aim",
+				exitCode: 0,
+				messages: [],
+				stderr: "",
+				usage: emptyFlowUsage(),
+			});
+
+		const tool = pi.getTool("flow");
+		const result = await tool.execute(
+			"call-1",
+			{ cmd: "--confirm false --type scout --intent 'Discover' --aim 'Discover' --concern 'x'; --type build --intent 'Fix' --aim 'Fix' --concern 'y' --complexity simple" },
+			new AbortController().signal,
+			undefined,
+			makeMockCtx(tmpDir),
+		);
+
+		expect(runFlow).toHaveBeenCalledTimes(2);
+		expect(result.failed).toBeFalsy();
+	});
+
+	it("passes sessionManager to dispatch via runFlowDispatch", async () => {
+		setupFlowsDir([
+			{
+				fileName: "scout.md",
+				content: `---\nname: scout\ndescription: Discovery\n---\nPrompt.`,
+			},
+		]);
+
+		const pi = createMockPi();
+		registerExtension(pi as any);
+		await pi.trigger("session_start", {}, makeMockCtx(tmpDir));
+
+		vi.mocked(runFlow).mockResolvedValue({
+			type: "scout",
+			agentSource: "project",
+			intent: "Test",
+			aim: "Test aim",
+			exitCode: 0,
+			messages: [],
+			stderr: "",
+			usage: emptyFlowUsage(),
+		});
+
+		const tool = pi.getTool("flow");
+		// This should NOT throw "session manager missing" because ctx.sessionManager is now passed
+		const result = await tool.execute(
+			"call-1",
+			{ cmd: "--confirm false --type scout --intent 'Discover' --aim 'Discover' --concern 'x' -- batch web fetch -u 'https://example.com'" },
+			new AbortController().signal,
+			undefined,
+			makeMockCtx(tmpDir),
+		);
+		expect(result.failed).toBeFalsy();
 	});
 
 });
+
+
 describe("main agent tool restriction", () => {
 	let tmpDir: string;
 	let originalCwd: string;

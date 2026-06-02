@@ -162,7 +162,7 @@ export function splitOnDoubleDash(input: string): { pre: string; post: string } 
       continue;
     }
 
-    if (ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
+    if (!found && ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
       const prev = i > 0 ? input[i - 1] : ' ';
       const nextIdx = i + 2;
       const isWhitespace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r';

@@ -21,6 +21,7 @@ import type {
 	FlowDetails,
 	PiAgentFlowAPI,
 } from "./types/flow.js";
+import { emptyFlowUsage, isFlowSuccess } from "./types/flow.js";
 
 import { createBatchCliTool, createBatchReadCliTool } from "./cli/register.js";
 import { runBatchCli } from "./cli/batch.js";
@@ -86,11 +87,12 @@ const inheritedCliArgs = getInheritedCliArgs();
 async function runFlowDispatch(
 	dispatch: string | undefined,
 	cwd: string,
+	ctx: ExtensionContext,
 	signal: AbortSignal | undefined,
 ): Promise<string | undefined> {
 	if (!dispatch || dispatch.trim().length === 0) return undefined;
 	try {
-		const result = await runBatchCli(dispatch, cwd, undefined, undefined, signal);
+		const result = await runBatchCli(dispatch, cwd, undefined, ctx.sessionManager, signal);
 		return result.text;
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -464,35 +466,6 @@ export default function (pi: ExtensionAPI) {
 			promptGuidelines: [...FLOW_CLI_GUIDELINES],
 			description: FLOW_CLI_DESCRIPTION,
 			parameters: FlowCliParams,
-			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
-			prepareArguments: (input: unknown) => {
-				if (!input || typeof input !== "object") return input;
-				const args = input as Record<string, unknown>;
-				const cmd = args.cmd;
-				if (typeof cmd !== "string") return input;
-				try {
-					const result = parseFlowCmd(cmd);
-					if (result.parsed) {
-						return {
-							...args,
-							flow: result.parsed.items.map((item) => ({
-								type: item.type,
-								intent: item.intent,
-								aim: item.aim,
-								concern: item.concern,
-								acceptance: item.acceptance,
-								cwd: item.cwd,
-								complexity: item.complexity,
-							})),
-							confirmProjectFlows: result.parsed.confirm,
-							auditLoop: result.parsed.audit,
-						};
-					}
-				} catch {
-					// If parsing fails, let the execute function handle the error
-				}
-				return input;
-			},
 
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				if (!resolved) {
@@ -603,79 +576,145 @@ export default function (pi: ExtensionAPI) {
 					completedFlows: activeGoal.completedFlows.map(f => ({ type: f.type, aim: f.aim })),
 				} : undefined;
 
-				const preDispatchResults = await Promise.all(
-					items.map(async (f) => {
-						if (!f.dispatch) return undefined;
-						return runFlowDispatch(f.dispatch, f.cwd ?? ctx.cwd, signal);
-					})
-				);
-
-				let result: Awaited<ReturnType<typeof executeFlows>>;
-				try {
-					result = await executeFlows(
-						{
-							flows,
-							currentDepth,
-							maxDepth,
-							ancestorFlowStack,
-							preventCycles,
-							toolOptimize: resolved.toolOptimize,
-							structuredOutput: resolved.structuredOutput,
-							cwd: ctx.cwd,
-							loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
-							maxConcurrency: resolved.maxConcurrency,
-							debugMode: resolved.debugMode,
-							defaultComplexity: resolved.defaultComplexity,
-							signal,
-							onUpdate: wrapFlowOnUpdate(toolCallId, onUpdate),
-							makeDetails,
-							getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
-							tierOverrideResolver: getTierOverride,
-							fallbackModel: inheritedCliArgs.fallbackModel,
-							forkSessionSnapshotJsonl,
-							compressionStats,
-							projectFlowsDir: discovery.projectFlowsDir,
-							sessionManager: ctx.sessionManager,
-							hasUI: ctx.hasUI,
-							uiConfirm: (title, body) => ctx.ui.confirm(title, body),
-							onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
-							confirmProjectFlows,
-							goalContext,
-							goalContinuationCallback: async (results) => {
-								const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
-								if (!goal) return;
-								for (const r of results) {
-									recordFlowCompletion(ctx.cwd, { type: r.type, intent: r.intent, aim: r.aim });
-									addTokens(ctx.cwd, r.usage.input + r.usage.output);
-								}
-							},
-						},
-						items.map((f, i) => ({
-							type: f.type,
-							intent: f.intent,
-							aim: f.aim,
-							acceptance: f.acceptance,
-							concern: f.concern,
-							cwd: f.cwd,
-							complexity: (f.complexity ?? resolved!.defaultComplexity) as import("./flow/complexity.js").Complexity,
-							preDispatchResults: preDispatchResults[i],
-						})),
-						toolCallId,
-						audit,
-					);
-				} finally {
-					endFlowLiveSession(toolCallId);
+				// Group items by &&: each item with kind === "and" starts a new sequential group.
+				// Items within a group run in parallel via executeFlows.
+				// If any group fails, subsequent groups are skipped.
+				const groups: ParsedFlowItem[][] = [];
+				let currentGroup: ParsedFlowItem[] = [];
+				for (let i = 0; i < items.length; i++) {
+					if (i > 0 && items[i].kind === "and") {
+						groups.push(currentGroup);
+						currentGroup = [];
+					}
+					currentGroup.push(items[i]);
+				}
+				if (currentGroup.length > 0) {
+					groups.push(currentGroup);
 				}
 
-				if (result.failed) {
-					const text = result.content?.[0]?.text ?? "Flow execution failed";
-					throw new Error(text);
+				const allGroupResults: SingleResult[] = [];
+				let allFailed = false;
+				let groupIndex = 0;
+				let overallContent: Array<{ type: string; text: string }> = [];
+
+				for (const group of groups) {
+					if (allFailed) {
+						// Skip remaining groups — create ghost results for skipped items
+						for (const f of group) {
+							allGroupResults.push({
+								type: f.type,
+								agentSource: "unknown",
+								intent: f.intent,
+								aim: f.aim,
+								acceptance: f.acceptance,
+								exitCode: 0,
+								messages: [{ role: "assistant" as const, content: [{ type: "text" as const, text: "Skipped: previous group failed." }] }],
+								stderr: "",
+								usage: emptyFlowUsage(),
+								status: "skipped" as const,
+							});
+						}
+						overallContent.push({ type: "text", text: `Group ${groupIndex + 1}: skipped (previous group failed)` });
+						groupIndex++;
+						continue;
+					}
+
+					const groupPreDispatch = await Promise.all(
+						group.map(async (f) => {
+							if (!f.dispatch) return undefined;
+							return runFlowDispatch(f.dispatch, f.cwd ?? ctx.cwd, ctx, signal);
+						})
+					);
+
+					let groupResult: Awaited<ReturnType<typeof executeFlows>>;
+					try {
+						groupResult = await executeFlows(
+							{
+								flows,
+								currentDepth,
+								maxDepth,
+								ancestorFlowStack,
+								preventCycles,
+								toolOptimize: resolved.toolOptimize,
+								structuredOutput: resolved.structuredOutput,
+								cwd: ctx.cwd,
+								loadedFlowModelConfigs: resolved.loadedFlowModelConfigs,
+								maxConcurrency: resolved.maxConcurrency,
+								debugMode: resolved.debugMode,
+								defaultComplexity: resolved.defaultComplexity,
+								signal,
+								onUpdate: wrapFlowOnUpdate(toolCallId, onUpdate),
+								makeDetails,
+								getFlag: (name: string) => name === "flow-mode" ? resolved!.activeRuntimeFlowMode : pi.getFlag(name),
+								tierOverrideResolver: getTierOverride,
+								fallbackModel: inheritedCliArgs.fallbackModel,
+								forkSessionSnapshotJsonl,
+								compressionStats,
+								projectFlowsDir: discovery.projectFlowsDir,
+								sessionManager: ctx.sessionManager,
+								hasUI: ctx.hasUI,
+								uiConfirm: (title, body) => ctx.ui.confirm(title, body),
+								onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
+								confirmProjectFlows,
+								goalContext,
+								goalContinuationCallback: async (results) => {
+									const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
+									if (!goal) return;
+									for (const r of results) {
+										recordFlowCompletion(ctx.cwd, { type: r.type, intent: r.intent, aim: r.aim });
+										addTokens(ctx.cwd, r.usage.input + r.usage.output);
+									}
+								},
+							},
+							group.map((f, i) => ({
+								type: f.type,
+								intent: f.intent,
+								aim: f.aim,
+								acceptance: f.acceptance,
+								concern: f.concern,
+								cwd: f.cwd,
+								complexity: (f.complexity ?? resolved!.defaultComplexity) as import("./flow/complexity.js").Complexity,
+								preDispatchResults: groupPreDispatch[i],
+							})),
+							toolCallId,
+							audit,
+						);
+					} catch (err) {
+						// executeFlows threw an unexpected error — mark as failed
+						allFailed = true;
+						const text = err instanceof Error ? err.message : String(err);
+						overallContent.push({ type: "text", text: `Group ${groupIndex + 1} failed: ${text}` });
+						groupIndex++;
+						continue;
+					}
+
+					// Extract SingleResult[] from groupResult.details.results
+					const groupResults = groupResult.details?.results ?? [];
+					for (const r of groupResults) {
+						allGroupResults.push(r);
+					}
+					overallContent.push(...groupResult.content);
+
+					if (groupResult.failed) {
+						allFailed = true;
+					}
+					groupIndex++;
+				}
+
+				endFlowLiveSession(toolCallId);
+
+				const successCount = allGroupResults.filter((r) => r.status !== "skipped" && isFlowSuccess(r)).length;
+				const totalCount = allGroupResults.length;
+				const compositeText = `Flow: ${successCount}/${totalCount} completed\n\n${overallContent.map((c) => c.text).join("\n\n---\n\n")}`;
+
+				if (allFailed) {
+					throw new Error(compositeText);
 				}
 
 				return {
-					content: result.content,
-					details: result.details,
-					failed: result.failed,
+					content: [{ type: "text", text: compositeText }],
+					details: makeDetails(allGroupResults),
+					failed: allFailed,
 					_toolCallId: toolCallId,
 				};
 			},

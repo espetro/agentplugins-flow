@@ -114,6 +114,7 @@ export interface ParsedFlowItem {
   cwd?: string;
   complexity?: string;
   dispatch?: string;
+  kind?: "run" | "and";
 }
 
 export interface ParsedFlowCmd {
@@ -195,8 +196,8 @@ function splitChainAwareOfDoubleDash(input: string): Array<{ kind: "run" | "and"
       continue;
     }
 
-    // Detect standalone `--`
-    if (ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
+    // Detect standalone `--` (only the first one)
+    if (!foundDash && ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
       const prev = i > 0 ? input[i - 1] : ' ';
       const nextIdx = i + 2;
       const isWhitespace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
@@ -315,14 +316,30 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
         ? ["flow", ...remainingTokens]
         : remainingTokens.length > 0 ? remainingTokens : ["flow"];
       const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
-      items.push(extractItem(parsed, post));
+      items.push(extractItem(parsed, post, link.kind));
     } else {
+      // Detect global flags on non-first links and throw a clear error
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "--confirm" || tok === "--audit") {
+          throw new CliError(
+            `Global flag ${tok} is not allowed on subsequent chain links.`,
+            "Put --confirm and --audit on the first flow item only."
+          );
+        }
+        if (tok.startsWith("--confirm=") || tok.startsWith("--audit=")) {
+          throw new CliError(
+            `Global flag ${tok.split("=")[0]} is not allowed on subsequent chain links.`,
+            "Put --confirm and --audit on the first flow item only."
+          );
+        }
+      }
       // Prepend a dummy subcommand if the first token is a flag
       const tokensForParse = tokens.length > 0 && tokens[0].startsWith("-")
         ? ["flow", ...tokens]
         : tokens.length > 0 ? tokens : ["flow"];
       const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
-      items.push(extractItem(parsed, post));
+      items.push(extractItem(parsed, post, link.kind));
     }
   }
 
@@ -333,7 +350,7 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
   return { parsed: { confirm, audit, items } };
 }
 
-function extractItem(parsed: ReturnType<typeof parseCommand>, dispatch: string): ParsedFlowItem {
+function extractItem(parsed: ReturnType<typeof parseCommand>, dispatch: string, kind?: "run" | "and"): ParsedFlowItem {
   const type = parsed.flags.type as string | undefined;
   const intent = parsed.flags.intent as string | undefined;
   const aim = parsed.flags.aim as string | undefined;
@@ -377,6 +394,7 @@ function extractItem(parsed: ReturnType<typeof parseCommand>, dispatch: string):
   if (cwd) item.cwd = cwd;
   if (complexity) item.complexity = complexity.toLowerCase();
   if (dispatch) item.dispatch = dispatch;
+  if (kind) item.kind = kind;
 
   return item;
 }

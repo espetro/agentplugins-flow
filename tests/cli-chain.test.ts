@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitChain } from "../src/cli/chain.js";
+import { splitChain, splitOnDoubleDash } from "../src/cli/chain.js";
 
 describe("splitChain", () => {
   it("returns a single run op when no separator", () => {
@@ -70,5 +70,27 @@ describe("splitChain", () => {
 
   it("treats leading ; && as no-op (first op is run)", () => {
     expect(splitChain("; && echo a")).toEqual([{ kind: "run", cmd: "echo a" }]);
+  });
+});
+
+describe("splitOnDoubleDash", () => {
+  it("splits on first standalone --", () => {
+    expect(splitOnDoubleDash("pre -- post")).toEqual({ pre: "pre", post: "post" });
+  });
+
+  it("returns empty post when no --", () => {
+    expect(splitOnDoubleDash("pre only")).toEqual({ pre: "pre only", post: "" });
+  });
+
+  it("preserves trailing -- in post (only splits on first)", () => {
+    expect(splitOnDoubleDash("batch bash echo --")).toEqual({ pre: "batch bash echo", post: "" });
+  });
+
+  it("preserves quoted --", () => {
+    expect(splitOnDoubleDash('pre "--" post')).toEqual({ pre: 'pre "--" post', post: "" });
+  });
+
+  it("preserves escaped --", () => {
+    expect(splitOnDoubleDash("pre \\-- post")).toEqual({ pre: "pre \\-- post", post: "" });
   });
 });

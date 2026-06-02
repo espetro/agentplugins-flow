@@ -624,6 +624,7 @@ export async function executeFlows(
 			text: `Flow: ${successCount}/${results.length} completed\n\n${flowReports.join("\n\n---\n\n")}`,
 		}],
 		details: makeDetails(results),
+		failed: successCount < results.length,
 		_toolCallId: toolCallId,
 	};
 }
