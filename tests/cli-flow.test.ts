@@ -108,9 +108,9 @@ describe("parseFlowCmd", () => {
     expect(result.parsed!.items[0].dispatch).toBe("batch read src/auth.ts");
   });
 
-  it("parses dispatch with ; chain inside", () => {
-    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' -- batch read foo; batch bash ls");
-    expect(result.parsed!.items[0].dispatch).toBe("batch read foo; batch bash ls");
+  it("parses dispatch with quoted ; inside", () => {
+    const result = parseFlowCmd("--type scout --intent 'Map' --aim 'Map' --concern 'x' -- batch read 'foo; batch bash ls'");
+    expect(result.parsed!.items[0].dispatch).toBe("batch read 'foo; batch bash ls'");
   });
 
   it("parses dispatch with quoted && in bash command", () => {

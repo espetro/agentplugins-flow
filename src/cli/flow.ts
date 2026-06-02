@@ -54,11 +54,6 @@ const VALID_COMPLEXITIES = new Set([
 // Flag specs
 // ---------------------------------------------------------------------------
 
-const GLOBAL_FLAG_SPEC = {
-  confirm: { type: "boolean" as const, description: "Prompt before running project flows" },
-  audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
-};
-
 const ITEM_FLAG_SPEC = {
   type: { short: "t", type: "string" as const, description: "Flow type" },
   intent: { short: "i", type: "string" as const, description: "Mission" },
@@ -128,110 +123,6 @@ export interface ParsedFlowCmd {
 // Parser
 // ---------------------------------------------------------------------------
 
-function splitChainAwareOfDoubleDash(input: string): Array<{ kind: "run" | "and"; pre: string; post: string }> {
-  // First, split the input into segments separated by standalone `--`.
-  // Each segment (except the last) is the pre part of a link; the post part
-  // (dispatch) starts right after the `--` and continues until the next chain
-  // separator (`;` or `&&`) at the top level (not inside quotes).
-  const links: Array<{ kind: "run" | "and"; pre: string; post: string }> = [];
-  let current = "";
-  let inSingle = false;
-  let inDouble = false;
-  let escapeNext = false;
-  let nextKind: "run" | "and" = "run";
-  let foundDash = false;
-  let post = "";
-
-  function flush() {
-    const preTrim = current.trim();
-    const postTrim = post.trim();
-    if (preTrim.length > 0 || postTrim.length > 0) {
-      links.push({ kind: nextKind, pre: preTrim, post: postTrim });
-    }
-    current = "";
-    post = "";
-  }
-
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i];
-
-    if (escapeNext) {
-      if (foundDash) post += ch;
-      else current += ch;
-      escapeNext = false;
-      continue;
-    }
-
-    if (ch === '\\' && !inSingle && !inDouble) {
-      escapeNext = true;
-      if (foundDash) post += ch;
-      else current += ch;
-      continue;
-    }
-
-    if (inSingle) {
-      if (ch === "'") inSingle = false;
-      if (foundDash) post += ch;
-      else current += ch;
-      continue;
-    }
-
-    if (inDouble) {
-      if (ch === '"') inDouble = false;
-      if (foundDash) post += ch;
-      else current += ch;
-      continue;
-    }
-
-    if (ch === "'") {
-      inSingle = true;
-      if (foundDash) post += ch;
-      else current += ch;
-      continue;
-    }
-
-    if (ch === '"') {
-      inDouble = true;
-      if (foundDash) post += ch;
-      else current += ch;
-      continue;
-    }
-
-    // Detect standalone `--` (only the first one)
-    if (!foundDash && ch === '-' && i + 1 < input.length && input[i + 1] === '-') {
-      const prev = i > 0 ? input[i - 1] : ' ';
-      const nextIdx = i + 2;
-      const isWhitespace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
-      if (isWhitespace(prev) && (nextIdx >= input.length || isWhitespace(input[nextIdx]))) {
-        foundDash = true;
-        i++; // skip second dash
-        continue;
-      }
-    }
-
-    // Detect chain separators only when not in dispatch (foundDash=false)
-    if (!foundDash && !inSingle && !inDouble) {
-      if (ch === ';') {
-        flush();
-        nextKind = "run";
-        continue;
-      }
-      if (ch === '&' && i + 1 < input.length && input[i + 1] === '&') {
-        flush();
-        nextKind = "and";
-        i++; // skip second &
-        continue;
-      }
-    }
-
-    if (foundDash) post += ch;
-    else current += ch;
-  }
-
-  flush();
-  return links;
-}
-
 export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowCmd } {
   const trimmed = cmd.trim();
 
@@ -245,8 +136,15 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
     working = working.slice(5);
   }
 
-  const chain = splitChainAwareOfDoubleDash(working);
-  if (chain.length === 0) {
+  // Chain splitting: splitChain handles quotes/escapes and ;/&&,
+  // then splitOnDoubleDash separates pre (flags) from post (dispatch) per link.
+  const chain = splitChain(working);
+  const links = chain.map(link => {
+    const { pre, post } = splitOnDoubleDash(link.cmd);
+    return { kind: link.kind, pre, post };
+  });
+
+  if (links.length === 0) {
     return { help: FLOW_HELP };
   }
 
@@ -254,8 +152,8 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
   let audit = 0;
   const items: ParsedFlowItem[] = [];
 
-  for (let linkIdx = 0; linkIdx < chain.length; linkIdx++) {
-    const link = chain[linkIdx];
+  for (let linkIdx = 0; linkIdx < links.length; linkIdx++) {
+    const link = links[linkIdx];
     const pre = link.pre;
     const post = link.post;
     const tokens = tokenize(pre);
@@ -269,59 +167,30 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
       continue;
     }
 
-    // For the first link, parse global flags before item flags.
+    // Prepend a dummy subcommand if the first token is a flag so parseCommand
+    // doesn't consume the real flag as the subcommand.
+    const tokensForParse = tokens.length > 0 && tokens[0].startsWith("-")
+      ? ["flow", ...tokens]
+      : tokens.length > 0 ? tokens : ["flow"];
+
     if (linkIdx === 0) {
-      const remainingTokens: string[] = [];
-      for (let i = 0; i < tokens.length; i++) {
-        const tok = tokens[i];
-        if (tok === "--confirm" || tok === "--audit") {
-          const name = tok.slice(2);
-          const cfg = (GLOBAL_FLAG_SPEC as Record<string, { type: string; description: string }>)[name];
-          if (cfg.type === "boolean") {
-            if (i + 1 < tokens.length && (tokens[i + 1] === "true" || tokens[i + 1] === "false")) {
-              confirm = tokens[i + 1] === "true";
-              i++;
-            } else {
-              confirm = true;
-            }
-          } else if (cfg.type === "number") {
-            if (i + 1 < tokens.length) {
-              const num = Number(tokens[i + 1]);
-              if (Number.isFinite(num)) {
-                audit = num;
-              }
-              i++;
-            }
-          }
-          continue;
-        }
-        // Handle --flag=value syntax
-        if (tok.startsWith("--confirm=") || tok.startsWith("--audit=")) {
-          const eqIdx = tok.indexOf("=");
-          const name = tok.slice(2, eqIdx);
-          const value = tok.slice(eqIdx + 1);
-          if (name === "confirm") {
-            confirm = value === "true";
-          } else if (name === "audit") {
-            const num = Number(value);
-            if (Number.isFinite(num)) audit = num;
-          }
-          continue;
-        }
-        remainingTokens.push(tok);
+      // Parse first link with combined spec (global + item flags).
+      const combinedSpec = {
+        confirm: { type: "string" as const, description: "Prompt before running project flows" },
+        audit: { type: "number" as const, description: "Override audit cycles (0-3)" },
+        ...ITEM_FLAG_SPEC,
+      };
+      const parsed = parseCommand(tokensForParse, combinedSpec);
+      if (parsed.flags.confirm !== undefined) {
+        confirm = parsed.flags.confirm === "true";
       }
-      // Parse the rest with item flag spec
-      // Prepend a dummy subcommand if the first token is a flag so parseCommand
-      // doesn't consume the real flag as the subcommand.
-      const tokensForParse = remainingTokens.length > 0 && remainingTokens[0].startsWith("-")
-        ? ["flow", ...remainingTokens]
-        : remainingTokens.length > 0 ? remainingTokens : ["flow"];
-      const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
+      if (parsed.flags.audit !== undefined) {
+        audit = parsed.flags.audit as number;
+      }
       items.push(extractItem(parsed, post, link.kind));
     } else {
       // Detect global flags on non-first links and throw a clear error
-      for (let i = 0; i < tokens.length; i++) {
-        const tok = tokens[i];
+      for (const tok of tokens) {
         if (tok === "--confirm" || tok === "--audit") {
           throw new CliError(
             `Global flag ${tok} is not allowed on subsequent chain links.`,
@@ -335,10 +204,6 @@ export function parseFlowCmd(cmd: string): { help?: string; parsed?: ParsedFlowC
           );
         }
       }
-      // Prepend a dummy subcommand if the first token is a flag
-      const tokensForParse = tokens.length > 0 && tokens[0].startsWith("-")
-        ? ["flow", ...tokens]
-        : tokens.length > 0 ? tokens : ["flow"];
       const parsed = parseCommand(tokensForParse, ITEM_FLAG_SPEC);
       items.push(extractItem(parsed, post, link.kind));
     }
