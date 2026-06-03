@@ -231,7 +231,7 @@ function isRetryable(error: string): boolean {
 // ---------------------------------------------------------------------------
 
 export async function executeOperations(
-	operations: Array<FileOpInput | RgOpInput>,
+	operations: FileOpInput[],
 	cwd: string,
 	signal?: AbortSignal,
 	options: ExecuteOptions = {},
@@ -276,7 +276,7 @@ export async function executeOperations(
 		if (signal?.aborted) {
 			for (let j = i; j < operations.length; j++) {
 				const r = operations[j];
-				results.push({ op: r.o, path: r.p, status: "skipped", error: "Operation aborted.", s: (r as FileOpInput).s, l: r.l, q: r.q });
+				results.push({ op: r.o, path: r.p, status: "skipped", error: "Operation aborted.", s: r.s, l: r.l, q: r.q });
 				counts.skipped++;
 			}
 			emitPartialUpdate();
@@ -535,24 +535,11 @@ export async function executeOperations(
 						const originalEnding = detectLineEnding(contentWithoutBom);
 						const normalizedContent = normalizeToLF(contentWithoutBom);
 
-						let newContent: string;
-						let changed: number;
-
-						if (op.append) {
-							// Append mode: append the replacement text of each edit
-							const appendText = edits.map((e) => e.r).join("\n");
-							newContent = normalizedContent + (normalizedContent.endsWith("\n") ? "" : "\n") + appendText;
-							changed = edits.length;
-						} else {
-							const result = applyEdits(
-								normalizedContent,
-								edits,
-								op.p,
-								op.allOccurrences,
-							);
-							newContent = result.newContent;
-							changed = result.blocksChanged;
-						}
+						const { newContent, blocksChanged: changed } = applyEdits(
+							normalizedContent,
+							edits,
+							op.p,
+						);
 
 						const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 						await fs.writeFile(resolvedPath, finalContent, "utf-8");
@@ -592,7 +579,7 @@ export async function executeOperations(
 				}
 
 				case "rg": {
-					const rgOp = op as RgOpInput;
+					const rgOp = op as unknown as RgOpInput;
 					if (!rgOp.q) {
 						throw new Error("q (search pattern) is required for rg operations.");
 					}
@@ -708,7 +695,7 @@ export async function executeOperations(
 				hint,
 				retryable,
 				suggestedFix,
-				s: (op as FileOpInput).s,
+				s: op.s,
 				l: op.l,
 				q: op.q,
 			});

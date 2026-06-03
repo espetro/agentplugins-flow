@@ -100,7 +100,7 @@ export async function runWebOps(
 // Search
 // ---------------------------------------------------------------------------
 
-export async function runWebSearch(
+async function runWebSearch(
 	params: { query: string },
 	signal?: AbortSignal,
 ) {
@@ -285,7 +285,7 @@ async function duckDuckGoHtmlSearch(query: string, signal?: AbortSignal): Promis
 // Fetch
 // ---------------------------------------------------------------------------
 
-export async function runWebFetch(
+async function runWebFetch(
 	params: { url: string; format?: string },
 	ctx: { sessionManager: { getSessionDir(): string } },
 	signal?: AbortSignal,
@@ -428,13 +428,9 @@ function fetchWithCurl(url: string, signal?: AbortSignal): Promise<string> {
 		);
 
 		if (signal) {
-			const onAbort = () => {
+			signal.addEventListener("abort", () => {
 				child.kill("SIGTERM");
 				reject(new Error("Aborted"));
-			};
-			signal.addEventListener("abort", onAbort, { once: true });
-			child.on("close", () => {
-				signal.removeEventListener("abort", onAbort);
 			});
 		}
 	});

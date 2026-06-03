@@ -2,156 +2,209 @@
 
 ## `flow` — transition to flow states
 
-Spawns specialized agent flows (`scout`, `build`, `debug`, `audit`, `craft`, `ideas`, `trace`). Bash-style CLI: pass a single `cmd: string` with flags. Chain multiple items with `;` (sequential) or `&&` (conditional).
+The core transition tool. Accepts an array of flow tasks and runs them in parallel with bounded concurrency (default: 4, capped to CPU count).
 
-### Parameters
+Each flow item accepts:
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `cmd` | `string` | Flow command. Multiple items chained with `;` or `&&`. Each item: `--type --intent --aim --concern [--acceptance] [--cwd] [--complexity] [-- <batch-dispatch>]`. Global: `--confirm`, `--audit <n>` (first item only). Run `cmd: "help"` for the man page. |
-| `cwd` | `string` | Optional working directory override. |
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Flow name (`scout`, `build`, `debug`, `audit`, `craft`, `ideas`, or custom) |
+| `intent` | `string` | What the flow should do |
+| `aim` | `string` | Short headline of what the flow aims to do |
+| `acceptance` | `string` | One-sentence success criteria |
+| `concern` | `string` | Known risks, uncertainties, or areas requiring extra care. Be specific. |
+| `complexity` | `string` | Override complexity for this flow (`snap`, `simple`, `moderate`, `complex`, `intricate`) |
+| `cwd` | `string` | Override working directory |
+| `dispatch` | `array` | Optional list of pre-flight operations (`batch`, `bash`, `web`) to execute before starting the flow. Results are injected into the prompt. |
 
-### Per-item flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--type` | `-t` | Flow name: `scout`, `build`, `debug`, `audit`, `craft`, `ideas`, `trace` (required) |
-| `--intent` | `-i` | Mission description (required) |
-| `--aim` | `-a` | Short headline, 5–7 words (required) |
-| `--concern` | `-c` | Known risks, uncertainties, or areas requiring extra care (required) |
-| `--acceptance` | `-A` | One-sentence success criteria |
-| `--cwd` | `-w` | Working directory override for this flow |
-| `--complexity` | `-x` | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate` |
-
-### Global flags (first item only)
-
-| Flag | Short | Type | Description |
-|-------|-------|------|-------------|
-| `--confirm` | `-y` | `string` | Prompt before running project flows (default: true) |
-| `--audit` | `-u` | `number` | Override audit cycles 0–3 (default: 0) |
-
-### Examples
+Example:
 
 ```json
-{ "cmd": "flow --type scout --intent 'Map auth code' --aim 'Map auth code' --concern 'JWT complexity'" }
+{
+  "flow": [
+    { "type": "scout", "intent": "Find all authentication-related code and trace JWT validation", "aim": "Find auth code and trace JWT", "acceptance": "All auth files identified with JWT flow traced" }
+  ]
+}
 ```
 
+### Batch multiple flows
+
 ```json
-{ "cmd": "flow --type build --intent 'Add tests' --aim 'Add tests' --concern 'regression' --acceptance 'All green'" }
+{
+  "flow": [
+    { "type": "scout", "intent": "Find auth code", "aim": "Find auth code" },
+    { "type": "audit", "intent": "Audit auth module", "aim": "Audit auth module" }
+  ]
+}
 ```
 
+### Override working directory or confirm project flows
+
 ```json
-{ "cmd": "flow --type build --intent 'Implement feature' --aim 'Implement feature' --concern 'breaking change' -- batch read src/foo.ts" }
+{
+  "flow": [
+    { "type": "scout", "intent": "Map packages/ui", "aim": "Map UI package", "cwd": "packages/ui" }
+  ]
+}
 ```
 
-Chain multiple flows:
+Suppress the confirmation prompt before running project-local flows:
 
 ```json
-{ "cmd": "flow --type scout --intent 'Find auth' --aim 'Find auth' --concern 'scope'; flow --type build --intent 'Fix auth' --aim 'Fix auth' --concern 'regression'" }
+{
+  "flow": [
+    { "type": "scout", "intent": "Map packages/ui", "aim": "Map UI package" }
+  ],
+  "confirmProjectFlows": false
+}
+```
+
+### Run pre-flight setup tasks via `dispatch`
+
+Run commands or setup files locally in one step before the flow starts:
+
+```json
+{
+  "flow": [
+    {
+      "type": "build",
+      "intent": "Implement auth tests",
+      "aim": "Add auth tests",
+      "dispatch": [
+        { "tool": "bash", "ops": [{ "c": "npm install dotenv" }] }
+      ]
+    }
+  ]
+}
 ```
 
 ## `trace` — quick verbatim reads, checks, and exploration
 
-A lightweight flow state with `maxDepth: 0` that runs verbatim checks, explorations, or diagnostics. All fields are optional. Defaults to `simple` complexity.
+A lightweight flow state with `maxDepth: 0` that runs verbatim checks, explorations, or diagnostics. All fields are optional.
 
-### Parameters
+### Tool parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cmd` | `string` | Trace command. Optional flags (`--intent`, `--cwd`, `--complexity`) followed by optional pre-flight dispatch after `--`. Run `cmd: "help"` for the man page. |
+| `intent` | `string` | Optional description of the search or check objective. |
 | `cwd` | `string` | Optional working directory override. |
-
-### Flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--intent` | `-i` | Mission override. Default: trace agent's built-in description. |
-| `--cwd` | | Working directory override. |
-| `--complexity` | `-x` | Budget level: `snap`, `simple`, `moderate`, `complex`, `intricate`. Default: `simple`. |
-| `--help` | `-h` | Show help text. |
-
-### Pre-flight dispatch
-
-Everything after the first top-level `--` is a batch-style command string that runs before the trace starts. Results are injected into the trace prompt.
-
-```json
-{ "cmd": "trace --intent 'verify auth' -- batch read src/auth.ts" }
-```
-
-```json
-{ "cmd": "trace -- batch read src/auth.ts; batch rg -q 'password' src/" }
-```
+| `complexity` | `string` | Optional budget level (`snap`, `simple`, `moderate`, `complex`, `intricate`). |
+| `dispatch` | `array` | Optional pre-flight operations (`batch`, `bash`, `web`) to run. Results are injected into the prompt. |
 
 ### Snapshot behavior
 
 `trace` receives the **main agent's full session context** — no tier-based message cap, no profile-based compression. The `tier: lite` in `agents/trace.md` only affects which model is selected (cheaper/faster), not the snapshot content. The shared context display accurately reflects the main agent's actual message counts and conversation history.
 
+### Example using `dispatch` for quick edits/reads/bash
+
+Run batch modifications or terminal checks directly in a single step via `dispatch` without additional round-trips:
+
+```json
+{
+  "dispatch": [
+    {
+      "tool": "batch",
+      "ops": [
+        { "o": "write", "p": "src/temp.ts", "c": "console.log('temp');" },
+        { "o": "edit", "p": "src/index.ts", "e": [{ "f": "old code", "r": "new code" }] }
+      ]
+    },
+    {
+      "tool": "bash",
+      "ops": [
+        { "c": "npm test" }
+      ]
+    }
+  ]
+}
+```
+
+### Lenient dispatch
+
+The `trace` and `flow` dispatch surfaces are **forgiving** — they automatically normalize common shape mistakes the model makes before validation. The underlying `batch` and `bash` tools themselves remain strict; the leniency only applies at the dispatch entry point.
+
+**Boundary: `batch` stays precise; `trace`/`flow` dispatch is forgiving.**
+
+Input → normalized output pairs:
+
+| Input | Normalized | Note |
+|---|---|---|
+| Bare string at top level or inside `ops` | `bash` op `{c: string}` | `string → bash[1]` |
+| Single object inside `ops` (where array expected) | wrapped in array | `single obj → array[1]` |
+| `batch` op `{p: "x.ts"}` (no `o`) | infers `o: "read"` | `inferred o=read` |
+| `batch` op `{c: "ls"}` (no `p`) | infers `o: "bash"`, `p: "ls"` | `inferred o=bash` |
+| `batch` op `{p: "x", c: "code"}` | infers `o: "write"` | `inferred o=write` |
+| `batch` op `{p: "x", e: [...]}` | infers `o: "edit"` | `inferred o=edit` |
+| `bash` op with stray `tool` key | strips it | `stripped stray tool` |
+| `web` op `{q: "..."}` (no `o`) | infers `o: "search"` | `inferred o=search` |
+| `web` op `{u: "..."}` (no `o`) | infers `o: "fetch"` | `inferred o=fetch` |
+| Nested `{tool, ops: {item: {...}}}` inside an op | flattens to inner item | `flattened nested dispatcher` |
+
+When any normalization occurs, the resulting prompt is annotated with a `normalized:` section listing the applied fixes so the agent knows what happened.
+
+### Field aliases
+
+The dispatch surface accepts **one canonical field name per key** plus a single alias. If both are present, the canonical value wins and the alias is silently discarded.
+
+**Wrapper aliases** (apply to the dispatch group object):
+
+| Alias | Canonical | Meaning |
+|-------|-----------|---------|
+| `t` | `tool` | Tool type (`batch`, `bash`, `web`) |
+| `o` | `ops` | Operations array |
+
+**Universal op aliases** (apply in every tool context):
+
+| Alias | Canonical | Meaning |
+|-------|-----------|---------|
+| `op` | `o` | Operation type (`read`, `write`, `edit`, `bash`, `rg`, `search`, `fetch`) |
+| `path` | `p` | File path or search path |
+| `edits` | `e` | Edit array (for `o: "edit"`) |
+| `offset` | `s` | Start line (for reads) |
+| `limit` | `l` | Line limit (for reads) or files-with-matches flag (for `rg`) |
+| `cwd` | `h` | Working directory override |
+| `query` | `q` | Search query (for `rg` or `web`) |
+| `maxCount` | `n` | Max matches per file (for `rg`) |
+| `find` | `f` | Old text to find (inside edit objects) |
+| `replace` | `r` | New text to replace (inside edit objects) |
+
+**Context-split op aliases** (resolve differently depending on the wrapper `tool`):
+
+| Alias | `batch` | `bash` | `web` |
+|-------|---------|--------|-------|
+| `content` | `c` | — | — |
+| `cmd` | — | `c` | — |
+| `command` | — | `c` (legacy fallback) | — |
+| `timeout` | — | `t` | — |
+| `ignoreCase` | `i` | — | `i` |
+| `id` | — | `i` | — |
+| `url` | — | — | `u` |
+
+> **Context-split rationale:** the same short alias (`c`, `t`, `i`, `u`) means different things in different tools. By scoping the alias to the wrapper's `tool` value, the normalizer can safely resolve `cmd` to `c` in a `bash` op without accidentally overwriting `content` in a `batch` write op.
+
+### Silent drops (no note added)
+
+Some malformed inputs are **silently dropped** by the normalizer — the canonical form is applied but no `normalized:` note is added because the original input was structurally invalid rather than merely unnormalized. The strict schema is never exposed to the malformed shape.
+
+| Input | Result | Why |
+|---|---|---|
+| Group with no valid `tool` (e.g. `{}`, `{tool: "unknown"}`) | group dropped from dispatch | no branch of the `anyOf` matches |
+| `ops` field missing entirely | `ops` becomes `[]` | `Type.Array(...)` accepts empty array |
+| `ops` is a non-string non-object (e.g. `42`, `true`, `null`) | `ops` becomes `[]` | only string and object branches are handled |
+| Per-op `null` / `undefined` / `false` / `0` | op dropped from `ops` array | `!op || typeof op !== "object"` skips |
+
+**Prefer the canonical form** to avoid silent drops and to make your intent explicit. Silent drops still produce the right behavior, but the resulting dispatch is shorter than the input you provided, which can be surprising when debugging.
+
+> **Implementation note:** `prepareArguments` in the trace tool always returns the normalized dispatch form, not the original input, because `notes.length === 0` is not a reliable signal that no transformation was made (see the table above). The same pattern applies to the flow tool's `prepareFlowArguments`.
+
 ## `batch` / `batch_read` — unified file operations
 
 When **tool optimization** is enabled (default), the separate `read` / `write` / `edit` tools are replaced by:
 
-- **`batch`** — multi-op executor: `read`, `write`, `edit`, `delete`, `patch`, `bash`, `rg`, `web`, `poll`. File/shell ops execute first; web runs after. Supports chaining with `;` and `&&`.
-- **`batch_read`** — read-only variant: `read` and `rg` only. No write, edit, delete, bash, or web.
+- **`batch`** — sequential read, write, edit, and delete operations in one call. Edits use fuzzy matching and preserve line endings.
+- **`batch_read`** — read-only variant for multiple reads. Small full-file reads return raw content; large full-file reads return code/infra context maps or total line counts, and oversized targeted reads are capped with continuation guidance.
 
-Both use a single `cmd: string` field with subcommands and flags.
-
-### `batch` subcommands
-
-| Subcommand | Flags | Description |
-|------------|-------|-------------|
-| `read` | `-s`, `-l`, `-e` | Read file contents. Paths may include `:N` or `:N-M` line ranges. |
-| `write` | `-c` | Write content to file. |
-| `edit` | `-f`, `-r`, `-a`, `-A` | Targeted file edit using `--find`/`--replace` pairs. Repeat for multi-edit. |
-| `delete` | | Delete file(s). |
-| `patch` | `-c` | Apply a patch. |
-| `bash` | `-i`, `-t`, `-w`, `-h` | Execute a shell command. `-i` = ID, `-t` = timeout, `-w` = cwd, `-h` = help. |
-| `rg` | `-q`, `-i`, `-l`, `-t`, `-n`, `-u` | Search with ripgrep. `-q` = pattern (required), `-i` = ignore-case, `-l` = files-only, `-t` = type filter, `-n` = max-count, `-u` = ignore-level. |
-| `web search` | `-q` | Search the web. |
-| `web fetch` | `-u`, `-f` | Fetch a URL. `-u` = URL, `-f` = format (markdown, text, html). |
-| `poll` | `-i` | Poll pending bash commands by ID. |
-
-### `batch_read` subcommands
-
-| Subcommand | Flags | Description |
-|------------|-------|-------------|
-| `read` | `-s`, `-l`, `-e` | Read file contents. |
-| `rg` | `-q`, `-i`, `-l`, `-t`, `-n`, `-u` | Search with ripgrep. |
-
-### Examples
-
-```json
-{ "cmd": "batch read src/index.ts:10-50" }
-```
-
-```json
-{ "cmd": "batch write -c 'console.log(1)' src/hello.ts" }
-```
-
-```json
-{ "cmd": "batch edit -f 'old' -r 'new' src/index.ts" }
-```
-
-```json
-{ "cmd": "batch bash 'npm test'" }
-```
-
-```json
-{ "cmd": "batch read src/index.ts; batch rg -q 'TODO' src/" }
-```
-
-```json
-{ "cmd": "batch read src/index.ts && batch bash 'npm test'" }
-```
-
-```json
-{ "cmd": "batch_read read src/index.ts:10-50" }
-```
-
-```json
-{ "cmd": "batch_read rg -q 'TODO' src/" }
-```
-
-> **Caution:** `batch_read` only supports read-only operations (`read` and `rg`). It does **not** support `edit`, `write`, `delete`, `bash`, or `patch` — use the full `batch` tool for those.
+  > **Caution:** `batch_read` only supports read-only operations (`read` and `rg`). It does **not** support `edit`, `write`, `delete`, `bash`, or `patch` — use the full `batch` tool for those.
 
 ## `batch_bash_poll` — poll pending bash commands
 
@@ -168,52 +221,25 @@ In the collapsed activity panel, web operations display as compact one-line summ
 
 ## `ask_user` — interactive prompts
 
-Ask the user a focused question with multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with `[preferred]` and place it first.
+Ask the user a focused question with optional multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with `[preferred]` and place it first.
 
-### Parameters
+### Tool parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cmd` | `string` | ask_user command string with a quoted question and repeatable `-o` flags. Run `cmd: "help"` for the man page. |
+| `question` | `string` | The question to ask the user |
+| `options` | `array` | Optional list of choices. Each option is an object with `title` (short label) and `description` (longer explanation). |
 
-### Flags
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--option` | `-o` | A choice option. Format: `Title` or `Title: description`. Repeatable. |
-| `--help` | `-h` | Show help text. |
-
-### Examples
+Example:
 
 ```json
-{ "cmd": "ask_user \"Continue?\" -o Yes -o No" }
+{
+  "question": "Which database should we use?",
+  "options": [
+    { "title": "PostgreSQL", "description": "Robust relational database with great TypeScript support" },
+    { "title": "SQLite", "description": "Simple file-based database, good for small projects" }
+  ]
+}
 ```
 
-```json
-{ "cmd": "ask_user \"Pick a database\" -o \"PostgreSQL:Robust relational\" -o \"SQLite:Simple file-based\"" }
-```
-
-```json
-{ "cmd": "ask_user \"Ship it?\" -o \"Yes: build & publish\" -o \"No: pause\" -o \"Cancel: abandon\"" }
-```
-
-> **Note:** Timeout and UI behavior are controlled via flow settings (`/flow:settings ask-user timeout <seconds>` or `PI_ASK_USER_TIMEOUT`). If user input is needed inside a flow, the flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user; bundled flows do not have `ask_user`.
-
-## Migration from the old JSON mega-schema (v2.2.x → v2.3.0)
-
-The four primary tools migrated from a nested JSON mega-schema to a single `cmd: string` field.
-
-| Tool | Old shape (v2.2.x) | New shape (v2.3.0) |
-|------|-------------------|-------------------|
-| `batch` | `{ tool: "batch", ops: [{ o: "read", p: "src/index.ts", s: 10, l: 40 }] }` | `{ cmd: "read src/index.ts:10-50" }` |
-| `batch` write | `{ tool: "batch", ops: [{ o: "write", p: "file.txt", c: "content" }] }` | `{ cmd: "write -c 'content' file.txt" }` |
-| `batch` edit | `{ tool: "batch", ops: [{ o: "edit", p: "file.ts", e: [{ f: "old", r: "new" }] }] }` | `{ cmd: "edit -f 'old' -r 'new' file.ts" }` |
-| `batch` bash | `{ tool: "batch", ops: [{ o: "bash", c: "npm test", i: "id1" }] }` | `{ cmd: "bash 'npm test'" }` |
-| `flow` | `{ flow: [{ type: "scout", intent: "...", aim: "...", concern: "...", dispatch: [{ tool: "batch", ops: [...] }] }] }` | `{ cmd: "flow --type scout --intent '...' --aim '...' --concern '...' -- batch read ..." }` |
-| `trace` | `{ intent: "...", dispatch: [{ tool: "batch", ops: [...] }] }` | `{ cmd: "trace --intent '...' -- batch read ..." }` |
-| `ask_user` | `{ "question": "...", "options": [...] }` | `{ cmd: "ask_user \"...\" -o ..." }` |
-
-- **No more `tool` wrapper**: `batch`, `bash`, and `web` ops are now expressed as subcommands inside a single `cmd` string.
-- **No more `ops` array**: Operations are separated by `;` (sequential) or `&&` (conditional) within the `cmd` string.
-- **No more `o`, `p`, `c`, `e` fields**: Replaced by subcommand names (`read`, `write`, `edit`, `bash`, `rg`, `web`) and `--flag` arguments.
-- **No more `dispatch` array**: Pre-flight ops for `flow` and `trace` are appended after `--` as a plain batch-style command string.
+> **Note:** The `ask_user` tool only accepts `question` and `options`. Timeout and UI behavior are controlled via flow settings (`/flow:settings ask-user timeout <seconds>` or `PI_ASK_USER_TIMEOUT`). If user input is needed inside a flow, the flow emits a `⚠️ Decision Required` block for the root state to present. Only the root state talks to the user; bundled flows do not have `ask_user`.

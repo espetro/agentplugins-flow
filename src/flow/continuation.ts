@@ -8,26 +8,7 @@ import { logWarn } from '../config/log.js';
 import * as sessionRegistry from './session-registry.js';
 
 const SPAWN_COOLDOWN_MS = 5000;
-const MAX_MAP_ENTRIES = 50;
 const _lastSpawnAt = new Map<string, number>();
-
-function pruneOldestEntries(map: Map<string, number>, maxEntries: number): void {
-  while (map.size > maxEntries) {
-    let oldestKey: string | undefined;
-    let oldestValue = Infinity;
-    for (const [key, value] of map) {
-      if (value < oldestValue) {
-        oldestValue = value;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) {
-      map.delete(oldestKey);
-    } else {
-      break;
-    }
-  }
-}
 
 /**
  * Post-flow completion hold — gives the user time to read the result before
@@ -67,7 +48,6 @@ let _wakeupInterval: ReturnType<typeof setInterval> | undefined;
 export function markFlowCompleted(sessionId?: string): void {
   if (sessionId) {
     _lastFlowCompleteAt.set(sessionId, Date.now());
-    pruneOldestEntries(_lastFlowCompleteAt, MAX_MAP_ENTRIES);
   }
 }
 
@@ -87,11 +67,6 @@ export function setupContinuation(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     sessionRegistry.register(ctx.cwd, ctx.sessionManager.getSessionId());
     _lastTurnEndAt.set(ctx.sessionManager.getSessionId(), Date.now());
-    pruneOldestEntries(_lastTurnEndAt, MAX_MAP_ENTRIES);
-  });
-
-  pi.on("session_end", (_event, ctx) => {
-    sessionRegistry.unregister(ctx.cwd);
   });
 
   // Idle wake-up: periodically check if the user has been idle while a goal
@@ -158,7 +133,6 @@ export function setupContinuation(pi: ExtensionAPI): void {
 
     const goalSessionId = goal.sessionId ?? "none";
     _lastTurnEndAt.set(goalSessionId, Date.now());
-    pruneOldestEntries(_lastTurnEndAt, MAX_MAP_ENTRIES);
 
     // Cooldown: don't re-fire within 5 seconds of last spawn for THIS goal's session
     const now = Date.now();
@@ -171,7 +145,6 @@ export function setupContinuation(pi: ExtensionAPI): void {
     if (lastFlowComplete !== undefined && now - lastFlowComplete < FLOW_COMPLETE_HOLD_MS) return;
 
     _lastSpawnAt.set(goalSessionId, now);
-    pruneOldestEntries(_lastSpawnAt, MAX_MAP_ENTRIES);
 
     // Track token usage from turn
     const messageText =

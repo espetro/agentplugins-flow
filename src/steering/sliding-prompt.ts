@@ -19,8 +19,8 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}` +
-	`Act as the Root Orchestrator — route work to flows; never edit, write, or execute project work directly. ` +
-	`Available tools: batch_read (bash-style CLI: pass cmd: "batch_read <sub> [flags] <args>"), batch (bash-style CLI: pass cmd: "batch <sub> [flags] <args>"), flow (bash-style CLI: pass cmd: "flow --type <name> --intent <text> --aim <text> --concern <text> [-- <batch-dispatch>]"), trace (bash-style CLI: pass cmd: "trace [flags] [-- batch ...]"), ask_user (bash-style CLI: pass cmd: "ask_user <question> -o <title[:description]>..."). Pass cmd: "help" or "<tool> --help" for the man page. ` +
+	`Available tools: batch, trace, flow, ask_user. ` +
+	`Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l, cwd=h, timeout=t, id=i, query=q, maxCount=n, url=u, find=f, replace=r. Canonical wins. ` +
 	`Be direct — zero preamble or filler. Answer directly when context is available. ` +
 	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path. ` +
 	`Tool selection: Default [flow] for real work. [trace] only for [verify] between flows. [scout] maps, [build] ships. Never chain [trace] alone. ` +

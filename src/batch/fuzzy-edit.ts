@@ -165,7 +165,6 @@ export function applyEdits(
 	content: string,
 	edits: EditReplacement[],
 	filePath: string,
-	allOccurrences?: boolean,
 ): { newContent: string; blocksChanged: number } {
 	const normalizedEdits = edits.map((e) => ({
 		oldText: normalizeToLF(e.f),
@@ -207,7 +206,7 @@ export function applyEdits(
 		const occurrences = matchResult.isExact
 			? countExactOccurrences(baseContent, edit.oldText)
 			: countOccurrences(baseContent, edit.oldText);
-		if (!allOccurrences && occurrences > 1) {
+		if (occurrences > 1) {
 			throw new Error(
 				edits.length === 1
 					? `Found ${occurrences} occurrences of the text in ${filePath}. The text must be unique. Please provide more context to make it unique.`
@@ -228,63 +227,34 @@ export function applyEdits(
 	// Sort by position (ascending)
 	matchedEdits.sort((a, b) => a.matchIndex - b.matchIndex);
 
-	// Check for overlaps (skip when allOccurrences — each edit is applied independently)
-	if (!allOccurrences) {
-		for (let i = 1; i < matchedEdits.length; i++) {
-			const previous = matchedEdits[i - 1];
-			const current = matchedEdits[i];
-			if (previous.matchIndex + previous.matchLength > current.matchIndex) {
-				throw new Error(
-					`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${filePath}. Merge them into one edit or target disjoint regions.`,
-				);
-			}
+	// Check for overlaps
+	for (let i = 1; i < matchedEdits.length; i++) {
+		const previous = matchedEdits[i - 1];
+		const current = matchedEdits[i];
+		if (previous.matchIndex + previous.matchLength > current.matchIndex) {
+			throw new Error(
+				`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${filePath}. Merge them into one edit or target disjoint regions.`,
+			);
 		}
 	}
 
 	// Apply edits in reverse order to preserve offsets
 	let newContent = baseContent;
-	if (allOccurrences) {
-		// For allOccurrences, replace every occurrence of each edit independently
-		for (const edit of normalizedEdits) {
-			let pos = 0;
-			while (true) {
-				const matchResult = fuzzyFindText(newContent.substring(pos), edit.oldText);
-				if (!matchResult.found) break;
-				const actualIndex = pos + matchResult.index;
-				if (matchResult.isExact) {
-					newContent =
-						newContent.substring(0, actualIndex) +
-						edit.newText +
-						newContent.substring(actualIndex + matchResult.matchLength);
-				} else {
-					newContent = applyFuzzyEdit(
-						newContent,
-						actualIndex,
-						matchResult.matchLength,
-						edit.oldText,
-						edit.newText,
-					);
-				}
-				pos = actualIndex + edit.newText.length;
-			}
-		}
-	} else {
-		for (let i = matchedEdits.length - 1; i >= 0; i--) {
-			const edit = matchedEdits[i];
-			if (edit.isExact) {
-				newContent =
-					newContent.substring(0, edit.matchIndex) +
-					edit.newText +
-					newContent.substring(edit.matchIndex + edit.matchLength);
-			} else {
-				newContent = applyFuzzyEdit(
-					newContent,
-					edit.matchIndex,
-					edit.matchLength,
-					edit.oldText,
-					edit.newText,
-				);
-			}
+	for (let i = matchedEdits.length - 1; i >= 0; i--) {
+		const edit = matchedEdits[i];
+		if (edit.isExact) {
+			newContent =
+				newContent.substring(0, edit.matchIndex) +
+				edit.newText +
+				newContent.substring(edit.matchIndex + edit.matchLength);
+		} else {
+			newContent = applyFuzzyEdit(
+				newContent,
+				edit.matchIndex,
+				edit.matchLength,
+				edit.oldText,
+				edit.newText,
+			);
 		}
 	}
 

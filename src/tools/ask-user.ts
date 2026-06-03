@@ -6,15 +6,7 @@
  */
 
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { CliError } from "../cli/parse.js";
-import {
-  AskUserCliParams,
-  ASK_USER_CLI_DESCRIPTION,
-  ASK_USER_CLI_SNIPPET,
-  ASK_USER_CLI_GUIDELINES,
-  parseAskUserCmd,
-  parseAskUserCmdSync,
-} from "../cli/ask-user.js";
+import { Type, type TUnsafe } from "@sinclair/typebox";
 
 import { setPendingDecision } from "../notify/notify-state.js";
 import { scrambleManager, runScrambleTimer } from "../tui/scramble/index.js";
@@ -36,7 +28,32 @@ import {
 import { renderSingleSelectRows, type QuestionOption } from "../tui/single-select-layout.js";
 import { loadFlowSettings } from "../config/config.js";
 
-const ASK_USER_VERSION = "1.9.0";
+const ASK_USER_VERSION = "1.8.40";
+
+/**
+ * Emit a flat `{ type: "string", enum: [...] }` JSON Schema instead of the
+ * `anyOf`/`oneOf` shape that `Type.Union([Type.Literal()])` produces. Google's
+ * function-calling API rejects the union form. Local copy of pi-ai's StringEnum
+ * to avoid a peer dependency for one helper.
+ */
+function StringEnum<const T extends readonly string[]>(
+	values: T,
+	options?: { description?: string; default?: T[number] },
+): TUnsafe<T[number]> {
+	return Type.Unsafe<T[number]>({
+		type: "string",
+		enum: [...values],
+		...(options?.description ? { description: options.description } : {}),
+		...(options?.default !== undefined ? { default: options.default } : {}),
+	});
+}
+
+type AskOptionInput = QuestionOption | string;
+
+interface AskParams {
+	question: string;
+	options: AskOptionInput[];
+}
 
 type AskResponse = { kind: "selection"; selections: string[] };
 
@@ -48,6 +65,23 @@ interface AskToolDetails {
 }
 
 type AskUIResult = AskResponse;
+
+function normalizeOptions(options: AskOptionInput[]): QuestionOption[] {
+	return options
+		.map((option) => {
+			if (typeof option === "string") {
+				return { title: option, description: option };
+			}
+			if (option && typeof option === "object" && typeof option.title === "string") {
+				return {
+					title: option.title,
+					description: option.description || option.title,
+				};
+			}
+			return null;
+		})
+		.filter((option): option is QuestionOption => option !== null);
+}
 
 function formatOptionsForMessage(options: QuestionOption[]): string {
 	return options
@@ -661,54 +695,53 @@ async function askViaDialogs(
 // ---------------------------------------------------------------------------
 // Tool factory
 // ---------------------------------------------------------------------------
-export function createAskUserCliTool() {
+export function createAskUserTool() {
 	return {
 		name: "ask_user",
 		label: "Ask User",
-		description: ASK_USER_CLI_DESCRIPTION,
-		promptSnippet: ASK_USER_CLI_SNIPPET,
-		promptGuidelines: ASK_USER_CLI_GUIDELINES,
-		parameters: AskUserCliParams,
+		description:
+			"Ask the user a focused question with multiple-choice answers. Use this to gather information interactively. Ask exactly one focused question per call. When presenting options, mark your recommended choice with [preferred] and place it first.",
+		promptSnippet:
+			"Ask the user one focused question with multiple-choice answers to gather information interactively",
+		promptGuidelines: [
+			"Use `ask_user` when the user's intent is ambiguous, when a decision requires explicit user input, or when multiple valid options exist.",
+			"Ask exactly one focused question per `ask_user` call.",
+			"Do not combine multiple numbered, multipart, or unrelated questions into one `ask_user` prompt.",
+		],
+		parameters: Type.Object({
+			question: Type.String({ description: "The question to ask the user" }),
+			options: Type.Array(
+				Type.Object({
+					title: Type.String({ description: "Short title for this option" }),
+					description: Type.String({ description: "Longer description explaining this option" }),
+				}),
+				{ minItems: 1, description: "Non-empty list of options for the user to choose from" },
+			),
+		}),
 
-		async execute(_toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: ((result: any) => void) | undefined, ctx: ExtensionContext) {
+		async execute(_toolCallId: string, params: AskParams, signal: AbortSignal | undefined, onUpdate: ((result: any) => void) | undefined, ctx: ExtensionContext) {
 			setPendingDecision();
-
-			const cmd = (typeof params === "object" && params !== null && "cmd" in params && typeof (params as any).cmd === "string") ? (params as any).cmd : "";
 
 			if (signal?.aborted) {
 				return {
 					content: [{ type: "text", text: "Cancelled" }],
-					details: { question: "", options: [], response: null, cancelled: true } as AskToolDetails,
+					details: { question: params.question, options: [], response: null, cancelled: true } as AskToolDetails,
 				};
 			}
 
-			let parsedResult;
-			try {
-				parsedResult = await parseAskUserCmd(cmd);
-			} catch (err) {
-				if (err instanceof CliError) {
-					const hint = err.hint ? `\nHint: ${err.hint}` : "";
-					return {
-						isError: true,
-						content: [{ type: "text", text: `Error: ${err.message}${hint}` }],
-						details: { question: "", options: [], response: null, cancelled: false, error: err.message } as AskToolDetails,
-					};
-				}
-				throw err;
-			}
-
-			if (parsedResult.help) {
-				return {
-					content: [{ type: "text", text: parsedResult.help }],
-					details: { question: "", options: [], response: null, cancelled: false } as AskToolDetails,
-				};
-			}
-
-			const { question, options } = parsedResult.parsed!;
+			const { question, options: rawOptions = [] } = params as AskParams;
+			const options = normalizeOptions(rawOptions);
 
 			if (!ctx.hasUI || !ctx.ui) {
 				const optionText = options.length > 0 ? `\n\nOptions:\n${formatOptionsForMessage(options)}` : "";
 				throw new Error(`Ask requires interactive mode. Please answer:\n\n${question}${optionText}`);
+			}
+
+			if (options.length === 0) {
+				return {
+					content: [{ type: "text", text: "Error: options must be a non-empty array" }],
+					details: { question, options, response: null, cancelled: false, error: "options must be a non-empty array" } as AskToolDetails,
+				};
 			}
 
 			onUpdate?.({
@@ -799,24 +832,15 @@ export function createAskUserCliTool() {
 		},
 
 		renderCall(args: any, theme: any) {
-			const cmd = typeof args?.cmd === "string" ? args.cmd : "";
+			const question = (args.question as string) || "";
+			const rawOptions = Array.isArray(args.options) ? args.options : [];
 			let text = theme.fg("toolTitle", theme.bold("ask_user "));
-			try {
-				const result = parseAskUserCmdSync(cmd);
-				if (result.help) {
-					text += theme.fg("muted", "(help)");
-				} else if (result.parsed) {
-					const { question, options } = result.parsed;
-					text += theme.fg("muted", question);
-					if (options.length > 0) {
-						const labels = options.map((o) => o.title);
-						text += "\n" + theme.fg("dim", `  ${options.length} option(s): ${labels.join(", ")}`);
-					}
-				}
-			} catch {
-				const trimmed = cmd.trim();
-				const displayCmd = trimmed.startsWith("ask_user") ? trimmed.slice("ask_user".length).trim() : trimmed;
-				text += theme.fg("muted", displayCmd || cmd);
+			text += theme.fg("muted", question);
+			if (rawOptions.length > 0) {
+				const labels = rawOptions.map((o: unknown) =>
+					typeof o === "string" ? o : (o as QuestionOption)?.title ?? "",
+				);
+				text += "\n" + theme.fg("dim", `  ${rawOptions.length} option(s): ${labels.join(", ")}`);
 			}
 			return new Text(text, 0, 0);
 		},

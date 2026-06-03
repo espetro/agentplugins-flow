@@ -75,12 +75,12 @@ export function buildBeforeAgentStartPrompt(
 	const webInstructions: string[] = [];
 	if (hasUrl) {
 		webInstructions.push(
-			"The prompt includes a URL. Use batch web fetch -u <url> before answering about that page.",
+			"The prompt includes a URL. Use batch with w: [{ o: 'fetch', u: '<url>' }] before answering about that page.",
 		);
 	}
 	if (likelyNeedsWeb) {
 		webInstructions.push(
-			"The prompt likely needs external or current info. Prefer batch web search -q <query> over memory.",
+			"The prompt likely needs external or current info. Prefer batch with w: [{ o: 'search', q: '<query>' }] over memory.",
 		);
 	}
 

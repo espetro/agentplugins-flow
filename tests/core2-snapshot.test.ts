@@ -1296,7 +1296,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "assistant",
 					content: [
-						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { cmd: "--intent 'audit auth'" } }
+						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { intent: "audit auth" } }
 					]
 				}
 			},
@@ -1314,7 +1314,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "assistant",
 					content: [
-						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { cmd: "--intent 'audit auth'" } }
+						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { intent: "audit auth" } }
 					]
 				}
 			},
@@ -1347,7 +1347,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "assistant",
 					content: [
-						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { cmd: "--intent 'audit auth'" } }
+						{ type: "toolCall", id: "trace-1", name: "trace", arguments: { intent: "audit auth" } }
 					]
 				}
 			},
@@ -1365,7 +1365,7 @@ describe("buildCore2Snapshot — tier compression", () => {
 				message: {
 					role: "assistant",
 					content: [
-						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { cmd: "--intent 'check routes'" } }
+						{ type: "toolCall", id: "trace-2", name: "trace", arguments: { intent: "check routes" } }
 					]
 				}
 			},

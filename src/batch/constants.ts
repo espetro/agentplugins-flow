@@ -122,13 +122,11 @@ export interface FileOpInput {
 	s?: number;
 	l?: number;
 	i?: string;
-	t?: number | string;
+	t?: number;
 	h?: string;
 	q?: string;
 	n?: number;
 	u?: number;
-	append?: boolean;
-	allOccurrences?: boolean;
 }
 
 export interface RgOpInput {
@@ -185,7 +183,7 @@ export interface OpResult {
 	timingTier?: string;
 	q?: string;
 	s?: number;
-	l?: number | boolean;
+	l?: number;
 	affected?: { added: string[]; modified: string[]; deleted: string[] };
 	exact?: boolean;
 	query?: string;

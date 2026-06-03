@@ -116,7 +116,7 @@ describe("trace first invoke context header", () => {
 			fallbackModel: "fireworks/kimi-k2p6-turbo",
 		});
 		const theme = { fg: (_c: string, t: string) => t, bg: (_c: string, t: string) => t, bold: (t: string) => t };
-		const rendered = tool.renderCall({ cmd: "read src/main.ts", toolCallId: "call-first" }, theme);
+		const rendered = tool.renderCall({ intent: "read src/main.ts", toolCallId: "call-first" }, theme);
 		const text = extractHeader(rendered);
 		expect(text).not.toContain("trace");
 		expect(text).not.toContain("-----/");
@@ -168,7 +168,10 @@ describe("trace first invoke context header", () => {
 
 		const executePromise = tool.execute(
 			"call-first",
-			{ cmd: "--intent 'read src/main.ts' -- batch read package.json" },
+			{
+				intent: "read src/main.ts",
+				dispatch: [{ tool: "batch", ops: [{ o: "read", p: "package.json" }] }],
+			},
 			new AbortController().signal,
 			(partial: any) => updates.push(partial),
 			makeMockCtx(tmpDir),
@@ -263,7 +266,7 @@ describe("trace first invoke context header", () => {
 		let lastHeader = "";
 		await tool.execute(
 			"call-second",
-			{ cmd: "--intent 'read again'" },
+			{ intent: "read again" },
 			new AbortController().signal,
 			(partial: any) => {
 				const r = partial.details?.results?.[0];

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { createBatchCliTool } from "../src/cli/register.js";
-import { BatchCliParams } from "../src/cli/batch.js";
-import { createBatchReadCliTool } from "../src/cli/register.js";
-import { BatchReadCliParams } from "../src/cli/batch-read.js";
-import { createTraceTool, TraceCliParams } from "../src/tools/trace.js";
-import { FLOW_CLI_DESCRIPTION, FlowCliParams } from "../src/index.js";
+import {
+	createBatchReadTool,
+	createBatchTool,
+	BatchReadParams,
+	WeavePatchParams,
+} from "../src/batch/index.js";
+import { createTraceTool, TraceParams } from "../src/tools/trace.js";
+import { FLOW_TOOL_DESCRIPTION, FlowParams } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
 // TypeBox schema walker
@@ -63,10 +65,10 @@ function extractBracketTokens(text: string): string[] {
 // ---------------------------------------------------------------------------
 
 const tools = [
-	{ name: "batch_read", description: createBatchReadCliTool().description, schema: BatchReadCliParams },
-	{ name: "batch", description: createBatchCliTool().description, schema: BatchCliParams },
-	{ name: "trace", description: createTraceTool().description, schema: TraceCliParams },
-	{ name: "flow", description: FLOW_CLI_DESCRIPTION, schema: FlowCliParams },
+	{ name: "batch_read", description: createBatchReadTool().description, schema: BatchReadParams },
+	{ name: "batch", description: createBatchTool().description, schema: WeavePatchParams },
+	{ name: "trace", description: createTraceTool().description, schema: TraceParams },
+	{ name: "flow", description: FLOW_TOOL_DESCRIPTION, schema: FlowParams },
 ];
 
 describe("tool description hint hygiene", () => {

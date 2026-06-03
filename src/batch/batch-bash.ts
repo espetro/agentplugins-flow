@@ -299,13 +299,8 @@ export function truncateBashOutput(
 	return truncateBashOutputText(text, maxBytes, maxLines);
 }
 
-/**
- * Generate a short, unique identifier for batch-bash operations.
- * Used when the LLM does not provide its own `i` flag.
- */
-export function generateBashId(): string {
-	return Math.random().toString(36).slice(2, 10);
-}
+// Re-export normalizeBashOp and generateBashId from normalize.ts for backward compatibility
+export { normalizeBashOp, generateBashId } from "./normalize.js";
 
 /**
  * Execute a batch of bash ops concurrently.

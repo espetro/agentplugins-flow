@@ -10,13 +10,6 @@ import { stripDirectives } from "../steering/tool-utils.js";
 import type { FlowTier, ContextProfile, ToolResultCategory } from "../flow/agents.js";
 import { logWarn } from "../config/log.js";
 
-/** Extract --intent value from a trace cmd string for collapse deduplication. */
-function extractIntentFromTraceCmd(cmd: unknown): string {
-	if (typeof cmd !== "string") return "";
-	const m = cmd.match(/--intent(?:=|\s+)(?:"([^"]*)"|'([^']*)'|(\S+))/);
-	return m ? (m[1] || m[2] || m[3] || "").trim() : "";
-}
-
 export type CompressionLevel = "none" | "light" | "medium" | "aggressive";
 
 export interface CompressionStats {
@@ -628,7 +621,7 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 					// supersedes earlier ones. Empty/missing intent falls back to
 					// a generic "trace" key (matches existing flow dedup semantics
 					// where the latest run always wins).
-					const intent = (tc.arguments.intent || extractIntentFromTraceCmd(tc.arguments.cmd) || "").trim();
+					const intent = (tc.arguments.intent || "").trim();
 					const key = intent ? `trace:${intent.slice(0, 80)}` : "trace";
 					toolCallMap.set(id, { toolName: "trace", keys: [key], isReadWrite: false, op: "trace" });
 					const existing = lastExecution.get(key);

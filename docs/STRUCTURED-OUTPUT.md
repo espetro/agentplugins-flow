@@ -87,3 +87,5 @@ Only include fields that have data. Omit empty arrays; missing array fields are 
 | `nextStep` | `string` | Suggested follow-up for this item |
 
 ---
+
+*See also: [Field aliases reference](../TOOLS.md#field-aliases) for the unified alias system used in flow/trace dispatch normalization.*

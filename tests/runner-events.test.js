@@ -1031,7 +1031,10 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Flow failed";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "read src/index.ts; edit -f a -r b src/utils.ts",
+        o: [
+          { op: "read", path: "src/index.ts" },
+          { op: "edit", path: "src/utils.ts", edits: [{ oldText: "a", newText: "b" }] },
+        ],
       }),
     ];
     const summary = getFlowSummaryText(r);
@@ -1046,7 +1049,7 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Error";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "write -c 'export {};' src/new.ts",
+        o: [{ op: "write", path: "src/new.ts", content: "export {};" }],
       }),
     ];
     const summary = getFlowSummaryText(r);
@@ -1059,7 +1062,10 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Error";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "read a.ts; read b.ts",
+        o: [
+          { op: "read", path: "a.ts" },
+          { op: "read", path: "b.ts" },
+        ],
       }),
     ];
     const summary = getFlowSummaryText(r);
@@ -1072,7 +1078,12 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Error";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "read a.ts; read b.ts; edit -f a -r b c.ts; write -c 'export {};' d.ts",
+        o: [
+          { op: "read", path: "a.ts" },
+          { op: "read", path: "b.ts" },
+          { op: "edit", path: "c.ts", edits: [{ oldText: "a", newText: "b" }] },
+          { op: "write", path: "d.ts", content: "export {};" },
+        ],
       }),
     ];
     const summary = getFlowSummaryText(r);
@@ -1085,7 +1096,9 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Error";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "bash npm test",
+        o: [
+          { o: "bash", c: "npm test", p: "bash" },
+        ],
       }),
     ];
     const summary = getFlowSummaryText(r);
@@ -1099,7 +1112,12 @@ describe("getFlowSummaryText — batch", () => {
     r.stderr = "Error";
     r.messages = [
       makeToolCallMessage("batch", {
-        cmd: "read a.ts; read a.ts; read a.ts; edit -f a -r b b.ts",
+        o: [
+          { op: "read", path: "a.ts" },
+          { op: "read", path: "a.ts" },
+          { op: "read", path: "a.ts" },
+          { op: "edit", path: "b.ts", edits: [{ oldText: "a", newText: "b" }] },
+        ],
       }),
     ];
     const summary = getFlowSummaryText(r);

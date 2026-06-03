@@ -641,15 +641,15 @@ describe("batch patch integration", () => {
 	});
 
 	it("executes patch op through batch tool", async () => {
-		const { createBatchCliTool } = await import("../src/cli/register.js");
-		const tool = createBatchCliTool();
+		const { createBatchTool } = await import("../src/batch/index.js");
+		const tool = createBatchTool();
 		const patch = `*** Begin Patch
 *** Add File: batch-patch.txt
 +hello from batch
 *** End Patch`;
 		const result = await tool.execute(
 			"call-1",
-			{ cmd: `patch -c '${patch}'` },
+			{ o: [{ o: "patch", p: ".", c: patch }] },
 			undefined,
 			undefined,
 			{ cwd: tmpDir },
