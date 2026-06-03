@@ -151,6 +151,84 @@ describe("runFlow case-insensitive lookup", () => {
 		await promise;
 	});
 
+	it("maps unsupported thinking levels to valid values before passing --thinking", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const flowWithMinimalThinking: FlowConfig = {
+			...mockFlow,
+			thinking: "minimal",
+		};
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [flowWithMinimalThinking],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		const ti = args.indexOf("--thinking");
+		expect(ti).not.toBe(-1);
+		expect(args[ti + 1]).toBe("low");
+
+		mockProc.emit("close", 0);
+		await promise;
+	});
+
+	it("omits --thinking when the value is unmappable", async () => {
+		const mockProc = makeMockProcess();
+		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);
+
+		const flowWithBadThinking: FlowConfig = {
+			...mockFlow,
+			thinking: "foobar",
+		};
+
+		const opts: RunFlowOptions = {
+			cwd: "/tmp",
+			complexity: "moderate",
+			flows: [flowWithBadThinking],
+			flowName: "scout",
+			intent: "Test intent",
+			aim: "Test aim",
+			forkSessionSnapshotJsonl: null,
+			parentDepth: 0,
+			parentFlowStack: [],
+			maxDepth: 3,
+			preventCycles: true,
+			makeDetails: (results) => ({
+				mode: "flow",
+				flowStyle: "fork",
+				projectAgentsDir: null,
+				results,
+			}),
+		};
+
+		const promise = runFlow(opts);
+		const spawnCall = vi.mocked(childProcess.spawn).mock.calls[0];
+		const args = spawnCall[1] as string[];
+		expect(args).not.toContain("--thinking");
+
+		mockProc.emit("close", 0);
+		await promise;
+	});
+
 	it("omits structured output appendix when PI_FLOW_SKIP_STRUCTURED_DIRECTIVE is set", async () => {
 		const mockProc = makeMockProcess();
 		vi.mocked(childProcess.spawn).mockReturnValue(mockProc);

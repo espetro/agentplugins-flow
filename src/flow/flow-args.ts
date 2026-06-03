@@ -4,6 +4,7 @@
 
 import { type FlowConfig, getFlowTier } from "./agents.js";
 import { getInheritedCliArgs } from "../snapshot/cli-args.js";
+import { mapThinkingLevel } from "../config/thinking-level-map.js";
 import {
 	computeTransitionState,
 	buildGuardLine,
@@ -92,8 +93,13 @@ export function buildFlowArgs(
 	const skipStructuredDirective =
 		rawSkipSo !== undefined && ["1", "true", "yes"].includes(rawSkipSo.trim().toLowerCase());
 
-	const thinking = flow.thinking;
-	if (thinking) args.push("--thinking", thinking);
+	const rawThinking = flow.thinking;
+	if (rawThinking) {
+		const mappedThinking = mapThinkingLevel(rawThinking);
+		if (mappedThinking) {
+			args.push("--thinking", mappedThinking);
+		}
+	}
 
 	const { currentDepth, effectiveMaxDepth, canTransition } = computeTransitionState(parentDepth, maxDepth);
 
