@@ -30,6 +30,8 @@ export {
   updateGoalObjective,
   recordFlowCompletion,
   addTokens,
+  flushAllStoreCachesSync,
+  _clearStoreCache,
 } from "./store.js";
 
 export {
@@ -44,7 +46,7 @@ export {
 } from "./loop.js";
 
 export { setupFlowCommand, setupContinuation, setupWarp, setupLoopCommand };
-export { markFlowCompleted, shutdownWakeup } from "./continuation.js";
+export { markFlowCompleted, shutdownWakeup, cleanupContinuationState, clearAllContinuationState } from "./continuation.js";
 export { sessionRegistry };
 
 export function registerFlow(pi: ExtensionAPI): void {

@@ -66,6 +66,7 @@ const FLOW_FINAL_URGE_MS = getEnvInt("PI_FLOW_FINAL_URGE_MS", 135 * 1000);
 const REPORTING_GRACE_MS = getEnvInt("PI_FLOW_REPORTING_GRACE_MS", 90_000);
 const SNAP_THRESHOLD_MS = getEnvInt("PI_FLOW_SNAP_THRESHOLD_MS", 120_000);
 const FLOW_TOOL_SUMMARY_GRACE_MS = FLOW_FINAL_URGE_MS;
+const MAX_STDERR_BYTES = 100 * 1024; // 100KB cap for stderr accumulation
 import {
 	FLOW_DEPTH_ENV,
 	FLOW_MAX_DEPTH_ENV,
@@ -319,7 +320,9 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 
 		const dumpPath = process.env[FLOW_DUMP_SNAPSHOT_ENV] || inheritedCliArgs.dumpPath;
 		if (dumpPath) {
-			cleanupStaleDumps(dumpPath, resolveDumpMaxAgeHours());
+			cleanupStaleDumps(dumpPath, resolveDumpMaxAgeHours()).catch((err) => {
+				logWarn(`[pi-agent-flow] Background cleanupStaleDumps failed: ${err}`);
+			});
 
 			const effectiveTier = flow.tier ?? getFlowTier(flow.name);
 			const sanitizationHeader = `<!-- pi-agent-flow dump | Flow: ${flow.name} | Tier: ${effectiveTier} | Pipeline: ${pipelineVersion} | Generated: ${new Date().toISOString()} -->`;
@@ -354,7 +357,9 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 		}
 
 		if (opts.debugMode) {
-			cleanupStaleDebugDumps(cwd, resolveDumpMaxAgeHours());
+			cleanupStaleDebugDumps(cwd, resolveDumpMaxAgeHours()).catch((err) => {
+				logWarn(`[pi-agent-flow] Background cleanupStaleDebugDumps failed: ${err}`);
+			});
 
 			const safeFlowName = flow.name.replace(/[^\w.-]+/g, "_");
 			const uniqueSuffix = `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
@@ -454,7 +459,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			proc.stdin.end();
 
 			let abortHandler: (() => void) | undefined;
-			let buffer = "";
+			let chunks: Buffer[] = []; // Fix P2: Replace O(n^2) string concatenation with Buffer array accumulation
 			let didClose = false;
 			let settled = false;
 			let timeoutFired = false;
@@ -462,6 +467,8 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			let countdownTimer: NodeJS.Timeout | undefined;
 			let renderTimer: NodeJS.Timeout | undefined;
 			let finishKillTimer: NodeJS.Timeout | undefined;
+			let hasNewData = false; // Fix P3: Dirty flag for render optimization
+			let stderrTruncated = false; // Fix P2: Prevent redundant stderr re-truncation
 
 			const clearSemanticCompletionTimer = () => {
 				if (semanticCompletionTimer) {
@@ -536,9 +543,10 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				semanticCompletionTimerArmed = true;
 				semanticCompletionTimer = setTimeout(() => {
 					if (didClose || settled || !result.sawAgentEnd) return;
-					if (buffer.trim()) {
-						flushBufferedLines(buffer);
-						buffer = "";
+					const text = Buffer.concat(chunks).toString();
+					if (text.trim()) {
+						flushBufferedLines(text);
+						chunks = [];
 					}
 					finish(0);
 				}, AGENT_END_GRACE_MS);
@@ -546,14 +554,26 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			};
 
 			const onStdoutData = (chunk: Buffer) => {
-				buffer += chunk.toString();
-				const lines = buffer.split(/\r?\n/);
-				buffer = lines.pop() || "";
+				hasNewData = true; // Fix P3: Set BEFORE data processing to avoid race condition
+				chunks.push(chunk);
+				const text = Buffer.concat(chunks).toString();
+				const lines = text.split(/\r?\n/);
+				const remainder = lines.pop() || "";
+				chunks = remainder ? [Buffer.from(remainder)] : [];
 				for (const line of lines) flushLine(line);
 			};
 
 			const onStderrData = (chunk: Buffer) => {
-				result.stderr += chunk.toString();
+				// Fix P6: Cap stderr accumulation at 100KB to prevent unbounded growth
+				if (stderrTruncated) return;
+				const chunkStr = chunk.toString();
+				if (result.stderr.length + chunkStr.length > MAX_STDERR_BYTES) {
+					stderrTruncated = true;
+					const keepBytes = Math.max(0, MAX_STDERR_BYTES - 1000);
+					result.stderr = result.stderr.slice(0, keepBytes) + "\n... [stderr truncated]";
+				} else {
+					result.stderr += chunkStr;
+				}
 			};
 
 			proc.stdout.on("data", onStdoutData);
@@ -562,12 +582,18 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			if (onUpdate) {
 				renderTimer = setInterval(() => {
 					if (didClose || settled) return;
+					// Fix P3: Skip render updates when no new streaming data arrived
+					if (!hasNewData) return;
+					hasNewData = false;
 					emitUpdate();
 				}, 200);
 				renderTimer.unref();
 				if (effectiveTimeout > 0) {
 					countdownTimer = setInterval(() => {
 						if (didClose || settled) return;
+						// Fix P3: Skip render updates when no new streaming data arrived
+						if (!hasNewData) return;
+						hasNewData = false;
 						emitUpdate();
 					}, 1000);
 					countdownTimer.unref();
@@ -581,12 +607,14 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 				if (proc.pid !== undefined) {
 					unregisterChildGroup(proc.pid);
 				}
-				if (buffer.trim()) flushBufferedLines(buffer);
+				const text = Buffer.concat(chunks).toString();
+				if (text.trim()) flushBufferedLines(text);
 				finish(code ?? 0);
 			});
 
 			proc.on("error", (err) => {
 				if (!result.stderr.trim()) result.stderr = err.message;
+				if (proc.pid !== undefined) unregisterChildGroup(proc.pid); // Fix L1: Unregister child group on spawn error (error event suppresses close)
 				finish(1);
 			});
 

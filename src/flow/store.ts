@@ -7,21 +7,27 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { logWarn } from "../config/log.js";
-import { atomicWriteJsonSync } from "../io/atomic-write.js";
+import { atomicWriteJsonSync, atomicWriteJsonAsync } from "../io/atomic-write.js";
 import type { GoalEntry, GoalState, GoalStatus } from "./types.js";
 
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
+/*
+ * NOTE: No manual ensureDir is needed here. atomicWriteFile{Sync,Async}
+ * already creates the target directory via recursive mkdir.
+ */
 
 function getStorePath(cwd: string): string {
   return path.join(cwd, ".pi", "flow.json");
 }
 
+// Fix P9: Use in-memory cache with async flush to avoid blocking the event loop on goal state I/O
+const _cache = new Map<string, GoalState>();
+const _flushScheduled = new Set<string>();
+const _inFlightFlushes = new Map<string, Promise<void>>();
+const _flushHandles = new Map<string, NodeJS.Immediate>();
+const _flushResolvers = new Map<string, () => void>();
+const _syncFlushGeneration = new Map<string, number>(); // Generation counter for sync/async flush coordination
 
-export function readState(cwd: string): GoalState {
+function readFromDisk(cwd: string): GoalState {
   const filePath = getStorePath(cwd);
   if (!fs.existsSync(filePath)) {
     return { history: [] };
@@ -38,6 +44,18 @@ export function readState(cwd: string): GoalState {
   }
 }
 
+function deepCopy<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
+export function readState(cwd: string): GoalState {
+  const cached = _cache.get(cwd);
+  if (cached) return deepCopy(cached);
+  const state = readFromDisk(cwd);
+  _cache.set(cwd, state);
+  return deepCopy(state);
+}
+
 const MAX_HISTORY_ENTRIES = 5;
 const MAX_INTENT_LENGTH = 200;
 
@@ -51,8 +69,129 @@ function truncateIntent(intent: string): string {
   return intent.length > MAX_INTENT_LENGTH ? intent.slice(0, MAX_INTENT_LENGTH) : intent;
 }
 
+function _scheduleFlush(cwd: string): void {
+  if (_inFlightFlushes.has(cwd)) return;
+  const promise = new Promise<void>((resolve) => {
+    _flushResolvers.set(cwd, resolve);
+    const handle = setImmediate(() => {
+      _flushHandles.delete(cwd);
+      flushState(cwd).finally(() => {
+        _flushResolvers.delete(cwd);
+        resolve();
+      });
+    });
+    _flushHandles.set(cwd, handle);
+  });
+  _inFlightFlushes.set(cwd, promise);
+  promise.finally(() => _inFlightFlushes.delete(cwd));
+}
+
 export function writeState(cwd: string, state: GoalState): void {
-  atomicWriteJsonSync(getStorePath(cwd), state);
+  _cache.set(cwd, deepCopy(state));
+  _flushScheduled.add(cwd);
+  // Capture generation at scheduling time. If a sync flush increments the
+  // counter before this async flush runs, the flush will detect the mismatch
+  // and abort its rename to avoid overwriting fresher data.
+  _scheduleFlush(cwd);
+}
+
+async function flushState(cwd: string): Promise<void> {
+  while (_flushScheduled.has(cwd)) {
+    _flushScheduled.delete(cwd);
+    const state = _cache.get(cwd);
+    if (!state) return;
+
+    // Capture generation at entry. If a sync flush increments this counter
+    // while our async write is in-flight, our data becomes stale.
+    const capturedGeneration = _syncFlushGeneration.get(cwd) ?? 0;
+
+    try {
+      await atomicWriteJsonAsync(getStorePath(cwd), state, {
+        // If a sync flush incremented the generation during our async write,
+        // the sync flush already persisted the latest state. Abort our rename
+        // to avoid overwriting it with stale data.
+        shouldAbort: () => (_syncFlushGeneration.get(cwd) ?? 0) !== capturedGeneration,
+      });
+    } catch (err) {
+      logWarn(`[pi-agent-flow] Async flush failed for ${cwd}: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    // If a sync flush happened while we were writing, the sync flush already
+    // persisted the latest state. Continue to process any newly scheduled writes.
+    if ((_syncFlushGeneration.get(cwd) ?? 0) !== capturedGeneration) {
+      continue;
+    }
+
+    // Loop if more writes were scheduled during the async write
+  }
+}
+
+/** Flush all pending writes. For tests or graceful shutdown. */
+export function flushAllStoreCaches(): Promise<void> {
+  // Ensure every scheduled cwd has an in-flight flush
+  for (const cwd of Array.from(_flushScheduled)) {
+    _scheduleFlush(cwd);
+  }
+  // Wait for all in-flight flushes (deduplicated per cwd)
+  return Promise.all(Array.from(_inFlightFlushes.values())).then(() => {});
+}
+
+/**
+ * Synchronous flush of all cached store entries.
+ *
+ * This is the **shutdown-path fallback** only. The normal async flush
+ * (`flushAllStoreCaches`) is preferred during normal operation because it
+ * yields to the event loop. `process.on('exit')` handlers cannot await,
+ * so this sync variant guarantees data is persisted before the process
+ * terminates.
+ */
+export function flushAllStoreCachesSync(): void {
+  for (const cwd of Array.from(_cache.keys())) {
+    const state = _cache.get(cwd);
+    if (!state) continue;
+
+    // Cancel any pending setImmediate flush and resolve its promise
+    const handle = _flushHandles.get(cwd);
+    if (handle) {
+      clearImmediate(handle);
+      _flushHandles.delete(cwd);
+      const resolver = _flushResolvers.get(cwd);
+      if (resolver) {
+        resolver();
+        _flushResolvers.delete(cwd);
+      }
+    }
+    _flushScheduled.delete(cwd);
+
+    // Increment generation BEFORE writing. This ensures any in-flight async
+    // flush will see the generation change and abort its rename.
+    const currentGen = _syncFlushGeneration.get(cwd) ?? 0;
+    _syncFlushGeneration.set(cwd, currentGen + 1);
+    try {
+      atomicWriteJsonSync(getStorePath(cwd), state);
+    } catch (err) {
+      logWarn(
+        `[pi-agent-flow] Sync flush failed for ${cwd}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/** Clear the in-memory cache. For tests. */
+export function _clearStoreCache(): void {
+  for (const handle of _flushHandles.values()) {
+    clearImmediate(handle);
+  }
+  for (const resolver of _flushResolvers.values()) {
+    resolver();
+  }
+  _flushHandles.clear();
+  _flushResolvers.clear();
+  _cache.clear();
+  _flushScheduled.clear();
+  _inFlightFlushes.clear();
+  _syncFlushGeneration.clear();
 }
 
 export function getGoal(cwd: string): GoalEntry | undefined {
@@ -175,5 +314,3 @@ export function addTokens(cwd: string, tokens: number): GoalEntry | undefined {
   writeState(cwd, state);
   return state.current;
 }
-
-

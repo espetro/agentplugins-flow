@@ -24,6 +24,8 @@ const seenSignaturesMap = new WeakMap<object, Set<string>>();
 const streamingTextBufferMap = new WeakMap<object, string>();
 const lastEmittedWordCountMap = new WeakMap<object, number>();
 const streamingEstimateMap = new WeakMap<object, { chars: number }>();
+// Fix P8: Add LRU eviction to seenSignaturesMap to prevent unbounded Set growth
+const MAX_SEEN_SIGNATURES = 10000;
 const smoothedTpsMap = new WeakMap<object, number>();
 const lastEmitTimeMap = new WeakMap<object, number>();
 const pendingTokensMap = new WeakMap<object, number>();
@@ -37,6 +39,19 @@ function getSeenFlowMessageSignatures(result: object): Set<string> {
 		seenSignaturesMap.set(result, new Set());
 	}
 	return seenSignaturesMap.get(result)!;
+}
+
+function addSeenSignature(result: object, signature: string): void {
+	const seen = getSeenFlowMessageSignatures(result);
+	seen.add(signature);
+	while (seen.size > MAX_SEEN_SIGNATURES) {
+		const oldest = seen.values().next().value;
+		if (oldest !== undefined) {
+			seen.delete(oldest);
+		} else {
+			break;
+		}
+	}
 }
 
 interface StreamingTextState {
@@ -324,6 +339,9 @@ function accumulateStreamingDelta(result: object, delta: string): boolean {
 	return false;
 }
 
+// Fix P13: Cache stableStringify results for repeated object references
+const stableStringifyCache = new WeakMap<object, string>();
+
 export function stableStringify(value: unknown, seen = new WeakSet<object>()): string {
 	if (value === null || typeof value !== "object") {
 		return JSON.stringify(value);
@@ -332,11 +350,20 @@ export function stableStringify(value: unknown, seen = new WeakSet<object>()): s
 	if (seen.has(value)) {
 		return '"[Circular]"';
 	}
+
+	// Fix P13: Cache stableStringify results for repeated object references
+	if (stableStringifyCache.has(value)) {
+		return stableStringifyCache.get(value)!;
+	}
+
 	seen.add(value);
 
 	if (Array.isArray(value)) {
 		const out = `[${value.map((item) => stableStringify(item, seen)).join(",")}]`;
 		seen.delete(value);
+		if (!out.includes('"[Circular]"')) {
+			stableStringifyCache.set(value, out);
+		}
 		return out;
 	}
 
@@ -345,6 +372,9 @@ export function stableStringify(value: unknown, seen = new WeakSet<object>()): s
 		.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue, seen)}`)
 		.join(",")}}`;
 	seen.delete(value);
+	if (!out.includes('"[Circular]"')) {
+		stableStringifyCache.set(value, out);
+	}
 	return out;
 }
 
@@ -466,7 +496,7 @@ function addFlowAssistantMessage(result: FlowResult, message: AssistantMessage):
 	const signature = getMessageSignature(sanitized);
 	const seen = getSeenFlowMessageSignatures(result);
 	if (seen.has(signature)) return false;
-	seen.add(signature);
+	addSeenSignature(result, signature);
 
 	result.messages.push(sanitized as Message);
 
@@ -555,7 +585,7 @@ function addFlowToolMessage(result: FlowResult, message: ToolMessage): boolean {
 	const signature = getMessageSignature(message);
 	const seen = getSeenFlowMessageSignatures(result);
 	if (seen.has(signature)) return false;
-	seen.add(signature);
+	addSeenSignature(result, signature);
 
 	result.messages.push(message as Message);
 	return true;
