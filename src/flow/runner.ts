@@ -527,6 +527,7 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			};
 
 			const flushLine = (line: string) => {
+				if (settled || didClose) return;
 				if (processFlowJsonLine(line, result)) emitUpdate();
 				maybeFinishFromAgentEnd();
 			};
@@ -602,13 +603,13 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			}
 
 			proc.on("close", (code) => {
+				const text = Buffer.concat(chunks).toString();
+				if (text.trim()) flushBufferedLines(text);
 				didClose = true;
 				clearFinishKillTimer();
 				if (proc.pid !== undefined) {
 					unregisterChildGroup(proc.pid);
 				}
-				const text = Buffer.concat(chunks).toString();
-				if (text.trim()) flushBufferedLines(text);
 				finish(code ?? 0);
 			});
 
