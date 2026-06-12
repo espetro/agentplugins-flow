@@ -3753,16 +3753,60 @@ describe("batch web operations", () => {
 		expect(result.details.results[2]).toMatchObject({ op: "search", q: "test", status: "ok" });
 	});
 
-	it("rejects web operations in batch_read", async () => {
+	it("executes web ops in batch_read via w array", async () => {
+		fs.writeFileSync(path.join(tmpDir, "test.txt"), "file content\n", "utf-8");
+
+		const tool = createBatchReadTool();
+		const result = await tool.execute(
+			"call-1",
+			{ o: [{ o: "read", p: "test.txt" }], w: [{ o: "search", q: "test" }] },
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(runWebOpsSpy).toHaveBeenCalledWith(
+			{ op: [{ o: "search", q: "test" }] },
+			expect.any(Object),
+			undefined,
+		);
+		expect(result.content[0].text).toContain("file content");
+		expect(result.content[0].text).toContain("mocked web output");
+		expect(result.details.results).toHaveLength(2);
+		expect(result.details.results[0]).toMatchObject({ op: "read", status: "ok" });
+		expect(result.details.results[1]).toMatchObject({ op: "search", q: "test", status: "ok" });
+	});
+
+	it("executes web-only batch_read calls (empty o)", async () => {
+		const tool = createBatchReadTool();
+		const result = await tool.execute(
+			"call-1",
+			{ w: [{ o: "search", q: "test query" }] },
+			undefined,
+			undefined,
+			makeCtx(tmpDir),
+		);
+
+		expect(runWebOpsSpy).toHaveBeenCalledWith(
+			{ op: [{ o: "search", q: "test query" }] },
+			expect.any(Object),
+			undefined,
+		);
+		expect(result.content[0].text).toContain("mocked web output");
+		expect(result.details.results).toHaveLength(1);
+		expect(result.details.results[0]).toMatchObject({ op: "search", q: "test", status: "ok" });
+	});
+
+	it("still rejects write/bash ops in batch_read o array alongside web ops", async () => {
 		const tool = createBatchReadTool();
 		await expect(
 			tool.execute(
 				"call-1",
-				{ o: [{ o: "read", p: "test.txt" }], w: [{ o: "search", q: "test" }] },
+				{ o: [{ o: "write", p: "test.txt", c: "x" }], w: [{ o: "search", q: "test" }] },
 				undefined,
 				undefined,
 				makeCtx(tmpDir),
 			),
-		).rejects.toThrow("batch_read does not support web operations");
+		).rejects.toThrow("batch_read only supports read operations");
 	});
 });

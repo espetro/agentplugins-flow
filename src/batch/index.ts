@@ -151,12 +151,12 @@ const WebOp = Type.Union([
 export const WeavePatchParams = Type.Object({
 	o: Type.Array(FileOp, {
 		description:
-			"Ordered list of operations. File ops (read/write/edit/delete) execute sequentially — each operation executes independently; failures are reported per-operation without stopping remaining ops. Bash ops (bash) run in parallel after file ops complete and do not skip each other on failure.",
+			"Ordered operations. File ops run sequentially and independently — a failure never stops remaining ops. Bash ops run in parallel after file and web ops complete.",
 	}),
 	w: Type.Optional(
 		Type.Array(WebOp, {
 			description:
-				"Web operations (search or fetch) to perform. Executed after file ops, before bash ops. Use w: [{ o: 'search', q: '...' }] or w: [{ o: 'fetch', u: '...', f: 'markdown' }]",
+				"Web ops, run after file ops and before bash. E.g. w: [{ o: 'search', q: '...' }] or [{ o: 'fetch', u: '...' }]",
 		}),
 		),
 });
@@ -221,6 +221,12 @@ export const BatchReadParams = Type.Object({
 		description:
 			"Ordered list of read operations. Executed sequentially. Each operation executes independently; failures are reported per-operation without stopping remaining ops.",
 	}),
+	w: Type.Optional(
+		Type.Array(WebOp, {
+			description:
+				"Web ops, run after read ops. E.g. w: [{ o: 'search', q: '...' }] or [{ o: 'fetch', u: '...' }]",
+		}),
+	),
 });
 
 // ---------------------------------------------------------------------------
@@ -289,16 +295,10 @@ function prepareArguments(input: unknown): { o: unknown[]; w?: unknown[] } | unk
 	return result;
 }
 
-function prepareBatchReadArguments(input: unknown): { o: FileOpInput[] } | unknown {
+function prepareBatchReadArguments(input: unknown): { o: FileOpInput[]; w?: unknown[] } | unknown {
 	const prepared = prepareArguments(input);
 	const ops = Array.isArray(prepared) ? prepared : (prepared as { o: unknown[] }).o;
 	if (!Array.isArray(ops)) return { o: [] };
-
-	// batch_read is local-only — reject web ops
-	const webOpsInRead = (prepared as { w?: unknown[] }).w;
-	if (webOpsInRead && webOpsInRead.length > 0) {
-		throw new Error("batch_read does not support web operations. Use the full `batch` tool with w: [...] for web ops.");
-	}
 
 	const normalizedOps: unknown[] = [];
 	const allowedBatchReadOps = new Set(["read", "rg"]);
@@ -311,7 +311,12 @@ function prepareBatchReadArguments(input: unknown): { o: FileOpInput[] } | unkno
 		}
 		normalizedOps.push(normalized);
 	}
-	return { o: normalizedOps };
+	const result: { o: unknown[]; w?: unknown[] } = { o: normalizedOps };
+	const webOps = (prepared as { w?: unknown[] }).w;
+	if (webOps !== undefined) {
+		result.w = webOps;
+	}
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,11 +327,12 @@ export function createBatchReadTool() {
 	return {
 		name: "batch_read",
 		label: "batch_read",
-		description: "Read-only. Files and ripgrep only. Returns verbatim file contents (by section) or ripgrep matches (by pattern). Does not execute shell commands, write to files, or fetch URLs. Supported ops: [read] [rg].",
-		promptSnippet: "Read multiple files/sections in one call (read-only)",
+		description: "Read-only: verbatim file contents (whole or by [s]/[l] section), ripgrep matches, and web ([search] [fetch]) via the [w] array. Ops: [read] [rg]. Order: reads first, then web. No shell or writes.",
+		promptSnippet: "Read multiple files/sections + web search/fetch in one call (read-only)",
 		promptGuidelines: [
 			"Combine multiple read/rg ops into one call.",
 			"Use `s` (start line) and `l` (line count) to target specific sections of large files.",
+			"Web: `w: [{ o: 'search', q: '...' }]` or `w: [{ o: 'fetch', u: '...' }]` — runs after read ops.",
 		],
 		parameters: BatchReadParams,
 		prepareArguments: prepareBatchReadArguments,
@@ -344,14 +350,17 @@ export function createBatchReadTool() {
 			const ops = Array.isArray(prepared)
 				? (prepared as FileOpInput[])
 				: (prepared as { o: FileOpInput[] }).o;
+			const webOps = (prepared as { w?: unknown[] }).w;
 
-			if (!Array.isArray(ops) || ops.length === 0) {
-				throw new Error("Error: o array is required and must not be empty.");
+			const hasReadOps = Array.isArray(ops) && ops.length > 0;
+			const hasWebOps = Array.isArray(webOps) && webOps.length > 0;
+			if (!hasReadOps && !hasWebOps) {
+				throw new Error("Error: o or w array must not be empty.");
 			}
 
 			// Defensive validation: reject any non-read/rg operations
 			const allowedBatchReadOps = new Set(["read", "rg"]);
-			for (const op of ops) {
+			for (const op of hasReadOps ? ops : []) {
 				if (!allowedBatchReadOps.has(op.o)) {
 					throw new Error(`Error: batch_read only supports read operations. Received ${op.o} for ${op.p}.`);
 				}
@@ -361,10 +370,42 @@ export function createBatchReadTool() {
 				throw new Error("Operation aborted.");
 			}
 
-			const { contentText, results } = await executeOperations(ops, ctx.cwd, signal, {
-				readOptions: { truncate: false, toolName: "batch_read" },
-				includeLimitWarnings: false,
-			}, onUpdate);
+			// Execute read ops first (sequential)
+			let readContentText = "";
+			let readResults: import("./constants.js").OpResult[] = [];
+			if (hasReadOps) {
+				const readOutput = await executeOperations(ops, ctx.cwd, signal, {
+					readOptions: { truncate: false, toolName: "batch_read" },
+					includeLimitWarnings: false,
+				}, onUpdate);
+				readContentText = readOutput.contentText;
+				readResults = readOutput.results;
+			}
+
+			// Execute web ops after read ops (sequential)
+			let webContentText = "";
+			let webResults: import("./constants.js").OpResult[] = [];
+			if (hasWebOps) {
+				if (onUpdate && hasReadOps) {
+					onUpdate({
+						content: [{ type: "text", text: readContentText }],
+						details: { results: readResults },
+					});
+				}
+				try {
+					const webOutput = await runWebOps({ op: webOps as import("../tools/web-ops.js").WebOpInput[] }, ctx, signal);
+					webContentText = webOutput.content[0].text;
+					webResults = webOutput.details.ops as unknown as import("./constants.js").OpResult[];
+				} catch (err) {
+					// Catastrophic failure in runWebOps itself (should not happen with per-op handling)
+					const errorText = err instanceof Error ? err.message : String(err);
+					webContentText = `\n--- web error (unexpected) ---\n${errorText}`;
+					webResults = [];
+				}
+			}
+
+			const contentText = [readContentText, webContentText].filter(Boolean).join("\n");
+			const results = [...readResults, ...webResults];
 
 			const readResult = {
 				content: [{ type: "text", text: loopWarning ? contentText + loopWarning : contentText }],
@@ -390,11 +431,11 @@ export function createBatchTool(bashTracker?: BashProcessTracker, toolOptimize?:
 	return {
 		name: "batch",
 		label: "batch",
-		description: "Multi-op executor. File ops, bash, and web in one call. File/shell ops ([read] [write] [edit] [delete] [patch] [bash] [rg]) execute first; web ([search] [fetch]) runs after via the [w] array.",
+		description: "Multi-op executor: file ops, bash, and web in one call. Ops in [o]: [read] [write] [edit] [delete] [patch] [rg] [bash]; web ([search] [fetch]) goes in [w]. Order: file ops, then web, then bash (parallel).",
 		promptSnippet: "Batch: file ops + bash + web in one call",
 		promptGuidelines: [
 			"Combine all pending operations into a single `batch` call.",
-			"File ops execute first; bash runs after. Use write → bash to run scripts.",
+			"File ops run first, then web, then bash — write → bash is safe for scripts.",
 			"Web: `w: [{ o: 'search', q: '...' }]` or `w: [{ o: 'fetch', u: '...' }]`",
 			"Field aliases: cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l. Canonical wins.",
 			...(toolOptimize ? ["Batch is your ONLY edit tool — no separate edit command."] : []),

@@ -202,9 +202,9 @@ Some malformed inputs are **silently dropped** by the normalizer — the canonic
 When **tool optimization** is enabled (default), the separate `read` / `write` / `edit` tools are replaced by:
 
 - **`batch`** — sequential read, write, edit, and delete operations in one call. Edits use fuzzy matching and preserve line endings.
-- **`batch_read`** — read-only variant for multiple reads. Small full-file reads return raw content; large full-file reads return code/infra context maps or total line counts, and oversized targeted reads are capped with continuation guidance.
+- **`batch_read`** — read-only variant for multiple reads. Small full-file reads return raw content; large full-file reads return code/infra context maps or total line counts, and oversized targeted reads are capped with continuation guidance. Also accepts web ops (`search` / `fetch`) via the `w` array, executed after read ops.
 
-  > **Caution:** `batch_read` only supports read-only operations (`read` and `rg`). It does **not** support `edit`, `write`, `delete`, `bash`, or `patch` — use the full `batch` tool for those.
+  > **Caution:** the `batch_read` `o` array only supports read-only operations (`read` and `rg`). It does **not** support `edit`, `write`, `delete`, `bash`, or `patch` — use the full `batch` tool for those.
 
 ## `batch_bash_poll` — poll pending bash commands
 

@@ -194,20 +194,19 @@ export const FlowParams = Type.Object({
 	}],
 });
 
-// Exported for static description-hygiene tests. Keep in sync with the
-// `pi.registerTool({ description, promptSnippet, promptGuidelines, ... })` call
-// inside the default export below.
+// Exported for static description-hygiene tests and used directly by the
+// `pi.registerTool(...)` call inside the default export below.
 export const FLOW_TOOL_DESCRIPTION =
-	"Spawns specialized agent flows. Each task needs [type] [intent] [aim] [concern] [complexity]; the [flow] array must contain only complete task objects. Routes work to [scout] [build] [audit] [debug] [craft] [ideas] agents. Complexity: [snap] [simple] [moderate] [complex] [intricate].";
+	"Spawns specialized [scout] [build] [audit] [debug] [craft] [ideas] agent flows. The [flow] array holds complete task objects only; each needs [type] [intent] [aim] [concern] [complexity].";
 
 export const FLOW_TOOL_PROMPT_SNIPPET =
 	"Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.";
 
 export const FLOW_TOOL_PROMPT_GUIDELINES: readonly string[] = [
-	"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
+	"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `concern`, `complexity`.",
 	"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
 	"For quick file reads/checks, use `trace` instead.",
-	"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
+	"The `flow` array holds complete FlowItem objects only — no commentary, newlines, or retry notes between elements. After a failed call, rebuild it cleanly from scratch.",
 ];
 
 const inheritedCliArgs = getInheritedCliArgs();
@@ -634,13 +633,8 @@ export default function (pi: ExtensionAPI) {
 		pi.registerTool({
 			name: "flow",
 			label: "Flow",
-			promptSnippet: "Dive into specialized flows (scout, debug, build, craft, audit, ideas) via a `flow` array.",
-			promptGuidelines: [
-				"Combine multiple tasks into one `flow` call. Each needs `type`, `intent`, `aim`, `complexity`.",
-				"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the flow starts.",
-				"For quick file reads/checks, use `trace` instead.",
-				"The `flow` array must contain only complete FlowItem objects. No commentary, no newlines, no retry notes between elements. If a previous call failed, rebuild the call cleanly from scratch.",
-			],
+			promptSnippet: FLOW_TOOL_PROMPT_SNIPPET,
+			promptGuidelines: [...FLOW_TOOL_PROMPT_GUIDELINES],
 			description: FLOW_TOOL_DESCRIPTION,
 			parameters: FlowParams,
 			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition

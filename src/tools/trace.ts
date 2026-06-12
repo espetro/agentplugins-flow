@@ -285,7 +285,7 @@ export function createTraceTool(opts: TraceToolOptions = {}) {
 			"All fields optional — the trace agent infers its mission from context.",
 			"Optional `dispatch` runs pre-flight reads, writes, edits, or bash commands before the trace starts.",
 		],
-		description: "Read-first investigation with optional pre-flight tools. Reads files verbatim and runs pre-flight checks via [batch] [bash] [web] dispatch before the trace starts. All fields optional; defaults to a [simple] budget. Use for code investigation, exploration, and verification.",
+		description: "Read-first investigation: verbatim reads, checks, and codebase exploration. Optional [dispatch] runs [batch] [bash] [web] ops before the trace starts, results injected into its prompt. All fields optional; default [simple] budget.",
 		parameters: TraceParams,
 		prepareArguments: (input: unknown) => {
 			const result = prepareTraceDispatchArguments(input);

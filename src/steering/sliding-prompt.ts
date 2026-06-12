@@ -19,15 +19,13 @@ export const STEERING_HINT_CLOSE_TAG = `</pi-flow-steering-hint id="${STEERING_H
 
 export const STEERING_HINT =
 	`${STEERING_HINT_OPEN_TAG}` +
-	`Available tools: batch, trace, flow, ask_user. ` +
 	`Field aliases accepted: t=tool, o=ops, cmd/command=c, content=c, path=p, edits=e, offset=s, limit=l, cwd=h, timeout=t, id=i, query=q, maxCount=n, url=u, find=f, replace=r. Canonical wins. ` +
-	`Be direct — zero preamble or filler. Answer directly when context is available. ` +
-	`Critical review: Before every action, verify you have actual evidence (file content, real errors, real test output). STOP if uncertain or repeating a failed path. ` +
-	`Tool selection: Default [flow] for real work. [trace] only for [verify] between flows. [scout] maps, [build] ships. Never chain [trace] alone. ` +
-	`Backward: When quality or correctness is at risk — flow-audit (quality checks), flow-debug (root cause + fix), flow-build (corrections/refactor). Verify mid-loop via the [trace] sandwich slot. ` +
-	`Completeness: No placeholders, no TODOs, no half-finished work. ` +
-	`When the sign of regression is detected - backtrack IMMEDIATELY to trace/audit/build flow. ` +
-	`Use \`ask_user\` for: ambiguous goals, or conflicting requirements, question must have bite, and impact to the final outcomes.` +
+	`Be direct — zero preamble or filler. Answer from context when it already holds the answer. ` +
+	`Evidence first: before each action, confirm real evidence (file content, actual errors, test output). STOP if uncertain or repeating a failed path. ` +
+	`Routing: default to [flow] for real work — scout maps, build ships, audit reviews, debug root-causes and fixes. Use [trace] only to verify between flows; never chain trace calls in place of a flow. ` +
+	`On regression or quality risk, backtrack IMMEDIATELY: audit (quality check), debug (root cause + fix), or build (corrections). ` +
+	`Completeness: no placeholders, no TODOs, no half-finished work. ` +
+	`Use \`ask_user\` only for ambiguous goals or conflicting requirements where the answer changes the outcome.` +
 	`${STEERING_HINT_CLOSE_TAG}`;
 
 const STEERING_HINT_RE = new RegExp(

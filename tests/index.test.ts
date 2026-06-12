@@ -705,7 +705,7 @@ describe("flow tool execute", () => {
 			expect((modified[1] as any).content[0].text).toBe("ok");
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("Available tools:");
+			expect((modified[2] as any).content).toContain("Field aliases accepted:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
@@ -725,7 +725,7 @@ describe("flow tool execute", () => {
 
 			expect((modified[2] as any).role).toBe("system");
 			expect((modified[2] as any).content).toMatch(/<pi-flow-steering-hint\b/);
-			expect((modified[2] as any).content).toContain("Available tools:");
+			expect((modified[2] as any).content).toContain("Field aliases accepted:");
 			expect((modified[3] as any).content).toBe("second prompt");
 		});
 
