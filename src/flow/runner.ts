@@ -527,7 +527,13 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			};
 
 			const flushLine = (line: string) => {
-				if (settled || didClose) return;
+				// Guard: Node.js stdout 'data' events can arrive after close/settle.
+				// Processing lines post-resolution would mutate result after the
+				// promise resolved and could arm semantic timers that finish() clears.
+				if (settled || didClose) {
+					logWarn(`[pi-agent-flow] flushLine: dropping line after ${settled ? 'settle' : 'close'}: ${line.slice(0, 80)}`);
+					return;
+				}
 				if (processFlowJsonLine(line, result)) emitUpdate();
 				maybeFinishFromAgentEnd();
 			};
@@ -603,6 +609,9 @@ export async function runFlow(opts: RunFlowOptions): Promise<SingleResult> {
 			}
 
 			proc.on("close", (code) => {
+				// Flush buffered output BEFORE setting didClose so that flushLine's
+				// maybeFinishFromAgentEnd() can arm the semantic completion timer
+				// without it being immediately cleared by finish().
 				const text = Buffer.concat(chunks).toString();
 				if (text.trim()) flushBufferedLines(text);
 				didClose = true;
