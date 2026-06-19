@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("../src/flow/loop.js", () => ({
+  setPendingWarpSessionId: vi.fn(),
+  clearPendingWarpSessionId: vi.fn(),
+  recordSessionWarp: vi.fn(),
+}));
+
 import setupWarp from "../src/flow/warp.js";
 
 describe("setupWarp", () => {
@@ -38,6 +44,7 @@ describe("setupWarp", () => {
 		const newSession = vi.fn().mockResolvedValue({ cancelled: false });
 		const ctx = {
 			model: { provider: "test", id: "test" },
+			cwd: "/tmp/test",
 			sessionManager: { getBranch, getSessionFile, getSessionId: () => "sid" },
 			ui: { notify },
 			newSession,
@@ -65,6 +72,7 @@ describe("setupWarp", () => {
 		const newSession = vi.fn();
 		const ctx = {
 			model: { provider: "test", id: "test" },
+			cwd: "/tmp/test",
 			sessionManager: { getBranch, getSessionFile, getSessionId: () => "sid" },
 			ui: { notify },
 			newSession,
@@ -90,6 +98,7 @@ describe("setupWarp", () => {
 		const newSession = vi.fn().mockResolvedValue({ cancelled: false });
 		const ctx = {
 			model: { provider: "test", id: "test" },
+			cwd: "/tmp/test",
 			sessionManager: { getBranch, getSessionFile, getSessionId: () => "sid" },
 			ui: { notify },
 			newSession,
@@ -134,6 +143,7 @@ describe("setupWarp", () => {
 		const newSession = vi.fn().mockResolvedValue({ cancelled: true });
 		const ctx = {
 			model: { provider: "test", id: "test" },
+			cwd: "/tmp/test",
 			sessionManager: { getBranch, getSessionFile, getSessionId: () => "sid" },
 			ui: { notify },
 			newSession,
@@ -158,6 +168,7 @@ describe("setupWarp", () => {
 		const newSession = vi.fn();
 		const ctx = {
 			model: { provider: "test", id: "test" },
+			cwd: "/tmp/test",
 			sessionManager: { getBranch, getSessionFile, getSessionId: () => "sid" },
 			ui: { notify },
 			newSession,

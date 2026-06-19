@@ -178,37 +178,42 @@ export function setupContinuation(pi: ExtensionAPI): void {
           : "";
     addTokens(cwd, Math.ceil(messageText.length / 4));
 
+    // Re-read goal to get updated token count — addTokens mutates the
+    // store, but our local `goal` is a stale deep copy from above.
+    const freshGoal = getGoal(cwd);
+    if (!freshGoal || freshGoal.status !== "active") return;
+
     // Budget guards — silent
-    const flowCount = goal.completedFlows.length;
-    const overTokens = goal.maxTokens !== undefined && goal.totalTokens >= goal.maxTokens;
-    const overFlows = goal.maxFlows !== undefined && flowCount >= goal.maxFlows;
+    const flowCount = freshGoal.completedFlows.length;
+    const overTokens = freshGoal.maxTokens !== undefined && freshGoal.totalTokens >= freshGoal.maxTokens;
+    const overFlows = freshGoal.maxFlows !== undefined && flowCount >= freshGoal.maxFlows;
 
     // Budget guards — actually pause when exceeded
     if (overTokens || overFlows) {
       if (loop?.status === "active") {
-        const warpPrompt = buildAutoWarpPrompt(goal, loop);
+        const warpPrompt = buildAutoWarpPrompt(freshGoal, loop);
         pi.sendMessage({ content: warpPrompt, display: false }, { triggerTurn: true });
         return;
       }
       updateGoalStatus(cwd, "paused");
       const pausedPrompt = budgetLimitTemplate
-        .replace("{{objective}}", goal.objective)
-        .replace("{{totalTokens}}", String(goal.totalTokens))
-        .replace("{{maxTokens}}", String(goal.maxTokens ?? "unlimited"))
+        .replace("{{objective}}", freshGoal.objective)
+        .replace("{{totalTokens}}", String(freshGoal.totalTokens))
+        .replace("{{maxTokens}}", String(freshGoal.maxTokens ?? "unlimited"))
         .replace("{{flowCount}}", String(flowCount))
-        .replace("{{maxFlows}}", String(goal.maxFlows ?? "unlimited"));
+        .replace("{{maxFlows}}", String(freshGoal.maxFlows ?? "unlimited"));
       pi.sendMessage({ content: pausedPrompt, display: false }, { triggerTurn: true });
       return;
     }
 
     // Build a continuation prompt with goal context
-    const maxFlowsClause = goal.maxFlows !== undefined ? `/${goal.maxFlows}` : '';
-    const tokenInfo = `${goal.totalTokens}${goal.maxTokens !== undefined ? `/${goal.maxTokens}` : ''}`;
-    const acceptanceClause = goal.acceptance ? `\nAcceptance: ${goal.acceptance}` : '';
+    const maxFlowsClause = freshGoal.maxFlows !== undefined ? `/${freshGoal.maxFlows}` : '';
+    const tokenInfo = `${freshGoal.totalTokens}${freshGoal.maxTokens !== undefined ? `/${freshGoal.maxTokens}` : ''}`;
+    const acceptanceClause = freshGoal.acceptance ? `\nAcceptance: ${freshGoal.acceptance}` : '';
 
     const continuationPrompt = (loop?.status === "active")
       ? loopContinuationPromptTemplate
-          .replace('{{objective}}', goal.objective)
+          .replace('{{objective}}', freshGoal.objective)
           .replace('{{acceptanceClause}}', acceptanceClause)
           .replace('{{flowCount}}', String(flowCount))
           .replace('{{maxFlowsClause}}', maxFlowsClause)
@@ -217,7 +222,7 @@ export function setupContinuation(pi: ExtensionAPI): void {
           .replace('{{sessionCount}}', String(loop.sessionCount))
           .replace('{{totalTokensAcrossSessions}}', String(loop.totalTokensAcrossSessions))
       : continuationPromptTemplate
-          .replace('{{objective}}', goal.objective)
+          .replace('{{objective}}', freshGoal.objective)
           .replace('{{acceptanceClause}}', acceptanceClause)
           .replace('{{flowCount}}', String(flowCount))
           .replace('{{maxFlowsClause}}', maxFlowsClause)

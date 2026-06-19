@@ -12,6 +12,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { setPendingWarpSessionId, clearPendingWarpSessionId, recordSessionWarp } from "./loop.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
@@ -204,11 +205,18 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			const cwd = ctx.cwd;
+			const sessionId = ctx.sessionManager.getSessionId();
+
 			const task = args.trim() || DEFAULT_GOAL;
 
 			const currentSessionFile = ctx.sessionManager.getSessionFile();
 			const startIndex = ctx.sessionManager.getBranch().length;
 
+			// Mark loop state: warp is pending for this session
+			setPendingWarpSessionId(cwd, sessionId);
+
+			try {
 			const warpRequest = `${WARP_INSTRUCTIONS}\n\nTask for the next agent:\n${task}`;
 
 			if (ctx.isIdle()) {
@@ -222,6 +230,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (!warpTurn) {
 				notify("Timed out waiting for warp note", "error");
+				clearPendingWarpSessionId(cwd);
 				return;
 			}
 
@@ -229,6 +238,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (!warpNote) {
 				notify("Failed to capture warp note from the assistant response", "error");
+				clearPendingWarpSessionId(cwd);
 				return;
 			}
 
@@ -244,8 +254,17 @@ export default function (pi: ExtensionAPI) {
 
 			if (newSessionResult.cancelled) {
 				notify("New session cancelled", "info");
+				clearPendingWarpSessionId(cwd);
 				return;
 			}
+
+			// Warp succeeded — record session count and clear pending state
+			recordSessionWarp(cwd);
+			clearPendingWarpSessionId(cwd);
+		} catch (err) {
+			clearPendingWarpSessionId(cwd);
+			throw err;
+		}
 		},
 	});
 }
