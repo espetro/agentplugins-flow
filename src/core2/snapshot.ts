@@ -267,6 +267,118 @@ const CONTEXT_MAP_ENTRY = {
 	},
 };
 
+/**
+ * Strip orphaned toolResult messages and batch_read toolCalls from snapshot entries.
+ *
+ * After compression/trimming, assistant messages may be dropped while their
+ * toolResult children remain. Strict API providers (kimi, DeepSeek) reject
+ * these with `400 tool_call_id is not found`.
+ *
+ * Also strips batch_read toolCalls from assistant messages since child flows
+ * don't have batch_read in their active tools.
+ */
+function stripOrphanedToolResultsAndBatchRead(entries: unknown[]): unknown[] {
+	const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object";
+	const getToolCallId = (value: unknown): string | undefined => normalizeToolCallId(value);
+	const getToolResultId = (value: Record<string, unknown>): string | undefined => {
+		return (value.toolCallId as string | undefined) || (value[SNAKE_TOOL_CALL_ID] as string | undefined);
+	};
+	const getToolName = (value: Record<string, unknown>): string | undefined => {
+		if (typeof value.name === "string") return value.name;
+		const nested = value.toolCall;
+		if (isRecord(nested) && typeof nested.name === "string") return nested.name;
+		return undefined;
+	};
+	const isSubstantiveBlock = (block: unknown): boolean => {
+		if (!isRecord(block)) return false;
+		if (block.type === "text" && typeof block.text === "string" && block.text.trim() === "") return false;
+		if (block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim() === "") return false;
+		return true;
+	};
+
+	// Pass 1: Collect valid toolCall IDs and batch_read IDs from assistant messages
+	const validToolCallIds = new Set<string>();
+	const batchReadToolCallIds = new Set<string>();
+
+	for (const entry of entries) {
+		if (!isRecord(entry)) continue;
+		const e = entry;
+		if (e.type !== "message" || !isRecord(e.message)) continue;
+		const msg = e.message;
+		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+
+		for (const block of msg.content) {
+			if (!isRecord(block)) continue;
+			const b = block;
+			if (b.type === "toolCall") {
+				const id = getToolCallId(b);
+				if (id) {
+					if (getToolName(b) === "batch_read") {
+						batchReadToolCallIds.add(id);
+					} else {
+						validToolCallIds.add(id);
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: Filter entries
+	const result: unknown[] = [];
+	for (const entry of entries) {
+		if (!isRecord(entry)) { result.push(entry); continue; }
+		const e = entry;
+		if (e.type !== "message" || !isRecord(e.message)) { result.push(entry); continue; }
+		const msg = e.message;
+
+		// Strip batch_read toolCalls from assistant messages
+		if (msg.role === "assistant" && Array.isArray(msg.content)) {
+			const filtered = msg.content.filter((block: unknown) => {
+				if (isRecord(block) && block.type === "toolCall" && getToolName(block) === "batch_read") return false;
+				return true;
+			});
+
+			const hasSubstance = filtered.some(isSubstantiveBlock);
+
+			if (filtered.length === 0 || !hasSubstance) continue; // Drop empty assistant
+
+			if (filtered.length !== msg.content.length) {
+				result.push({ ...e, message: { ...msg, content: filtered } });
+			} else {
+				result.push(entry);
+			}
+			continue;
+		}
+
+		// Drop orphaned toolResult/tool messages
+		if (msg.role === "toolResult" || msg.role === "tool") {
+			const toolCallId = getToolResultId(msg);
+
+			let contentToolCallId: string | undefined;
+			if (Array.isArray(msg.content)) {
+				for (const part of msg.content) {
+					if (isRecord(part) && part.type === "toolResult") {
+						contentToolCallId = getToolCallId(part);
+						break;
+					}
+				}
+			}
+
+			const effectiveId = toolCallId || contentToolCallId;
+			// Preserve truly unidentifiable toolResults as a conservative fallback.
+			if (!effectiveId) { result.push(entry); continue; }
+			if (batchReadToolCallIds.has(effectiveId)) continue; // batch_read result
+			if (!validToolCallIds.has(effectiveId)) continue; // Orphaned
+			result.push(entry);
+			continue;
+		}
+
+		result.push(entry);
+	}
+
+	return result;
+}
+
 export function buildCore2Snapshot(
 	sessionManager: SessionSnapshotSource,
 	options?: BuildCore2SnapshotOptions,
@@ -343,8 +455,13 @@ export function buildCore2Snapshot(
 	const compressedResult = applyContextCompression(finalEntries, options?.compressionLevel, options?.compressionProfile);
 	const entriesWithMap = insertContextMap(compressedResult.entries);
 
-	for (const entry of entriesWithMap) {
-		// Fix P1: Eliminate double JSON.stringify by operating on objects before serialization
+	// Strip orphaned toolResults and batch_read toolCalls that cause 400 errors
+	// with strict API providers (kimi, DeepSeek). Must run AFTER compression/trimming
+	// since those steps can drop assistant messages and orphan their toolResults.
+	const cleanedEntries = stripOrphanedToolResultsAndBatchRead(entriesWithMap);
+
+	for (const entry of cleanedEntries) {
+		// Fix P1: Eliminate double JSON.stringify by operating on objects before serialization.
 		const processedEntry = stripBatchBodiesFromEntry(entry as Record<string, unknown>, options?.compressionLevel);
 		const line = JSON.stringify(processedEntry);
 		lines.push(line);
@@ -436,11 +553,6 @@ function sanitizeSnapshotEntry(entry: unknown): unknown | null {
 			}
 		} else {
 			delete msg.usage;
-		}
-
-		// Strip tool correlation IDs — child flows replay linearly, no invocation by ID
-		if (msg.role === "toolResult" || msg.role === "tool") {
-			delete msg.toolCallId;
 		}
 
 		// Defensive: upstream host assumes content is always an array for tool/toolResult
@@ -557,7 +669,8 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 					}
 				} else if ((name === "batch" || name === "batch_read") && tc.arguments) {
 					const ops = tc.arguments.ops || tc.arguments.o || [];
-					if (Array.isArray(ops)) {
+					const cmd = tc.arguments.cmd;
+					if (Array.isArray(ops) && ops.length > 0) {
 						const keys: string[] = [];
 						let opType = "read";
 						for (const op of ops) {
@@ -574,6 +687,14 @@ function optimizeSharedContext(branchEntries: unknown[]): unknown[] {
 						if (keys.length > 0) {
 							toolCallMap.set(id, { toolName: name, keys, isReadWrite: true, op: opType });
 						}
+					} else if (typeof cmd === "string") {
+						const trimmedCmd = cmd.trim();
+						const firstCmdToken = trimmedCmd.split(/\s+/, 1)[0];
+						const cmdOp = (firstCmdToken === "read" || firstCmdToken === "write" || firstCmdToken === "edit") ? firstCmdToken : "batch";
+						const key = `${name}:${trimmedCmd}`;
+						toolCallMap.set(id, { toolName: name, keys: [key], isReadWrite: true, op: cmdOp });
+						const existing = lastExecution.get(key);
+						lastExecution.set(key, { toolCallId: id, count: (existing?.count ?? 0) + 1 });
 					}
 				} else if (name === "flow" && tc.arguments) {
 					const flowArray = tc.arguments.flow || [];
@@ -1597,4 +1718,3 @@ export function parseSharedContext(snapshotJsonl: string | null): SharedContext 
 	if (messageCount === 0) return undefined;
 	return { messageCount, userMessageCount, assistantMessageCount, toolCalls, totalTokens, preview };
 }
-
