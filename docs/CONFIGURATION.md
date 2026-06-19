@@ -77,6 +77,8 @@ Set flow runtime defaults under `flowSettings`:
 | `maxConcurrency` | `4` | Maximum parallel flows (capped to CPU count) |
 | `toolOptimize` | `true` | Use unified `batch`/`batch_read` instead of separate read/write/edit |
 | `structuredOutput` | `true` | Inject JSON structured-output instructions into flow prompts |
+| `subAgentMaxRetries` | `3` | Connection-error retries after model failover exhaustion (0–10) |
+| `subAgentBaseDelayMs` | `1000` | Base delay (ms) for exponential backoff between connection retries |
 
 ## CLI Flags
 
@@ -115,6 +117,8 @@ Set flow runtime defaults under `flowSettings`:
 | `PI_FLOW_TOOLS_BATCH_READ` | `"1"` or `"0"` (enable/disable the `batch_read` tool; default: follows `PI_FLOW_TOOL_OPTIMIZE`) |
 | `PI_FLOW_COMPLEXITY` | Default child-flow complexity: `snap`, `simple`, `moderate`, `complex`, or `intricate` |
 | `PI_FLOW_MAX_CONCURRENCY` | Maximum parallel flows |
+| `PI_FLOW_SUB_AGENT_MAX_RETRIES` | Connection-error retries after model failover exhaustion (default: `3`, max: `10`; set `0` to disable) |
+| `PI_FLOW_SUB_AGENT_BASE_DELAY_MS` | Base delay in ms for exponential backoff between connection retries (default: `1000`) |
 | `PI_FLOW_SPAWN_COMMAND` | Override the spawn command for exotic runtime environments (e.g. bundled with pkg/nexe) |
 | `PI_FLOW_DEADLINE_MS` | Absolute deadline timestamp (ms) propagated to child flows for timeout awareness |
 | `PI_FLOW_TOOL_SUMMARY_GRACE_MS` | Time before hard timeout when the agent should stop tool use and summarize (ms) |

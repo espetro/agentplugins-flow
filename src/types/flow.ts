@@ -85,6 +85,8 @@ export interface FlowMetrics {
 	model?: string;
 	/** Number of failover attempts. */
 	failoverCount: number;
+	/** Number of connection-error retries after failover exhaustion. */
+	connectionRetryCount?: number;
 	/** Token usage. */
 	usage: UsageStats;
 	/** Flow source. */

@@ -80,6 +80,11 @@ export interface FlowSettings {
 		/** Enable endless loop behavior. Default: false. */
 		enabled?: boolean;
 	};
+
+	/** Connection-error retries after model failover exhaustion. Default: 3. */
+	subAgentMaxRetries?: number;
+	/** Base delay (ms) for exponential backoff between connection retries. Default: 1000. */
+	subAgentBaseDelayMs?: number;
 }
 
 const BUILTIN_FLOW_MODEL_CONFIGS: FlowModelConfigs = {
@@ -389,6 +394,13 @@ function extractFlowSettings(settings: Record<string, unknown> | null): FlowSett
 	// Parse debug mode setting
 	if (typeof obj.debugMode === "boolean") {
 		result.debugMode = obj.debugMode;
+	}
+
+	if (typeof obj.subAgentMaxRetries === "number" && Number.isSafeInteger(obj.subAgentMaxRetries) && obj.subAgentMaxRetries >= 0) {
+		result.subAgentMaxRetries = obj.subAgentMaxRetries;
+	}
+	if (typeof obj.subAgentBaseDelayMs === "number" && Number.isSafeInteger(obj.subAgentBaseDelayMs) && obj.subAgentBaseDelayMs >= 0) {
+		result.subAgentBaseDelayMs = obj.subAgentBaseDelayMs;
 	}
 
 	// Parse nested tools settings

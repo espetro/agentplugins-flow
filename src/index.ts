@@ -792,6 +792,8 @@ export default function (pi: ExtensionAPI) {
 							onFlowMetrics: (metrics) => { if (typeof pi.emit === "function") pi.emit("pi-agent-flow:complete", metrics); },
 							confirmProjectFlows: params.confirmProjectFlows,
 							goalContext,
+							subAgentMaxRetries: resolved.subAgentMaxRetries,
+							subAgentBaseDelayMs: resolved.subAgentBaseDelayMs,
 							goalContinuationCallback: async (results) => {
 								const goal = getGoalForSession(ctx.cwd, sessionRegistry.getSessionId(ctx.cwd));
 								if (!goal) return;

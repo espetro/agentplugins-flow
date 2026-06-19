@@ -3,16 +3,39 @@
  */
 
 import { runFlow } from "./runner.js";
-import { preserveMetadata, shouldFailover } from "./cycle-guard.js";
+import { preserveMetadata, shouldFailover, isRetryableConnectionError } from "./cycle-guard.js";
 import { publishFlowLiveText, publishFlowLiveTextAtIndex } from "./flow-live.js";
 import { setLiveText } from "../tui/scramble/index.js";
 import { isFlowSuccess, emptyFlowUsage } from "../types/flow.js";
 import { resolveComplexity, getComplexityTimeoutMs } from "./complexity.js";
 import { resolveFlowModelCandidates, resolveModelContextWindow } from "../config/config.js";
 import type { FlowConfig } from "./agents.js";
-import type { SingleResult, FlowDetails, FlowMetrics } from "../types/flow.js";
+import type { SingleResult } from "../types/flow.js";
 import type { FlowExecutorDeps, ExecuteFlowParams } from "./executor.js";
 import type { LoadedFlowModelConfigs } from "../config/config.js";
+
+const DEFAULT_SUB_AGENT_MAX_RETRIES = 3;
+const DEFAULT_SUB_AGENT_BASE_DELAY_MS = 1000;
+const MAX_CARRIED_STDERR_CHARS = 2000;
+
+async function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+	if (ms <= 0 || signal?.aborted) return;
+	await new Promise<void>((resolve) => {
+		const timer = setTimeout(() => {
+			cleanup();
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			cleanup();
+			resolve();
+		};
+		const cleanup = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", onAbort);
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
 
 export async function executeSingleFlow(
 	deps: FlowExecutorDeps,
@@ -52,90 +75,132 @@ export async function executeSingleFlow(
 	let result = allResults[resultIndex];
 	const flowStart = Date.now();
 
-	for (let attempt = 0; attempt < attemptModels.length; attempt++) {
-		const candidateModel = attemptModels[attempt];
-		if (candidateModel) attemptedModels.push(candidateModel);
-		const attemptStartMs = Date.now();
-		const attemptTimeoutMs = getComplexityTimeoutMs(complexity);
-		const maxContextTokens = resolveModelContextWindow(candidateModel);
-		const previous = allResults[resultIndex];
-		allResults[resultIndex] = {
-			type: normalizedType,
-			agentSource: targetFlow?.source ?? "unknown",
-			intent: item.intent,
-			aim: item.aim,
-			exitCode: -1,
-			messages: [],
-			stderr: "",
-			usage: emptyFlowUsage(),
-			model: candidateModel,
-			startedAtMs: attemptStartMs,
-			deadlineAtMs: attemptStartMs + attemptTimeoutMs,
-			...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
-		};
-		preserveMetadata(allResults[resultIndex], previous);
-		emitProgress();
-		result = await runFlow({
-			cwd,
-			flows,
-			flowName: lookupName,
-			intent: item.intent,
-			aim: item.aim,
-			acceptance: item.acceptance,
-			concern: item.concern,
-			taskCwd: item.cwd,
-			forkSessionSnapshotJsonl: shouldInheritContext ? forkSessionSnapshotJsonl : null,
-			parentDepth: currentDepth,
-			parentFlowStack: ancestorFlowStack,
-			maxDepth: effectiveMaxDepth,
-			preventCycles,
-			toolOptimize,
-			structuredOutput,
-			complexity,
-			model: candidateModel,
-			maxContextTokens,
-			goalContext,
-			debugMode: deps.debugMode,
-			compressionStats: deps.compressionStats,
-			tools: item._childTools,
-			preDispatchResults: item.preDispatchResults,
-			signal,
-			toolCallId,
-			onUpdate: (partial) => {
-				if (partial.details?.results[0]) {
-					const previous = allResults[resultIndex];
-					allResults[resultIndex] = partial.details.results[0];
-					preserveMetadata(allResults[resultIndex], previous);
-					const flowText = partial.content?.[0]?.text;
-					if (flowText !== undefined && toolCallId) {
-						publishFlowLiveTextAtIndex(toolCallId, resultIndex, flowText);
-					} else if (flowText !== undefined) {
-						setLiveText(`collapsed#${resultIndex}`, flowText);
+	const maxRetries = deps.subAgentMaxRetries ?? DEFAULT_SUB_AGENT_MAX_RETRIES;
+	const baseDelayMs = deps.subAgentBaseDelayMs ?? DEFAULT_SUB_AGENT_BASE_DELAY_MS;
+	let retryCount = 0;
+	let carriedRetryAnnotation: string | undefined;
+
+	while (true) {
+		attemptedModels.length = 0;
+
+		for (let attempt = 0; attempt < attemptModels.length; attempt++) {
+			const candidateModel = attemptModels[attempt];
+			if (candidateModel) attemptedModels.push(candidateModel);
+			const attemptStartMs = Date.now();
+			const attemptTimeoutMs = getComplexityTimeoutMs(complexity);
+			const maxContextTokens = resolveModelContextWindow(candidateModel);
+			const previous = allResults[resultIndex];
+			allResults[resultIndex] = {
+				type: normalizedType,
+				agentSource: targetFlow?.source ?? "unknown",
+				intent: item.intent,
+				aim: item.aim,
+				exitCode: -1,
+				messages: [],
+				stderr: carriedRetryAnnotation ?? "",
+				usage: emptyFlowUsage(),
+				model: candidateModel,
+				startedAtMs: attemptStartMs,
+				deadlineAtMs: attemptStartMs + attemptTimeoutMs,
+				...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
+			};
+			preserveMetadata(allResults[resultIndex], previous);
+			emitProgress();
+			result = await runFlow({
+				cwd,
+				flows,
+				flowName: lookupName,
+				intent: item.intent,
+				aim: item.aim,
+				acceptance: item.acceptance,
+				concern: item.concern,
+				taskCwd: item.cwd,
+				forkSessionSnapshotJsonl: shouldInheritContext ? forkSessionSnapshotJsonl : null,
+				parentDepth: currentDepth,
+				parentFlowStack: ancestorFlowStack,
+				maxDepth: effectiveMaxDepth,
+				preventCycles,
+				toolOptimize,
+				structuredOutput,
+				complexity,
+				model: candidateModel,
+				maxContextTokens,
+				goalContext,
+				debugMode: deps.debugMode,
+				compressionStats: deps.compressionStats,
+				tools: item._childTools,
+				preDispatchResults: item.preDispatchResults,
+				signal,
+				toolCallId,
+				onUpdate: (partial) => {
+					if (partial.details?.results[0]) {
+						const previous = allResults[resultIndex];
+						allResults[resultIndex] = partial.details.results[0];
+						preserveMetadata(allResults[resultIndex], previous);
+						const flowText = partial.content?.[0]?.text;
+						if (flowText !== undefined && toolCallId) {
+							publishFlowLiveTextAtIndex(toolCallId, resultIndex, flowText);
+						} else if (flowText !== undefined) {
+							setLiveText(`collapsed#${resultIndex}`, flowText);
+						}
+						emitProgress(partial.content?.[0]?.text);
 					}
-					emitProgress(partial.content?.[0]?.text);
-				}
-			},
-			makeDetails,
-		});
-		const previous2 = allResults[resultIndex];
-		allResults[resultIndex] = result;
-		preserveMetadata(allResults[resultIndex], previous2);
-		emitProgress();
-		if (isFlowSuccess(result) || signal?.aborted) break;
-		if (attempt < attemptModels.length - 1 && shouldFailover(result)) {
+				},
+				makeDetails,
+			});
+			const previous2 = allResults[resultIndex];
+			allResults[resultIndex] = result;
+			preserveMetadata(allResults[resultIndex], previous2);
+			emitProgress();
+			if (isFlowSuccess(result) || signal?.aborted) break;
+			if (attempt < attemptModels.length - 1 && shouldFailover(result)) {
+				continue;
+			}
+			break;
+		}
+
+		if (result && !isFlowSuccess(result) && attemptedModels.length > 1) {
+			const summary = `Model failover attempts: ${attemptedModels.join(" -> ")}`;
+			const baseStderr = result.stderr.trim();
+			result.stderr = baseStderr ? `${baseStderr}\n\n${summary}` : summary;
+			const previous3 = allResults[resultIndex];
+			allResults[resultIndex] = result;
+			preserveMetadata(allResults[resultIndex], previous3);
+			emitProgress();
+		}
+
+		if (
+			result &&
+			!isFlowSuccess(result) &&
+			!signal?.aborted &&
+			retryCount < maxRetries &&
+			isRetryableConnectionError(result.stderr ?? "", result.errorMessage)
+		) {
+			retryCount++;
+			const delayMs = baseDelayMs * Math.pow(2, retryCount - 1);
+			await sleepAbortable(delayMs, signal);
+			if (signal?.aborted) break;
+
+			const previousRetry = allResults[resultIndex];
+			const priorStderr = (previousRetry?.stderr ?? "").slice(-MAX_CARRIED_STDERR_CHARS);
+			carriedRetryAnnotation = `[retry ${retryCount}/${maxRetries}] ${priorStderr}`;
+			allResults[resultIndex] = {
+				type: normalizedType,
+				agentSource: targetFlow?.source ?? "unknown",
+				intent: item.intent,
+				aim: item.aim,
+				exitCode: -1,
+				messages: [],
+				stderr: carriedRetryAnnotation,
+				usage: emptyFlowUsage(),
+				model: undefined,
+			};
+			preserveMetadata(allResults[resultIndex], previousRetry);
+			emitProgress();
 			continue;
 		}
-		break;
-	}
 
-	if (result && !isFlowSuccess(result) && attemptedModels.length > 1) {
-		const summary = `Model failover attempts: ${attemptedModels.join(" -> ")}`;
-		const baseStderr = result.stderr.trim();
-		result.stderr = baseStderr ? `${baseStderr}\n\n${summary}` : summary;
-		const previous3 = allResults[resultIndex];
-		allResults[resultIndex] = result;
-		preserveMetadata(allResults[resultIndex], previous3);
-		emitProgress();
+		break;
 	}
 
 	if (onFlowMetrics) {
@@ -147,6 +212,7 @@ export async function executeSingleFlow(
 			success: isFlowSuccess(result),
 			model: result.model,
 			failoverCount: Math.max(0, attemptedModels.length - 1),
+			connectionRetryCount: retryCount,
 			usage: result.usage,
 			source: result.agentSource,
 			depth: currentDepth + 1,

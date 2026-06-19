@@ -43,6 +43,8 @@ export interface ResolvedSettings {
 	activeRuntimeFlowMode: string | undefined; bodyVerbosity: "lite" | "full";
 	debugMode: boolean; traceEnabled: boolean; batchReadEnabled: boolean;
 	skipFlow: boolean;
+	subAgentMaxRetries: number;
+	subAgentBaseDelayMs: number;
 	contextCompression?: CompressionLevel;
 }
 
@@ -150,6 +152,8 @@ export function resolveSettings(
 	const traceEnabled = resolveBoolean(ctx, { cliFlag: "tools-trace", envVar: PI_FLOW_TOOLS_TRACE_ENV, settingsPath: ["tools", "trace"], defaultValue: true });
 	const batchReadEnabled = resolveBoolean(ctx, { cliFlag: "tools-batch-read", envVar: PI_FLOW_TOOLS_BATCH_READ_ENV, settingsPath: ["tools", "batchRead"], defaultValue: toolOptimize });
 	const skipFlow = resolveBoolean(ctx, { cliFlag: "skip-flow", envVar: PI_FLOW_SKIP_FLOW_ENV, settingsPath: ["skipFlow"], defaultValue: false });
+	const subAgentMaxRetries = resolveNumber(ctx, { envVar: "PI_FLOW_SUB_AGENT_MAX_RETRIES", settingsPath: ["subAgentMaxRetries"], defaultValue: 3, min: 0, max: 10 });
+	const subAgentBaseDelayMs = resolveNumber(ctx, { envVar: "PI_FLOW_SUB_AGENT_BASE_DELAY_MS", settingsPath: ["subAgentBaseDelayMs"], defaultValue: 1000, min: 0, max: 60_000 });
 
 	let contextCompression: CompressionLevel | undefined;
 	if (flowSettings.contextCompression && flowSettings.contextCompression !== "auto") {
@@ -162,6 +166,7 @@ export function resolveSettings(
 		animationEnabled, animationGlitch, askUserEnabled, askUserTimeout,
 		discoveredFlows, loadedFlowModelConfigs, activeRuntimeFlowMode,
 		bodyVerbosity, debugMode, traceEnabled, batchReadEnabled, skipFlow,
+		subAgentMaxRetries, subAgentBaseDelayMs,
 		contextCompression,
 		projectFlowsDir: discovery.projectFlowsDir,
 	};

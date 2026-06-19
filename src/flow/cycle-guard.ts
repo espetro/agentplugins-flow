@@ -50,6 +50,61 @@ export function shouldFailover(result: SingleResult): boolean {
 	return false;
 }
 
+/** Substrings that indicate a failure should not be retried as a transient connection error. */
+const NON_RETRYABLE_CONNECTION_PATTERNS: RegExp[] = [
+	/permission/i,
+	/invalid tool/i,
+	/bad settings/i,
+	/unauthorized/i,
+	/\b401\b/,
+	/\b403\b/,
+	/\b404\b/,
+	/\b400\b.*param/i,
+	/tool_call_id/i,
+];
+
+/**
+ * Patterns indicating transient connection / network errors worth retrying
+ * at the sub-agent level after model failover is exhausted.
+ */
+export const CONNECTION_ERROR_PATTERNS: RegExp[] = [
+	/ECONNREFUSED/,
+	/ECONNRESET/,
+	/ECONNABORTED/,
+	/EPIPE/,
+	/EHOSTUNREACH/,
+	/EHOSTDOWN/,
+	/ENETUNREACH/,
+	/ENETDOWN/,
+	/ETIMEDOUT/,
+	/ESOCKETTIMEDOUT/,
+	/EAI_AGAIN/,
+	/socket hang up/i,
+	/socket disconnected/i,
+	/network error/i,
+	/network timeout/i,
+	/fetch failed/i,
+	/request timed? ?out/i,
+	/\b502\b/,
+	/\b503\b/,
+	/\b504\b/,
+	/connection reset/i,
+	/connection refused/i,
+	/connection timed? ?out/i,
+	/provider error/i,
+];
+
+/**
+ * Returns true when stderr + errorMessage match a transient connection pattern
+ * and do not match any non-retryable denylist pattern.
+ */
+export function isRetryableConnectionError(stderr: string, errorMessage?: string): boolean {
+	const text = `${stderr ?? ""}\n${errorMessage ?? ""}`;
+	if (!text.trim()) return false;
+	if (NON_RETRYABLE_CONNECTION_PATTERNS.some((pat) => pat.test(text))) return false;
+	return CONNECTION_ERROR_PATTERNS.some((pat) => pat.test(text));
+}
+
 export function createGhostResult(type: string, intent: string, aim: string, model?: string, maxContextTokens?: number): SingleResult {
 	return {
 		type,

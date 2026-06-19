@@ -78,6 +78,10 @@ export interface FlowExecutorDeps {
 	goalContinuationCallback?: (results: SingleResult[]) => Promise<void>;
 	goalContext?: GoalContext;
 	debugMode: boolean;
+	/** Connection-error retries after model failover is exhausted. Default: 3. */
+	subAgentMaxRetries?: number;
+	/** Base delay (ms) for exponential backoff between connection retries. Default: 1000. */
+	subAgentBaseDelayMs?: number;
 }
 
 export interface ExecuteFlowParams {
