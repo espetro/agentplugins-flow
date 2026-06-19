@@ -37,6 +37,24 @@ function readFromDisk(cwd: string): GoalState {
     const parsed = JSON.parse(raw) as GoalState;
     if (!parsed || typeof parsed !== "object") return { history: [] };
     if (!Array.isArray(parsed.history)) parsed.history = [];
+    if (parsed.current) {
+      if (!Array.isArray(parsed.current.completedFlows)) {
+        parsed.current.completedFlows = [];
+      }
+      if (typeof parsed.current.totalTokens !== "number") {
+        parsed.current.totalTokens = 0;
+      }
+    }
+    for (const entry of parsed.history) {
+      if (entry) {
+        if (!Array.isArray(entry.completedFlows)) {
+          entry.completedFlows = [];
+        }
+        if (typeof entry.totalTokens !== "number") {
+          entry.totalTokens = 0;
+        }
+      }
+    }
     return parsed;
   } catch (err) {
     logWarn(`[pi-agent-flow] Goal state file corrupted or unreadable at ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
@@ -289,6 +307,9 @@ export function recordFlowCompletion(
 ): GoalEntry | undefined {
   const state = readState(cwd);
   if (!state.current) return undefined;
+  if (!Array.isArray(state.current.completedFlows)) {
+    state.current.completedFlows = [];
+  }
   state.current.completedFlows.push({
     type: flow.type,
     intent: truncateIntent(flow.intent),
@@ -306,6 +327,9 @@ export function recordFlowCompletion(
 export function addTokens(cwd: string, tokens: number): GoalEntry | undefined {
   const state = readState(cwd);
   if (!state.current) return undefined;
+  if (typeof state.current.totalTokens !== "number") {
+    state.current.totalTokens = 0;
+  }
   state.current.totalTokens += tokens;
   state.current.updatedAt = new Date().toISOString();
   if (state.loop?.status === "active") {

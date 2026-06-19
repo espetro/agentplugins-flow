@@ -27,10 +27,15 @@ const FLOW_TYPE_NAMES: Set<string> = new Set(BUNDLED_FLOW_TYPES);
  */
 export function prepareFlowArguments(input: unknown): unknown {
 	if (!input || typeof input !== "object") return input;
-	const args = input as Record<string, unknown>;
+	let args = input as Record<string, unknown>;
+	let changed = false;
+
+	if (Array.isArray(input)) {
+		args = { flow: input };
+		changed = true;
+	}
 
 	let normalizedArgs = args;
-	let changed = false;
 
 	// CASE 1: bare FlowItem at the top level (no `flow` key, but has FlowItem fields).
 	// Heuristic: `type` is a known flow name and `intent` is a string.

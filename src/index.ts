@@ -43,7 +43,7 @@ import * as sessionRegistry from "./flow/session-registry.js";
 import { createTimedBashToolDefinition } from "./tools/timed-bash.js";
 
 import { createTraceTool } from "./tools/trace.js";
-import { prepareFlowDispatchArguments } from "./flow/flow-dispatch-prep.js";
+import { prepareFlowArguments } from "./flow/flow-args-prep.js";
 import { executeOperations } from "./batch/execute.js";
 import { runWebOps } from "./tools/web-ops.js";
 import { BASH_DEFAULT_TIMEOUT_MS, type FileOpInput } from "./batch/constants.js";
@@ -638,7 +638,7 @@ export default function (pi: ExtensionAPI) {
 			description: FLOW_TOOL_DESCRIPTION,
 			parameters: FlowParams,
 			// @ts-ignore — prepareArguments is supported by the runtime but not in the type definition
-			prepareArguments: prepareFlowDispatchArguments,
+			prepareArguments: prepareFlowArguments,
 
 			async execute(toolCallId, params, signal, onUpdate, ctx) {
 				if (!resolved) {
@@ -733,9 +733,9 @@ export default function (pi: ExtensionAPI) {
 				const goalContext = activeGoal ? {
 					objective: activeGoal.objective,
 					acceptance: activeGoal.acceptance,
-					flowCount: activeGoal.completedFlows.length,
+					flowCount: activeGoal.completedFlows?.length ?? 0,
 					maxFlows: activeGoal.maxFlows,
-					completedFlows: activeGoal.completedFlows.map(f => ({ type: f.type, aim: f.aim })),
+					completedFlows: (activeGoal.completedFlows ?? []).map(f => ({ type: f.type, aim: f.aim })),
 				} : undefined;
 
 				const preDispatchResults = await Promise.all(

@@ -195,4 +195,78 @@ describe("store loop integration", () => {
     const updated = readState(tmpDir);
     expect(updated.loop?.totalFlowsAcrossSessions).toBe(6);
   });
+
+  it("(9) readState / readFromDisk sanitizes corrupted/incomplete goal state", () => {
+    const rawState = {
+      current: {
+        id: "goal-1",
+        objective: "test",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+        totalTokens: "not-a-number",
+      },
+      history: [
+        {
+          id: "goal-old",
+          objective: "old",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          status: "completed",
+          completedFlows: null,
+        }
+      ],
+    };
+    fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, ".pi", "flow.json"), JSON.stringify(rawState), "utf-8");
+
+    const parsed = getGoal(tmpDir); // triggers readState/readFromDisk
+    expect(parsed).toBeDefined();
+    expect(parsed?.completedFlows).toEqual([]);
+    expect(parsed?.totalTokens).toBe(0);
+
+    const fullState = readState(tmpDir);
+    expect(fullState.history[0].completedFlows).toEqual([]);
+    expect(fullState.history[0].totalTokens).toBe(0);
+  });
+
+  it("(10) recordFlowCompletion sanitizes and initializes completedFlows if missing", () => {
+    const rawState = {
+      current: {
+        id: "goal-1",
+        objective: "test",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+      },
+      history: [],
+    };
+    fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, ".pi", "flow.json"), JSON.stringify(rawState), "utf-8");
+
+    recordFlowCompletion(tmpDir, { type: "scout", intent: "do it", aim: "aim" });
+    const parsed = getGoal(tmpDir);
+    expect(parsed?.completedFlows).toHaveLength(1);
+    expect(parsed?.completedFlows[0].type).toBe("scout");
+  });
+
+  it("(11) addTokens sanitizes and initializes totalTokens if missing", () => {
+    const rawState = {
+      current: {
+        id: "goal-1",
+        objective: "test",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        status: "active",
+      },
+      history: [],
+    };
+    fs.mkdirSync(path.join(tmpDir, ".pi"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, ".pi", "flow.json"), JSON.stringify(rawState), "utf-8");
+
+    addTokens(tmpDir, 100);
+    const parsed = getGoal(tmpDir);
+    expect(parsed?.totalTokens).toBe(100);
+  });
 });
+

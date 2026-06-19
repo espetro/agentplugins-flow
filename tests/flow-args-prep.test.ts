@@ -8,6 +8,16 @@ describe("prepareFlowArguments", () => {
 		expect(prepareFlowArguments(42)).toBe(42);
 	});
 
+	it("wraps a top-level bare array in flow object", () => {
+		const input = [
+			{ type: "scout", intent: "test intent" }
+		];
+		const result = prepareFlowArguments(input) as Record<string, unknown>;
+		expect(Array.isArray(result.flow)).toBe(true);
+		expect((result.flow as unknown[]).length).toBe(1);
+		expect((result.flow as unknown[])[0]).toEqual({ type: "scout", intent: "test intent" });
+	});
+
 	it("returns input unchanged when no flow key", () => {
 		const input = { other: "value" };
 		expect(prepareFlowArguments(input)).toBe(input);
