@@ -24,6 +24,23 @@ import type { CompressionLevel } from "../core2/snapshot.js";
 import { logWarn } from "./log.js";
 import { resolveBoolean, resolveString, resolveNumber, type ResolveContext } from "./resolver-helpers.js";
 
+/**
+ * Lightweight re-resolution of tool-affecting settings only.
+ * Used by the settings-change emitter in index.ts to re-apply pi.setActiveTools
+ * without the full overhead of resolveSettings (which re-discovers flows, etc.).
+ */
+export function resolveToolSettings(
+	pi: ExtensionAPI,
+	cwd: string,
+): { toolOptimize: boolean; traceEnabled: boolean; batchReadEnabled: boolean } {
+	const flowSettings = loadFlowSettings(cwd);
+	const ctx: ResolveContext = { pi, settings: flowSettings };
+	const toolOptimize = resolveBoolean(ctx, { cliFlag: "tool-optimize", envVar: PI_FLOW_TOOL_OPTIMIZE_ENV, settingsPath: ["toolOptimize"], defaultValue: true });
+	const traceEnabled = resolveBoolean(ctx, { cliFlag: "tools-trace", envVar: PI_FLOW_TOOLS_TRACE_ENV, settingsPath: ["tools", "trace"], defaultValue: true });
+	const batchReadEnabled = resolveBoolean(ctx, { cliFlag: "tools-batch-read", envVar: PI_FLOW_TOOLS_BATCH_READ_ENV, settingsPath: ["tools", "batchRead"], defaultValue: toolOptimize });
+	return { toolOptimize, traceEnabled, batchReadEnabled };
+}
+
 const PI_FLOW_NO_STEERING_ENV = "PI_FLOW_NO_STEERING";
 const PI_FLOW_NO_ANIMATION_ENV = "PI_FLOW_NO_ANIMATION";
 const PI_FLOW_NO_GLITCH_ENV = "PI_FLOW_NO_GLITCH";

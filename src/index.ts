@@ -58,10 +58,12 @@ import {
 	resolveModelContextWindow,
 	invalidateSettingsCache,
 	flushAllSettingsCachesSync,
+	onSettingsChange,
 } from "./config/config.js";
 import {
 	resolveSettings,
 	type ResolvedSettings,
+	resolveToolSettings,
 } from "./config/settings-resolver.js";
 import { getSkipFlowTools, clearClassificationCache, type SkipFlowConfig, type ClassifyDeps } from "./tools/skip-flow.js";
 
@@ -382,6 +384,8 @@ export default function (pi: ExtensionAPI) {
 	let resolved: ResolvedSettings | undefined;
 	let _sessionCtx: ExtensionContext | undefined;
 	let bashTracker: BashProcessTracker | undefined;
+	let _unsubscribeSettings: (() => void) | undefined;
+	let batchReadRegistered = false;
 
 	// Auto-discover flows on session start
 	// Fix L2: registerFlow() already handles sessionRegistry.register() — removed duplicate here.
@@ -410,6 +414,7 @@ export default function (pi: ExtensionAPI) {
 		// and the batch_bash_poll tool (checks on pending bash ops).
 		if (resolved.batchReadEnabled) {
 			pi.registerTool(createBatchReadTool());
+			batchReadRegistered = true;
 		}
 		if (resolved.toolOptimize && currentDepth > 0) {
 			bashTracker = new BashProcessTracker();
@@ -425,11 +430,29 @@ export default function (pi: ExtensionAPI) {
 				pi.registerTool(timedBash);
 			}
 		}
+
+		// Live-apply tool-affecting settings when changed via /flow:settings
+		// (same pattern as animation/steering which also live-apply).
+		// Only for root state — child flows get tools from --tools CLI arg.
+		if (currentDepth === 0) {
+			_unsubscribeSettings = onSettingsChange((_keyPath) => {
+				if (!_sessionCtx) return;
+				const fresh = resolveToolSettings(pi, _sessionCtx.cwd);
+				resolved = { ...resolved!, ...fresh };
+				pi.setActiveTools(computeActiveTools(fresh.toolOptimize, fresh.traceEnabled, fresh.batchReadEnabled));
+				if (fresh.batchReadEnabled && !batchReadRegistered) {
+					pi.registerTool(createBatchReadTool());
+					batchReadRegistered = true;
+				}
+			});
+		}
 	});
 
 	// Clean up global mutable state on session shutdown
 	// Fix L2: Clean up session registry on shutdown.
 	pi.on("session_shutdown", () => {
+		if (_unsubscribeSettings) { _unsubscribeSettings(); _unsubscribeSettings = undefined; }
+		batchReadRegistered = false;
 		if (_sessionCtx) sessionRegistry.unregister(_sessionCtx.cwd);
 		shutdownWakeup();
 		clearAllContinuationState(); // Fix L3: Prevent unbounded Map growth by cleaning up session tracking state

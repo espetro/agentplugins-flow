@@ -15,6 +15,41 @@ import { resolveModelContextWindow as resolveModelContextWindowFromModels } from
 import { getAgentDir, hasAgentDirOverride } from "./paths.js";
 import { atomicWriteFileSync, atomicWriteJsonAsync } from "../io/atomic-write.js";
 
+// ---------------------------------------------------------------------------
+// Settings-change listener (fires after writeFlowSetting updates the cache)
+// ---------------------------------------------------------------------------
+
+export type SettingsChangeHandler = (keyPath: string, value: unknown) => void;
+
+const _settingsChangeListeners = new Set<SettingsChangeHandler>();
+
+/**
+ * Subscribe to settings changes. Returns an unsubscribe function.
+ * The handler fires AFTER the in-memory cache is updated (so a fresh
+ * `loadFlowSettings()` call inside the handler reads the new value).
+ */
+export function onSettingsChange(handler: SettingsChangeHandler): () => void {
+	_settingsChangeListeners.add(handler);
+	return () => {
+		_settingsChangeListeners.delete(handler);
+	};
+}
+
+/** Remove all settings-change listeners. For tests. */
+export function _clearSettingsChangeListeners(): void {
+	_settingsChangeListeners.clear();
+}
+
+function emitSettingsChange(keyPath: string, value: unknown): void {
+	for (const handler of _settingsChangeListeners) {
+		try {
+			handler(keyPath, value);
+		} catch (err) {
+			logWarn(`[pi-agent-flow] Settings change handler error: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+}
+
 
 interface FlowModelTierConfig {
 	primary?: string;
@@ -508,6 +543,7 @@ export function writeFlowSetting(cwd: string, keyPath: string, value: unknown): 
 		settings.flowSettings = value;
 		_settingsCache.set(filePath, settings);
 		scheduleSettingsFlush(filePath);
+		emitSettingsChange(keyPath, value);
 		return { path: filePath, previous };
 	}
 
@@ -526,6 +562,7 @@ export function writeFlowSetting(cwd: string, keyPath: string, value: unknown): 
 
 	_settingsCache.set(filePath, settings);
 	scheduleSettingsFlush(filePath);
+	emitSettingsChange(keyPath, value);
 
 	return { path: filePath, previous };
 }

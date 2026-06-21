@@ -9,8 +9,11 @@ import {
 	loadFlowSettings,
 	resolveFlowModelCandidates,
 	writeGlobalFlowMode,
+	writeFlowSetting,
 	flushAllSettingsCachesSync,
 	_clearSettingsCache,
+	onSettingsChange,
+	_clearSettingsChangeListeners,
 } from "../src/config/config.js";
 import { resolveModelContextWindow } from "../src/config/models.js";
 
@@ -628,5 +631,112 @@ describe("formatFlowModelStrategy", () => {
 			flash: { primary: "mimo-flash" },
 		});
 		expect(result).toBe("mode: mimo | lite: failover: failover-a, failover-b - flash: mimo-flash - full: (default)");
+	});
+});
+
+describe("onSettingsChange", () => {
+	let tmpDir: string;
+	let originalHome: string | undefined;
+	let originalAgentDir: string | undefined;
+	let projectCwd: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-flow-settings-emit-test-"));
+		projectCwd = path.join(tmpDir, "project");
+		fs.mkdirSync(projectCwd, { recursive: true });
+		originalHome = process.env.HOME;
+		originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+		process.env.HOME = tmpDir;
+		delete process.env.PI_CODING_AGENT_DIR;
+		_clearSettingsCache();
+		_clearSettingsChangeListeners();
+	});
+
+	afterEach(() => {
+		_clearSettingsChangeListeners();
+		process.env.HOME = originalHome;
+		if (originalAgentDir !== undefined) {
+			process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+		} else {
+			delete process.env.PI_CODING_AGENT_DIR;
+		}
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("fires after writeFlowSetting with fresh cache", () => {
+		const calls: Array<{ keyPath: string; value: unknown; toolOptimizeAtCallTime: boolean | undefined }> = [];
+		onSettingsChange((keyPath, value) => {
+			const freshSettings = loadFlowSettings(projectCwd);
+			calls.push({ keyPath, value, toolOptimizeAtCallTime: freshSettings.toolOptimize });
+		});
+
+		writeFlowSetting(projectCwd, "toolOptimize", false);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].keyPath).toBe("toolOptimize");
+		expect(calls[0].value).toBe(false);
+		expect(calls[0].toolOptimizeAtCallTime).toBe(false);
+	});
+
+	it("fires for nested keyPath", () => {
+		const calls: Array<{ keyPath: string; value: unknown }> = [];
+		onSettingsChange((keyPath, value) => {
+			calls.push({ keyPath, value });
+		});
+
+		writeFlowSetting(projectCwd, "steering.enabled", false);
+
+		expect(calls).toHaveLength(1);
+		expect(calls[0].keyPath).toBe("steering.enabled");
+		expect(calls[0].value).toBe(false);
+	});
+
+	it("unsubscribe stops further notifications", () => {
+		const calls: string[] = [];
+		const unsub = onSettingsChange((keyPath) => {
+			calls.push(keyPath);
+		});
+
+		writeFlowSetting(projectCwd, "toolOptimize", false);
+		expect(calls).toEqual(["toolOptimize"]);
+
+		unsub();
+
+		writeFlowSetting(projectCwd, "toolOptimize", true);
+		expect(calls).toEqual(["toolOptimize"]);
+	});
+
+	it("supports multiple listeners", () => {
+		const callsA: string[] = [];
+		const callsB: string[] = [];
+		onSettingsChange((keyPath) => callsA.push(keyPath));
+		onSettingsChange((keyPath) => callsB.push(keyPath));
+
+		writeFlowSetting(projectCwd, "complexity", "simple");
+
+		expect(callsA).toEqual(["complexity"]);
+		expect(callsB).toEqual(["complexity"]);
+	});
+
+	it("handler error does not prevent other listeners from firing", () => {
+		const calls: string[] = [];
+		onSettingsChange(() => {
+			throw new Error("boom");
+		});
+		onSettingsChange((keyPath) => calls.push(keyPath));
+
+		// Should not throw
+		writeFlowSetting(projectCwd, "trace", true);
+		expect(calls).toEqual(["trace"]);
+	});
+
+	it("_clearSettingsChangeListeners removes all listeners", () => {
+		const calls: string[] = [];
+		onSettingsChange((keyPath) => calls.push(keyPath));
+
+		_clearSettingsChangeListeners();
+
+		writeFlowSetting(projectCwd, "toolOptimize", false);
+		expect(calls).toEqual([]);
 	});
 });
